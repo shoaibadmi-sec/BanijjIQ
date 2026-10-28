@@ -118,6 +118,16 @@ export async function runRealD1Browser(){
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          const dueReady=page.getByRole('button',{name:'Review and post real sale',exact:true});
+          if(await dueReady.isDisabled()){
+            const warnings=await page.locator('[data-live-pos] [role="alert"]').allTextContents();
+            const lineDetails=await page.locator('[data-live-pos] input[aria-label^="Quantity for"]').count();
+            const totalText=await page.locator('[data-live-pos]').innerText();
+            throw new Error('Second-sale preflight blocked: '+JSON.stringify({
+              warnings,lineDetails,
+              pageExcerpt:totalText.slice(-1200)
+            }));
+          }
           const dueBefore=requests.filter(r=>r.method==='POST'&&r.path==='/api/pos/sales').length;
           await page.getByRole('button',{name:'Review and post real sale'}).click();
           await page.getByRole('button',{name:'Confirm and post'}).click();
