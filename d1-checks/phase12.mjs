@@ -242,14 +242,24 @@ try{
     assert.equal(one("SELECT COUNT(*) n FROM pos_sale_requests WHERE request_id LIKE 'phase12-%'").n,7);
     assert.equal(one("SELECT COUNT(*) n FROM sales WHERE invoice_id IN ('"+
       Object.values(invoices).map(esc).join("','")+"')").n,7);
-    const integrity=query('PRAGMA integrity_check');
-    assert.equal(integrity[0]?.integrity_check,'ok');
-    const fks=query('PRAGMA foreign_key_check');
-    assert.equal(fks.length,0);
+    // Wrangler D1 rejects PRAGMA integrity_check/foreign_key_check (SQLITE_AUTH).
+    // Use allowed SELECT statements to independently verify relational orphans
+    // and every cash debit/credit after transaction reversals.
+    const orphanLots=one("SELECT COUNT(*) n FROM sale_item_lots x LEFT JOIN stock_lots l ON x.lot_id=l.lot_id WHERE l.lot_id IS NULL").n;
+    const orphanReturns=one("SELECT COUNT(*) n FROM sales_returns r LEFT JOIN sales s ON r.invoice_id=s.invoice_id WHERE s.invoice_id IS NULL").n;
+    assert.equal(orphanLots,0);assert.equal(orphanReturns,0);
+    const saleCash=one("SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE type='Sale' AND is_deleted=0").n;
+    const refundCash=one("SELECT COALESCE(SUM(debit),0) n FROM cash_book WHERE type='Sales Return' AND is_deleted=0").n;
+    const cancelledCash=one("SELECT COUNT(*) n FROM cash_book WHERE type='Sale' AND is_deleted=1").n;
+    assert.equal(saleCash,355,'active sale cash');
+    assert.equal(refundCash,290,'actual refund cash');
+    assert.equal(cancelledCash,3,'cancelled invoice cash records');
     report.audit.sales=one("SELECT COUNT(*) n FROM sales WHERE customer_phone='01000001234'").n;
     report.audit.refunds=one("SELECT COUNT(*) n FROM sales_returns").n;
     report.audit.serialsSold=one("SELECT COUNT(*) n FROM product_serials WHERE status='Sold'").n;
-    report.audit.integrity='ok';report.audit.foreignKeyViolations=0;
+    report.audit.orphanLots=orphanLots;report.audit.orphanReturns=orphanReturns;
+    report.audit.activeSaleCash=saleCash;report.audit.cashRefunds=refundCash;
+    report.audit.cancelledCashRows=cancelledCash;
     report.passed.push('exact SQL stock, FIFO, serial, expiry, refunds, vendor dues, cancellation and key audit');
   }catch(e){report.failed.push({name:'SQL reconciliation',error:String(e?.stack||e)});
     process.stderr.write('FAIL Phase12 SQL: '+String(e?.stack||e)+'\n');}
