@@ -18,26 +18,32 @@ npm run dev
 
 The Node API defaults to port 8787, and Vite serves the frontend separately. See `server/README.md` for runtime details.
 
-## Cloudflare Worker and D1
+## Cloudflare Worker, GitHub Builds, and D1
 
-`wrangler.example.jsonc` is a safe template; the previous project's live database identifier has deliberately not been published. Create a separate Cloudflare D1 database for BanijjIQ, then copy the template to the ignored `wrangler.jsonc` and set your own D1 database ID.
+`wrangler.jsonc` is **checked into Git** so Cloudflare Workers Builds can deploy
+without interactive Hono framework detection. The Worker name `banijjinq`
+matches the name shown in the initial Cloudflare build logs.
+The Vue frontend and Hono backend share the same Worker; `/api/*`
+routes are handled before the single-page-app asset fallback.
 
-```bash
-cp wrangler.example.jsonc wrangler.jsonc
-# Edit wrangler.jsonc with your new D1 database ID
-npm ci
-npm run build
-npm run cloudflare:migrate:remote
-# Required before public deployment: create a secret using the interactive Wrangler prompt
-npx wrangler secret put SETUP_SECRET
-npm run cloudflare:deploy
-```
+This initial configuration intentionally omits a D1 database ID. Wrangler 4
+can automatically provision the new `banijjiq-db` database on first deployment.
+**Never point this binding at an existing SherERP database.**
 
-Verify the deployment and database configuration carefully before applying remote migrations.
+Cloudflare Dashboard → Worker → Settings → Build:
+- Production branch: `main`
+- Root directory: `/`
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy`
+
+The first deployment builds and publishes the application, but the API
+will need the D1 migrations before login and setup can function. See
+`CLOUDFLARE_NEW_DEPLOY.md` for the first-deployment database initialization,
+admin-secret setup, and production verification instructions.
 
 ## Data protection
 
-Only project source code, SQL schema migrations and development configuration examples are versioned. Real SQLite databases, SQL backups, `.wrangler` state, local credentials, dependencies, built output and downloaded patch archives are excluded. Keep those backups in secure storage and never commit credentials.
+Only project source code, SQL schema migrations and the non-secret Wrangler deployment configuration are versioned. Real SQLite databases, SQL backups, `.wrangler` state, local credentials, dependencies, built output and downloaded patch archives are excluded. Keep those backups in secure storage and never commit credentials.
 
 ## Original project
 

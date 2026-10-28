@@ -10,7 +10,6 @@ dist-server/
 .env
 .env.*
 !.env.example
-wrangler.jsonc
 
 # Real business data, backups and downloaded patches
 data/
@@ -28,3 +27,7 @@ Download/
 .DS_Store
 .idea/
 .vscode/
+
+# Local Worker secrets
+.dev.vars*
+!.dev.vars.example
