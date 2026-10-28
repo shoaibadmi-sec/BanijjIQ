@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pencil, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
@@ -91,8 +91,7 @@ export function LiveProductsPage() {
           <Input value={query} onChange={event => setQuery(event.target.value)}
             aria-label="Search real products" placeholder="Search product, brand, category or barcode…"
             className="h-9 w-full pl-8 pr-9" />
-          {query && <button type="button" aria-label="Clear search" onClick={() => setQuery('')}
-            className="absolute right-2 top-1.5 rounded p-1 text-ink-500 hover:bg-ink-50"><X className="size-4"/></button>}
+
         </div>
         <label className="flex items-center gap-2 text-xs text-ink-600">
           Category <select value={category} onChange={e => setCategory(e.target.value)}

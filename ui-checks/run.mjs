@@ -166,7 +166,7 @@ try{
           const search=page.getByRole('textbox',{name:'Search real products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
-          await page.getByRole('button',{name:'Clear search'}).click();
+          await page.getByRole('button',{name:'Clear Search real products',exact:true}).click();
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),3);
           await page.getByRole('button',{name:'Add Product'}).click();
           await page.locator('[data-live-product-editor]').waitFor();
@@ -204,8 +204,8 @@ try{
       await screenshot(page,'pos-cart-'+width);
       if(width===1440){
         const [name,phone]=[
-          page.getByRole('textbox',{name:/Customer name/}),
-          page.getByRole('textbox',{name:/Phone/})
+          page.locator('input[list="live-pos-customer-names"]'),
+          page.locator('input[list="live-pos-customer-phones"]')
         ];
         await name.fill('Test Customer');
         await phone.fill('01000000001');
