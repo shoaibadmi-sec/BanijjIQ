@@ -1,59 +1,92 @@
-# Fresh Cloudflare deployment
+# Deploy BanijjIQ to Cloudflare Workers + D1
 
-This package intentionally contains no previous Cloudflare D1 database ID.
+This project serves Vue static assets and the Hono API from **one Cloudflare Worker**.
+Use a **new D1 database**. Never bind an existing SherERP production database.
 
-## 1. Install dependencies
-
-```bash
-npm install
-```
-
-## 2. Sign in to Cloudflare
+## 1. Authenticate from CachyOS
 
 ```bash
-npx wrangler login
+cd /home/shoaib/BanijjIQ
+npx wrangler login --device
+npx wrangler whoami
 ```
 
-## 3. First deploy
+Use the device authorization URL and code shown by Wrangler; no tokens should be pasted into this repository.
+
+## 2. Create an isolated D1 database
+
+```bash
+npx wrangler d1 create banijjiq-db --location apac
+```
+
+Copy `wrangler.example.jsonc` to the ignored local `wrangler.jsonc`, and replace
+`REPLACE_WITH_YOUR_D1_DATABASE_ID` with the new UUID from Cloudflare's output.
+Verify the Worker name is `banijjiq`, database name is `banijjiq-db`,
+`DB` is the binding, and `assets.run_worker_first` contains `/api/*`.
+Do **not** use the old SherERP Worker or database IDs.
+
+## 3. Build and initialize the new database
+
+```bash
+npm ci
+npx wrangler d1 migrations list DB --remote
+npx wrangler d1 migrations apply DB --remote
+```
+
+Do not run the remote migration command against an existing business database.
+The migration collection includes all 26 versioned SQL migrations.
+
+## 4. Publish the Worker
 
 ```bash
 npm run cloudflare:deploy
 ```
 
-Wrangler will provision a new D1 resource for the `DB` binding and deploy a new Worker named `banijjiq`.
-After provisioning, Wrangler may write the generated D1 resource details back to `wrangler.jsonc`.
+The deploy script builds the Vue frontend before publishing.
+Verify the Worker URL printed by Wrangler, `/api/health`, and the
+`/api/setup/status` endpoint. The fresh database initially has no admin users.
 
-## 4. Apply the SherERP schema to the new remote D1
+## 5. Set up the first administrator securely
+
+`POST /api/setup/admin` is **denied by default** even on a brand-new database.
+For a short-lived bootstrap period, set the private Cloudflare Worker secret:
 
 ```bash
-npm run cloudflare:migrate:remote
+npx wrangler secret put SETUP_SECRET
 ```
 
-## 5. Verify
+Use a strong random value entered into the prompt (not hard-coded in source).
+The initial administrator must make a JSON POST request to
+`https://YOUR-WORKER.workers.dev/api/setup/admin` containing `fullName`,
+`phone`, and `password`, with the `x-setup-secret` header matching this secret.
+Do not paste the secret into a chat, file, repository, or logged shell command.
 
-Open the Worker URL printed by Wrangler and then open `/api/health`.
-Expected response includes `"ok": true`.
+Once the admin exists, further setup requests are rejected by the application.
+Remove the temporary secret afterwards with `npx wrangler secret delete SETUP_SECRET`.
 
-## Local Cloudflare/D1 development
+The existing UI's first-admin form does not send the secret automatically;
+complete this protected one-time step via an authenticated HTTP request first,
+then log in through the UI.
+
+## 6. Verify production
+
+Check the public frontend and `/api/health`. Test an authenticated login,
+products, POS, and a non-destructive read workflow.
+Do not import actual business data or run sales transactions until backup and
+authorization policies are reviewed.
+
+## For local development
 
 ```bash
 npm run cloudflare:migrate:local
 npm run cloudflare:dev
 ```
 
-## Node + local SQLite remains available
+To enable first-admin setup under the Node runtime,
+set `BANIJJIQ_SETUP_SECRET` in the Node process environment.
 
-```bash
-npm run backend:migrate
-npm run backend:dev
-```
+## Security notes
 
-
-## BanijjIQ safety requirements
-
-- Deploy only with the new `banijjiq-db` D1 binding. Never reuse an existing SherERP database ID.
-- Configure `wrangler.jsonc` locally from `wrangler.example.jsonc`; this local file is gitignored.
-- Build is included in the `cloudflare:deploy` npm script.
-- Before publishing, configure a secret: `npx wrangler secret put SETUP_SECRET`.
-- An initial administrator must send an `x-setup-secret` header to `POST /api/setup/admin`.
-- Keep the setup secret out of source control, CI logs, and terminal history.
+- Do not commit `wrangler.jsonc`, secrets, local databases, or SQL backups.
+- This is a fresh installation, not a migration of real SherERP business data.
+- Avoid publicly sharing the Worker URL until an administrator is configured.
