@@ -28,3 +28,11 @@ This branch installs the source's reusable CSS tokens and component primitives a
 4. Verify keyboard focus, modal stacks, table overflow, Bangla text, PDF/print, dark-mode contrasts before enabling a dark-mode switch.
 5. Regression test data operations: invoice creation/edit/return, purchasing, FIFO/stock and tracking, ledgers, settings and authentication.
 6. Replace old module-specific pixel overrides incrementally, then remove the compatibility layer; verify the source's design still renders correctly.
+
+## GitHub-only implementation (follow-up commits)
+- POS: moved catalogue search to full-width bar, introduced Grid/List views, refined cards and checkout responsiveness.
+- Products: accessible search/clear, compact desktop table, mobile card layout with existing action handlers.
+- Purchases: source-style inline product picker, invoice line table, payment/total presentation.
+- Shared workspaces: applied source tokens across Dashboard, Sales, Customers, Expenses, Bank, Daybook, Finance, Reports, Settings and Vendors; business logic unchanged.
+- All work is authored and committed through GitHub. GitHub Actions runs `npm ci` and `npm run build` on changes.
+- **Still missing:** actual browser screenshot parity audits, interactive acceptance tests and remaining template-level differences. Do not merge to main solely on a green build.
