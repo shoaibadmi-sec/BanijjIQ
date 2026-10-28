@@ -48,8 +48,9 @@ export function LiveSalesReturnsPage(){
   if(!reason.trim())problems.push('Enter the reason for returning.');
   if(total<=0)problems.push('Return amount must be greater than zero.');
   if(sale&&total>sale.netSale+0.00001)problems.push('Return amount exceeds the unreturned invoice balance.');
+  if(refundMethod==='Store Credit')problems.push('Store Credit refunds are not yet enabled in React; use the established ERP workflow.');
   if(refundMethod==='Cash'&&total>remainingPaid+0.00001)
-    problems.push('Cash refund exceeds the paid amount remaining; use Store Credit after verifying the customer ledger.');
+    problems.push('Cash refund exceeds paid funds remaining. Customer Store Credit returns are not enabled on this React screen yet.');
   if(sale?.items.some(line=>{
     const item=items.find(x=>x.productId===line.productId);
     return !!item&&(item.qty<0||!Number.isInteger(item.qty)||item.qty>line.availableQty||
@@ -75,7 +76,7 @@ export function LiveSalesReturnsPage(){
       const result=await getReturnableInvoice(id);
       setSale(result.sale);
       setItems(result.sale.items.map(x=>({productId:x.productId,qty:0,unitPrice:x.unitPrice,serialNumbers:[]})));
-      setRefundMethod(result.sale.paidAmount>0?'Cash':'Store Credit');
+      setRefundMethod('Cash');
       setMatches([]);
     }catch(e){setError(e instanceof Error?e.message:'Could not read invoice.');}
     finally{setBusy(false);}
@@ -121,7 +122,7 @@ export function LiveSalesReturnsPage(){
       </Link>}/>
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
       Real invoice returns only. Use exact serial numbers for tracked products; vendor-sourced quantities are not returnable as own stock.
-      Batch multi-invoice returns and refund-price adjustments above historic net price remain unavailable here.
+      Store Credit, batch multi-invoice returns and refund-price adjustments above historic net price remain unavailable here.
     </p>
     {error&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {unknown&&<div role="alert" className="space-y-2 rounded-xl border border-danger bg-danger-bg p-3">
@@ -194,7 +195,7 @@ export function LiveSalesReturnsPage(){
         <label className="text-xs text-ink-600">Refund method
           <select value={refundMethod} onChange={e=>setRefundMethod(e.target.value as typeof refundMethod)}
             className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-ink">
-            <option value="Cash">Cash · নগদ</option><option value="Store Credit">Store Credit · জমা</option>
+            <option value="Cash">Cash · নগদ</option><option value="Store Credit" disabled>Store Credit · পরে যুক্ত হবে</option>
           </select>
         </label>
         <label className="text-xs text-ink-600">Reason * · কারণ
