@@ -49,6 +49,7 @@ export function LivePosPage() {
   const [salesChecked, setSalesChecked] = useState(false);
   const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
   const postingRef = useRef(false);
+  const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -140,6 +141,7 @@ export function LivePosPage() {
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
+    saleRequestId.current=crypto.randomUUID();
     setOutcomeUnknown(false);setSalesChecked(false);setRecentSales([]);
     requestAnimationFrame(() => productRef.current?.focus());
   };
@@ -159,6 +161,7 @@ export function LivePosPage() {
     const method = paymentMethod;
     const paymentType: PosSalePayload['paymentType'] = paidAmount === 0 ? 'Due' : paidAmount >= total ? 'Cash' : 'Partial';
     const payload: PosSalePayload = {
+      clientRequestId: saleRequestId.current,
       customerId: selectedCustomer?.id,
       customerName: customerName.trim(), customerPhone: customerPhone.trim(),
       customerAddress: address.trim(), customerFatherName: fatherName.trim(),

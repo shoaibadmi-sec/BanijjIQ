@@ -71,3 +71,11 @@ test('receipt is rendered from server invoice using original HisabIQ component',
   for(const marker of ['getPosInvoice(finished.invoiceId)','ReceiptPreview','receipt.items.map',
     'invoiceDesign?.settings','window.print()']) assert.ok(pos.includes(marker),marker);
 });
+
+test('POS request id persists across retries and rotates on new sale',()=>{
+  const pos=read('overlay/src/integration/LivePosPage.tsx');
+  const api=read('overlay/src/integration/banijjApi.ts');
+  assert.ok(api.includes('clientRequestId: string'));
+  assert.ok(pos.includes('clientRequestId: saleRequestId.current'));
+  assert.ok(pos.includes('saleRequestId.current=crypto.randomUUID()'));
+});

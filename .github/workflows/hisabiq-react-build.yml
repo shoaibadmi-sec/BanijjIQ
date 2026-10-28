@@ -7,6 +7,9 @@ on:
       - 'react-integration/**'
       - 'ui-checks/**'
       - 'server/modules/products/**'
+      - 'server/modules/sales/**'
+      - 'migrations/**'
+      - 'tests/**'
       - 'scripts/prepare-hisabiq-react.mjs'
       - '.github/workflows/hisabiq-react-build.yml'
       - 'package.json'
@@ -35,7 +38,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
-          node --import tsx --test tests/product-catalog.integration.test.ts
+          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
       - name: Verify source submodule stays clean

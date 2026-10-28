@@ -86,6 +86,7 @@ export interface PosSaleLine {
   fulfillmentMode: 'own';
 }
 export interface PosSalePayload {
+  clientRequestId: string;
   customerId?: string; customerName: string; customerPhone: string; customerAddress?: string;
   customerFatherName?: string; discount: number; paymentType: 'Cash' | 'Due' | 'Partial';
   paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking'; bankAccountId?: string;
