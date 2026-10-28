@@ -71,19 +71,25 @@ export interface PosProduct {
   id: string; name: string; productName: string; brand: string; category: string; unit: string;
   barcode: string; sellingPrice: number; stock: number; minimumStock: number;
   trackSerial: boolean; trackExpiry: boolean; trackWarranty: boolean;
+  totalStock?: number; pendingTracking?: number; expiredStock?: number;
 }
 export interface PosCustomer {
   id: string; name: string; phone: string; fatherName: string; address: string; currentDue: number;
 }
 export interface PosBankAccount { id: string; name: string; accountType: string }
+export interface PosVendor { id: string; name: string; phone: string; currentDue: number; status: string }
 export interface PosBootstrap {
   ok: true; products: PosProduct[]; customers: PosCustomer[]; bankAccounts: PosBankAccount[];
+  vendors: PosVendor[];
   activeSession: { sessionId: string; openedAt: string; openingCash: number } | null;
   invoiceDesign: { settings: Record<string,string>; logoDataUri: string };
 }
 export interface PosSaleLine {
   productId: string; name: string; qty: number; unitPrice: number;
-  fulfillmentMode: 'own';
+  fulfillmentMode: 'own' | 'negative' | 'vendor';
+  serialNumbers?: string[];
+  vendorId?: string;
+  vendorUnitCost?: number;
 }
 export interface PosSalePayload {
   clientRequestId: string;
@@ -132,3 +138,40 @@ export const updateProductCatalog = (productId: string, payload: ProductCatalogE
 
 export const getPosInvoice = (id:string) =>
   request<{ ok:true; invoice:PosInvoice }>('/api/pos/invoices/'+encodeURIComponent(id));
+
+/** Phase 13 live stock/tracking and invoice return APIs. Never source IDs from demo stores. */
+export const getPosTrackingOptions = (productId: string) =>
+  request<{ ok: true; serials: Array<{serialNumber:string;expiryDate?:string}> }>(
+    '/api/pos/products/' + encodeURIComponent(productId) + '/tracking-options');
+export const createPosVendor = (name:string,phone:string) =>
+  request<{ok:true;vendor:PosVendor}>('/api/pos/vendors',{
+    method:'POST',body:JSON.stringify({name,phone})
+  });
+export interface ReturnInvoiceMatch {
+  invoiceId:string;date:string;customerName:string;customerPhone:string;
+  grandTotal:number;paymentStatus:string;returnStatus:string;
+}
+export interface ReturnableLine {
+  productId:string;name:string;soldQty:number;vendorQty:number;previouslyReturnedQty:number;
+  availableQty:number;unitPrice:number;trackSerial:boolean|number;trackExpiry:boolean|number;
+  trackWarranty:boolean|number;availableSerials:string[];
+}
+export interface ReturnableInvoice {
+  invoiceId:string;date:string;customerId:string;customerName:string;customerPhone:string;
+  grandTotal:number;paidAmount:number;dueAmount:number;previouslyReturnedAmount:number;
+  netSale:number;items:ReturnableLine[];
+}
+export interface SalesReturnPayload {
+  invoiceId:string;refundMethod:'Cash'|'Store Credit';reason:string;
+  items:Array<{productId:string;qty:number;unitPrice:number;serialNumbers?:string[]}>;
+}
+export const searchReturnInvoices = (query:string) =>
+  request<{ok:true;matches:ReturnInvoiceMatch[]}>('/api/sales-returns/search?q='+encodeURIComponent(query));
+export const getReturnableInvoice = (id:string) =>
+  request<{ok:true;sale:ReturnableInvoice}>('/api/sales-returns/'+encodeURIComponent(id)+'/data');
+export const postSalesReturn = (payload:SalesReturnPayload) =>
+  request<{ok:true;returnId:string;totalReturnAmount:number}>('/api/sales-returns',{
+    method:'POST',body:JSON.stringify(payload)
+  });
+export const getSalesReturnHistory = () =>
+  request<{ok:true;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>}>('/api/sales-returns');
