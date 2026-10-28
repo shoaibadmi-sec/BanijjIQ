@@ -24,7 +24,7 @@ export function LiveStockShortageDialog({open,onOpenChange,name,qty,stock,vendor
   const [adding,setAdding]=useState(false);
   const [error,setError]=useState('');
   useEffect(()=>{if(open){setChoice('own');setVendorCost('');setVendorId('');
-    setVendorsLocal(vendors);setError('');setNewName('');setNewPhone('');}},[open,vendors]);
+    setVendorsLocal(vendors);setError('');setNewName('');setNewPhone('');}},[open]);
   const allVendors=vendorsLocal;
   const shortage=Math.max(0,qty-Math.max(0,stock));
   const unitCost=Number(vendorCost);
