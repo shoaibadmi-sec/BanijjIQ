@@ -19,7 +19,7 @@ Target: https://github.com/shoaibadmi-sec/BanijjIQ
 - Phone bottom navigation plus sidebar drawer.
 
 ## Implementation status
-This branch installs the source's reusable CSS tokens and component primitives and adapts BanijjIQ's existing CSS classes, shell and tab components. This is an **initial cross-module visual migration, not a verified 1:1 copy of every screen**.
+This branch installs the source's reusable CSS tokens and component primitives and adapts BanijjIQ's existing CSS classes, shell and tab components, and adds source-style phone navigation plus Ctrl+K module switching (module navigation only, not record search). This is an **initial cross-module visual migration, not a verified 1:1 copy of every screen**.
 
 ## Required validation before merge
 1. Run `npm ci && npm run build`; resolve TypeScript/Vue build errors.

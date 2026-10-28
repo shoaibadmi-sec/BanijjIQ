@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppSidebar from './AppSidebar.vue';
 import AppBottomNav from './AppBottomNav.vue';
+import AppModuleSearch from './AppModuleSearch.vue';
 import AppTopBar from './AppTopBar.vue';
 import GlobalHorizontalScroll from './GlobalHorizontalScroll.vue';
 import type { ShellNavItem } from './types';
@@ -84,6 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
       @logout="emit('logout')"
       @refresh="emit('refresh')"
     >
+      <template #search><AppModuleSearch :items="props.navItems" @select="selectModule" /></template>
       <template #tools>
         <slot name="topbar-tools" />
       </template>

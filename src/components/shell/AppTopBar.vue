@@ -25,6 +25,7 @@ const emit = defineEmits<{
       <span class="bn-hint">{{ hint }}</span>
     </div>
 
+    <slot name="search" />
     <GlobalCalendarDates />
     <slot name="tools" />
 
