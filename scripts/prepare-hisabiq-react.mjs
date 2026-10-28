@@ -39,11 +39,12 @@ if (![importAnchor, posAnchor, productsAnchor].every(anchor => app.includes(anch
 app = app.replace(importAnchor, [
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
+  "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
   importAnchor
 ].join('\n'));
 app = app.replace(posAnchor,
-  '<Route path="pos" element={<LivePos />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
+  '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
   '<Route path="products" element={<LiveProducts />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + read-only Products and backend-posted basic POS.');
+console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + live Products, tracked POS and live Returns integration.');
