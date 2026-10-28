@@ -50,3 +50,18 @@ deploy the React Worker there, test permissions/accounting/returns against that
 dedicated preview, review screenshots, and plan rollback. Production D1 must
 never be copied into the test environment without an explicit privacy and data
 handling review.
+
+## Real React browser on real local D1
+
+The test runner also launches Chromium against the **same local Wrangler Worker**
+while it is still running. This is separate from the mocked API screenshots in
+`ui-checks/`. The browser must show the sign-in gate, submit real preview-only
+admin credentials, display the actual D1 Products row, use keyboard F2 and the
+original POS product combobox, post exactly one real POS invoice, and fetch the
+**saved** invoice receipt from D1. It captures mobile (390px) and desktop
+(1440px) screenshots named `d1-real-*.png` in the same GitHub artifact.
+
+The final database reconciliation now asserts four invoices (three direct HTTP
+fixtures plus one from Chromium), exactly one browser sale, stock 3, four unique
+request keys, a matching browser cash-book entry, and the existing customer due.
+The database is disposable, and no hosted or production Worker is contacted.
