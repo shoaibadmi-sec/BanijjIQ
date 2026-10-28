@@ -1,0 +1,3 @@
+[submodule "apps/hisabiq-web"]
+	path = apps/hisabiq-web
+	url = https://github.com/shuvodelux-commits/hisabiq_ui.git

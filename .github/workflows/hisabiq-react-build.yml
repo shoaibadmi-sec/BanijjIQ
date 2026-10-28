@@ -1,0 +1,39 @@
+name: HisabIQ React / BanijjIQ API integration
+on:
+  pull_request:
+    paths:
+      - '.gitmodules'
+      - 'apps/hisabiq-web'
+      - 'react-integration/**'
+      - 'scripts/prepare-hisabiq-react.mjs'
+      - '.github/workflows/hisabiq-react-build.yml'
+      - 'package.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  react-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/hisabiq-web/package-lock.json
+      - name: Verify pinned React submodule and integration adapter
+        run: |
+          git submodule status
+          node --test react-integration/tests/contract.test.mjs
+      - name: Compile original HisabIQ React app with API integration overlays
+        run: npm run react:build
+      - name: Ensure React production assets exist
+        run: test -f apps/hisabiq-web/dist/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hisabiq-react-preview-dist
+          path: apps/hisabiq-web/dist
+          retention-days: 7
