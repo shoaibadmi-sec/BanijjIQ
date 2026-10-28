@@ -62,7 +62,7 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls){
-  context.route('**/api/**',async route=>{
+  return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
@@ -138,7 +138,7 @@ try{
     const ctx=await browser.newContext({viewport:{width:390,height:844}});
     const page=await ctx.newPage();
     await page.goto(base+'/#/app/products');
-    await page.getByText('Sign in · BanijjIQ').waitFor({timeout:20000});
+    await page.getByText('Sign in · BanijjIQ').waitFor({timeout:10000});
     assert.equal(await page.locator('[data-live-products]').count(),0);
     await screenshot(page,'auth-390');
     await ctx.close();
@@ -149,7 +149,7 @@ try{
         const ctx=await browser.newContext({viewport:{width,height:900},
           colorScheme:theme,reducedMotion:'reduce',deviceScaleFactor:1});
         const api=[];
-        startMocking(ctx,api);
+        await startMocking(ctx,api);
         await ctx.addInitScript(({theme})=>{
           localStorage.setItem('shererp_auth_token','ui-e2e-only-token');
           localStorage.setItem('hisabiq-theme',theme);
@@ -157,8 +157,8 @@ try{
         const page=await ctx.newPage();
         page.on('pageerror',e=>results.consoleErrors.push('products '+width+': '+e.message));
         await page.goto(base+'/#/app/products',{waitUntil:'domcontentloaded'});
-        await page.locator('[data-live-products]').waitFor({timeout:20000});
-        await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:15000});
+        await page.locator('[data-live-products]').waitFor({timeout:10000});
+        await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
         await inspectLayout(page,'products-'+width+'-'+theme);
         await screenshot(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
@@ -182,7 +182,7 @@ try{
       const ctx=await browser.newContext({viewport:{width,height:960},
         reducedMotion:'reduce',deviceScaleFactor:1});
       const api=[];
-      startMocking(ctx,api);
+      await startMocking(ctx,api);
       await ctx.addInitScript(()=>{
         localStorage.setItem('shererp_auth_token','ui-e2e-only-token');
         localStorage.setItem('hisabiq-theme','light');
@@ -190,8 +190,8 @@ try{
       const page=await ctx.newPage();
       page.on('pageerror',e=>results.consoleErrors.push('pos '+width+': '+e.message));
       await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
-      await page.locator('[data-live-pos]').waitFor({timeout:20000});
-      await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:15000});
+      await page.locator('[data-live-pos]').waitFor({timeout:10000});
+      await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
       await inspectLayout(page,'pos-'+width+'-light');
       await screenshot(page,'pos-'+width+'-light');
       if(width===390)await audit(page,'pos-390-light');
