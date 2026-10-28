@@ -182,6 +182,57 @@ try{
     report.realBrowser=await runRealD1Browser();
     assert.equal(report.realBrowser.checks.length,10);
   });
+  await check('independent simultaneous buyers cannot double-consume one FIFO unit',async()=>{
+    for(let i=0;i<4;i++){
+      const name='D1 Concurrency Unit '+i;
+      const product=await request('POST','/api/products',{
+        productName:name,category:'Electrical',unit:'Pcs',brand:'',
+        barcode:'D1-RACE-'+i,purchasePrice:10,sellingPrice:20,
+        currentStock:1,minimumStock:0,status:'Active',
+        trackSerial:false,trackExpiry:false,trackWarranty:false
+      },{token});
+      assert.equal(product.ok,true,JSON.stringify(product));
+      const raceSale=(buyer)=>({
+        clientRequestId:'d1-race-'+i+'-buyer-'+buyer+'-2026',
+        customerName:'Race Buyer '+buyer,customerPhone:'01000'+String(i).padStart(2,'0')+buyer+'111',
+        discount:0,paymentType:'Cash',paidAmount:0,paymentMethod:'Cash',
+        items:[{productId:product.productId,name,qty:1,unitPrice:20,fulfillmentMode:'own'}]
+      });
+      const attempts=await Promise.all(
+        ['A','B'].map(buyer=>request('POST','/api/pos/sales',raceSale(buyer),{token}))
+      );
+      const success=attempts.filter(x=>x.ok);
+      const rejected=attempts.filter(x=>!x.ok);
+      assert.equal(success.length,1,'Two independent requests must not share one available stock unit: '+JSON.stringify(attempts));
+      assert.equal(rejected.length,1);
+      assert.ok([400,409].includes(rejected[0].status),'Unexpected checkout conflict status: '+rejected[0].status);
+      const stock=await request('GET','/api/bootstrap',undefined,{token});
+      assert.equal(Number(stock.products.find(x=>x.productId===product.productId)?.currentStock),0);
+      report.requests.push({method:'ASSERT',path:'independent-race-'+i,status:'1 accepted, 1 rejected'});
+    }
+  });
+
+  await check('two simultaneous dues on one customer retain correct running ledger',async()=>{
+    const item=await request('POST','/api/products',{
+      productName:'D1 Shared Ledger Item',brand:'',category:'Electrical',unit:'Pcs',
+      barcode:'D1-DUE-CONCURRENT',purchasePrice:10,sellingPrice:30,
+      currentStock:2,minimumStock:0,status:'Active',
+      trackSerial:false,trackExpiry:false,trackWarranty:false
+    },{token});
+    assert.equal(item.ok,true,JSON.stringify(item));
+    const dueSale=key=>({
+      clientRequestId:'d1-customer-due-race-'+key+'-2026',
+      customerName:'D1 Test Customer',customerPhone:'01000000777',
+      paymentType:'Due',paidAmount:0,paymentMethod:'Cash',discount:0,
+      items:[{productId:item.productId,name:'D1 Shared Ledger Item',qty:1,unitPrice:30,fulfillmentMode:'own'}]
+    });
+    const both=await Promise.all(['A','B'].map(key=>request('POST','/api/pos/sales',dueSale(key),{token})));
+    assert.ok(both.every(x=>x.ok),JSON.stringify(both));
+    assert.equal(new Set(both.map(x=>x.invoice.invoiceId)).size,2);
+    const customer=await request('GET','/api/pos/bootstrap',undefined,{token});
+    assert.equal(Number(customer.customers.find(x=>x.phone==='01000000777')?.currentDue),180);
+  });
+
 } catch(err){
   report.failed.push({name:'runner',message:String(err?.stack||err)});
 } finally{
@@ -202,6 +253,12 @@ try{
     const customer=query("SELECT current_due AS due FROM customers WHERE phone='01000000777'");
     const ledger=query("SELECT debit AS due FROM customer_ledger WHERE reference='"+partialInvoice+"'");
     const requestKeys=query('SELECT COUNT(*) AS n FROM pos_sale_requests');
+    const raceRows=query("SELECT product_id,current_stock FROM products WHERE product_name LIKE 'D1 Concurrency Unit %' ORDER BY product_name");
+    const raceLots=query("SELECT product_id,remaining_quantity FROM stock_lots WHERE product_id IN (SELECT product_id FROM products WHERE product_name LIKE 'D1 Concurrency Unit %')");
+    const raceDraws=query("SELECT product_id,SUM(quantity) AS total FROM sale_item_lots WHERE product_id IN (SELECT product_id FROM products WHERE product_name LIKE 'D1 Concurrency Unit %') GROUP BY product_id");
+    const sharedDueLedger=query("SELECT balance FROM customer_ledger WHERE customer_id=(SELECT customer_id FROM customers WHERE phone='01000000777') ORDER BY rowid");
+    const sharedDueStock=query("SELECT current_stock FROM products WHERE product_name='D1 Shared Ledger Item'");
+    const sharedDueLot=query("SELECT remaining_quantity FROM stock_lots WHERE product_id=(SELECT product_id FROM products WHERE product_name='D1 Shared Ledger Item')");
     const browserSale=query("SELECT invoice_id,grand_total,paid_amount,due_amount FROM sales WHERE customer_phone='01000000123'");
     const browserLot=query("SELECT SUM(quantity) AS qty FROM sale_item_lots WHERE invoice_id=(SELECT invoice_id FROM sales WHERE customer_phone='01000000123')");
     const browserCash=query("SELECT credit FROM cash_book WHERE type='Sale' AND reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000123')");
@@ -225,15 +282,19 @@ try{
       createdProductCount:createdProduct.length,createdProductStock:createdProduct[0]?.current_stock,
       createdProductCost:createdProduct[0]?.purchase_price,createdProductSelling:createdProduct[0]?.selling_price,
       createdLotCount:createdLots.length,createdLotStock:createdLots[0]?.remaining_quantity,
-      createdLotCost:createdLots[0]?.unit_cost};
+      createdLotCost:createdLots[0]?.unit_cost,
+      raceProducts:raceRows.length,raceStocks:raceRows.map(x=>x.current_stock),
+      raceLotBalances:raceLots.map(x=>x.remaining_quantity),raceDrawTotals:raceDraws.map(x=>x.total),
+      sharedDueBalances:sharedDueLedger.map(x=>x.balance),
+      sharedDueStock:sharedDueStock[0]?.current_stock,sharedDueLot:sharedDueLot[0]?.remaining_quantity};
     report.databaseAudit=audit;
     assert.equal(audit.stock,2);
-    assert.equal(audit.sales,5);
+    assert.equal(audit.sales,11);
     assert.equal(audit.paidSaleLotQty,2);
     assert.equal(audit.cashReceived,200);
     assert.equal(audit.customerDue,120);
     assert.equal(audit.ledgerDue,120);
-    assert.equal(audit.requestKeys,5);
+    assert.equal(audit.requestKeys,11);
     assert.equal(audit.browserInvoiceCount,1);
     assert.equal(audit.browserTotal,100);
     assert.equal(audit.browserPaid,100);
@@ -255,6 +316,14 @@ try{
     assert.equal(audit.createdLotCount,1);
     assert.equal(audit.createdLotStock,3);
     assert.equal(audit.createdLotCost,95);
+    assert.equal(audit.raceProducts,4);
+    assert.deepEqual(audit.raceStocks,[0,0,0,0]);
+    assert.deepEqual(audit.raceLotBalances,[0,0,0,0]);
+    assert.deepEqual(audit.raceDrawTotals,[1,1,1,1]);
+    assert.deepEqual(audit.sharedDueBalances,[120,150,180]);
+    assert.equal(audit.sharedDueStock,0);
+    assert.equal(audit.sharedDueLot,0);
+    assert.equal(query("SELECT current_due FROM customers WHERE phone='01000000777'")[0]?.current_due,180);
     report.passed.push('D1 SQL reconciliation after Worker shutdown');
   }catch(e){report.failed.push({name:'D1 SQL reconciliation',message:String(e?.stack||e)});}
   report.finishedAt=new Date().toISOString();

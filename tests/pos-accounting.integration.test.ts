@@ -167,6 +167,51 @@ test('real Hono accounting routes on a fresh disposable database', async t => {
       assert.equal(row('SELECT count(*) n FROM pos_sale_requests WHERE request_id=?','e2e-failed-batch-request-05').n,0);
       db.native.exec('DROP TRIGGER e2e_reject_sale');
     });
+
+    await t.test('atomic FIFO decrements prevent independent request overselling',async()=>{
+      const newProduct=await api('POST','/api/products',{
+        productName:'Contended Unit',brand:'',category:'Electrical',unit:'Pcs',
+        barcode:'E2E-RACE-001',purchasePrice:10,sellingPrice:20,currentStock:1,
+        minimumStock:0,status:'Active',trackSerial:false,trackExpiry:false,trackWarranty:false
+      });
+      assert.equal(newProduct.ok,true);
+      const sell=(buyer:string)=>({
+        clientRequestId:'e2e-independent-race-'+buyer+'-2026',
+        customerName:'Race '+buyer,customerPhone:'0100011'+buyer,
+        paymentType:'Cash',paidAmount:0,paymentMethod:'Cash',discount:0,
+        items:[{productId:newProduct.productId,name:'Contended Unit',qty:1,unitPrice:20,fulfillmentMode:'own'}]
+      });
+      const result=await Promise.all(['A','B'].map(x=>api('POST','/api/pos/sales',sell(x))));
+      assert.equal(result.filter(x=>x.ok).length,1,JSON.stringify(result));
+      assert.equal(result.filter(x=>!x.ok).length,1);
+      assert.equal(row('SELECT current_stock stock FROM products WHERE product_id=?',newProduct.productId).stock,0);
+      assert.equal(row('SELECT remaining_quantity n FROM stock_lots WHERE product_id=?',newProduct.productId).n,0);
+      assert.equal(row('SELECT SUM(quantity) n FROM sale_item_lots WHERE product_id=?',newProduct.productId).n,1);
+      assert.throws(()=>db.native.prepare('UPDATE stock_lots SET remaining_quantity=-1 WHERE product_id=?')
+        .run(newProduct.productId),/POS_STOCK_CONFLICT/);
+    });
+
+    await t.test('concurrent dues update customer and ledger balances atomically',async()=>{
+      const newProduct=await api('POST','/api/products',{
+        productName:'Ledger Race Unit',brand:'',category:'Electrical',unit:'Pcs',
+        barcode:'E2E-DUE-RACE',purchasePrice:10,sellingPrice:30,currentStock:2,
+        minimumStock:0,status:'Active',trackSerial:false,trackExpiry:false,trackWarranty:false
+      });
+      assert.equal(newProduct.ok,true);
+      const due=(key:string)=>({
+        clientRequestId:'e2e-shared-ledger-'+key+'-2026',
+        customerName:'Credit Buyer',customerPhone:'01000000333',
+        paymentType:'Due',paidAmount:0,discount:0,
+        items:[{productId:newProduct.productId,name:'Ledger Race Unit',qty:1,unitPrice:30,fulfillmentMode:'own'}]
+      });
+      const sales=await Promise.all(['A','B'].map(x=>api('POST','/api/pos/sales',due(x))));
+      assert.ok(sales.every(x=>x.ok),JSON.stringify(sales));
+      assert.equal(row('SELECT current_due due FROM customers WHERE phone=?','01000000333').due,180);
+      const ledgers=all("SELECT balance FROM customer_ledger WHERE customer_id=(SELECT customer_id FROM customers WHERE phone='01000000333') ORDER BY rowid");
+      assert.deepEqual(ledgers.map(x=>x.balance),[120,150,180]);
+      assert.equal(row('SELECT current_stock stock FROM products WHERE product_id=?',newProduct.productId).stock,0);
+      assert.equal(row('SELECT remaining_quantity n FROM stock_lots WHERE product_id=?',newProduct.productId).n,0);
+    });
   } finally {
     db.close();
   }

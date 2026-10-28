@@ -79,3 +79,30 @@ SQL reconciliation verifies **5 invoices**, **2 units remaining** for the
 original stock item, **5 idempotency keys**, one new product and its unchanged
 3-unit opening lot, and independent cash/due entries for both React browser
 sales. All transactions are written only to the disposable local D1 database.
+
+## Concurrency safety (atomic FIFO / shared customer dues)
+
+`migrations/0029_pos_atomic_stock_guard.sql` rejects attempts to reduce an
+ordinary FIFO stock lot below zero. `completeSaleRoute` now subtracts the
+quantity from the **database's current balance**, rather than writing an old
+pre-read value. The lot guard rolls back a failed sale batch; an accepted
+checkout cannot be counted twice by another independently keyed buyer.
+The intentional `OVERSOLD` negative-stock lot remains exempt, preserving the
+ERP's separate negative-sale accounting workflow.
+
+The harness races two **different** idempotency keys for each of four
+one-unit products. Exactly one buyer may purchase each product, while the
+other receives a stock conflict/shortage response. The final SQL audit checks
+those four zero remaining stock balances, four depleted FIFO lots, and one
+sale-item allocation per contested product.
+
+Two additional due sales for an **existing customer** are posted concurrently.
+Customer balances are incremented atomically, and the ledger reads the
+balance *after* the increment inside the same D1 SQL batch. The final ledger
+progression is `120 -> 150 -> 180`; a stale pre-read ledger balance is not
+accepted. The full local fixture totals **11 invoices / 11 idempotency keys**,
+including the previous two real React-browser sales.
+
+This is Worker + local D1 race regression coverage, **not** remote multi-region
+Cloudflare D1 certification. Remote preview must still be explicitly
+provisioned and independently tested before any production cutover.
