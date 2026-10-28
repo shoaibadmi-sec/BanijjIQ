@@ -56,6 +56,31 @@ export async function runRealD1Browser(){
         await shots(page,'products-'+width);
         checks.push('live D1 login and Products '+width);
 
+        if(width===1440){
+          // The ORIGINAL HisabIQ full-page editor (not a synthetic API client).
+          await page.getByRole('button',{name:'Add Product'}).click();
+          await page.locator('[data-live-product-editor]').waitFor({timeout:12000});
+          await page.locator('#pf-name').fill('D1 Browser Socket');
+          await page.locator('#pf-buy').fill('95');
+          await page.locator('#pf-sell').fill('150');
+          await page.locator('#pf-opening').fill('3');
+          await page.locator('#pf-min').fill('1');
+          await shots(page,'product-create-form-1440');
+          await page.getByRole('button',{name:/Save product/}).click();
+          await page.locator('[data-live-products]').waitFor({timeout:20000});
+          await page.getByText('D1 Browser Socket').first().waitFor({timeout:12000});
+          checks.push('React full-page product create persisted to D1');
+
+          await page.getByRole('button',{name:'Edit D1 Browser Socket'}).click();
+          await page.locator('#pf-name').fill('D1 Browser Socket Updated');
+          await page.locator('#pf-sell').fill('175');
+          await page.getByRole('button',{name:/Save changes/}).click();
+          await page.locator('[data-live-products]').waitFor({timeout:20000});
+          await page.getByText('D1 Browser Socket Updated').first().waitFor({timeout:12000});
+          await shots(page,'product-catalog-edit-1440');
+          checks.push('React catalog edit saved price/name without stock changes');
+        }
+
         await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
         await page.locator('[data-live-pos]').waitFor({timeout:16000});
         await page.getByText('D1 CI Copper Wire').first().waitFor({timeout:12000});
@@ -83,6 +108,25 @@ export async function runRealD1Browser(){
           await page.locator('#hisabiq-real-receipt').waitFor({timeout:16000});
           await shots(page,'real-saved-receipt-1440');
           checks.push('browser cash sale and saved D1 receipt, exactly one POST');
+
+          await page.keyboard.press('Escape'); // Close saved receipt dialog.
+          await page.getByRole('button',{name:'New Sale'}).click();
+          await page.getByText('D1 CI Copper Wire').first().waitFor({timeout:10000});
+          const dueProduct=page.locator('[data-live-pos] button').filter({hasText:'D1 CI Copper Wire'}).first();
+          await dueProduct.click();
+          await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
+          await name.fill('Real Browser Due Buyer');
+          await phone.fill('01000000124');
+          await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          const dueBefore=requests.filter(r=>r.method==='POST'&&r.path==='/api/pos/sales').length;
+          await page.getByRole('button',{name:'Review and post real sale'}).click();
+          await page.getByRole('button',{name:'Confirm and post'}).click();
+          await page.getByText('Sale posted successfully').waitFor({timeout:20000});
+          assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/api/pos/sales').length-dueBefore,1);
+          await page.getByRole('button',{name:'View / Print receipt'}).click();
+          await page.locator('#hisabiq-real-receipt').waitFor({timeout:16000});
+          await shots(page,'real-partial-payment-receipt-1440');
+          checks.push('React partial payment posts exact cash and due to D1 with saved receipt');
         }
       }finally{await context.close();}
     }

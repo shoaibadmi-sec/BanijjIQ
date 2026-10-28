@@ -180,7 +180,7 @@ try{
   await check('real React browser signs in, reads D1 products, posts POS sale and fetches receipt',async()=>{
     // No API mocking. Uses Wrangler's real assets + Hono + this test D1.
     report.realBrowser=await runRealD1Browser();
-    assert.equal(report.realBrowser.checks.length,7);
+    assert.equal(report.realBrowser.checks.length,10);
   });
 } catch(err){
   report.failed.push({name:'runner',message:String(err?.stack||err)});
@@ -205,26 +205,56 @@ try{
     const browserSale=query("SELECT invoice_id,grand_total,paid_amount,due_amount FROM sales WHERE customer_phone='01000000123'");
     const browserLot=query("SELECT SUM(quantity) AS qty FROM sale_item_lots WHERE invoice_id=(SELECT invoice_id FROM sales WHERE customer_phone='01000000123')");
     const browserCash=query("SELECT credit FROM cash_book WHERE type='Sale' AND reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000123')");
+    const browserDueSale=query("SELECT invoice_id,grand_total,paid_amount,due_amount,customer_id FROM sales WHERE customer_phone='01000000124'");
+    const browserDueCustomer=query("SELECT customer_id,current_due FROM customers WHERE phone='01000000124'");
+    const browserDueLedger=query("SELECT debit,balance FROM customer_ledger WHERE reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000124')");
+    const browserDueCash=query("SELECT credit FROM cash_book WHERE type='Sale' AND reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000124')");
+    const createdProduct=query("SELECT product_id,product_name,current_stock,purchase_price,selling_price FROM products WHERE product_name='D1 Browser Socket Updated'");
+    const createdLots=query("SELECT remaining_quantity,unit_cost FROM stock_lots WHERE product_id=(SELECT product_id FROM products WHERE product_name='D1 Browser Socket Updated')");
     const audit={stock:qty[0]?.stock,sales:sales[0]?.n,paidSaleLotQty:rows[0]?.units,
       cashReceived:cash[0]?.credit,customerDue:customer[0]?.due,
       ledgerDue:ledger[0]?.due,requestKeys:requestKeys[0]?.n,
       browserInvoiceCount:browserSale.length,browserTotal:browserSale[0]?.grand_total,
       browserPaid:browserSale[0]?.paid_amount,browserDue:browserSale[0]?.due_amount,
-      browserLotQty:browserLot[0]?.qty,browserCash:browserCash[0]?.credit};
+      browserLotQty:browserLot[0]?.qty,browserCash:browserCash[0]?.credit,
+      browserDueInvoiceCount:browserDueSale.length,
+      browserDueTotal:browserDueSale[0]?.grand_total,browserDuePaid:browserDueSale[0]?.paid_amount,
+      browserDueAmount:browserDueSale[0]?.due_amount,browserCustomerDue:browserDueCustomer[0]?.current_due,
+      browserLedgerDebit:browserDueLedger[0]?.debit,browserLedgerBalance:browserDueLedger[0]?.balance,
+      browserDueCash:browserDueCash[0]?.credit,
+      createdProductCount:createdProduct.length,createdProductStock:createdProduct[0]?.current_stock,
+      createdProductCost:createdProduct[0]?.purchase_price,createdProductSelling:createdProduct[0]?.selling_price,
+      createdLotCount:createdLots.length,createdLotStock:createdLots[0]?.remaining_quantity,
+      createdLotCost:createdLots[0]?.unit_cost};
     report.databaseAudit=audit;
-    assert.equal(audit.stock,3);
-    assert.equal(audit.sales,4);
+    assert.equal(audit.stock,2);
+    assert.equal(audit.sales,5);
     assert.equal(audit.paidSaleLotQty,2);
     assert.equal(audit.cashReceived,200);
     assert.equal(audit.customerDue,120);
     assert.equal(audit.ledgerDue,120);
-    assert.equal(audit.requestKeys,4);
+    assert.equal(audit.requestKeys,5);
     assert.equal(audit.browserInvoiceCount,1);
     assert.equal(audit.browserTotal,100);
     assert.equal(audit.browserPaid,100);
     assert.equal(audit.browserDue,0);
     assert.equal(audit.browserLotQty,1);
     assert.equal(audit.browserCash,100);
+    assert.equal(audit.browserDueInvoiceCount,1);
+    assert.equal(audit.browserDueTotal,100);
+    assert.equal(audit.browserDuePaid,40);
+    assert.equal(audit.browserDueAmount,60);
+    assert.equal(audit.browserCustomerDue,60);
+    assert.equal(audit.browserLedgerDebit,60);
+    assert.equal(audit.browserLedgerBalance,60);
+    assert.equal(audit.browserDueCash,40);
+    assert.equal(audit.createdProductCount,1);
+    assert.equal(audit.createdProductStock,3);
+    assert.equal(audit.createdProductCost,95);
+    assert.equal(audit.createdProductSelling,175);
+    assert.equal(audit.createdLotCount,1);
+    assert.equal(audit.createdLotStock,3);
+    assert.equal(audit.createdLotCost,95);
     report.passed.push('D1 SQL reconciliation after Worker shutdown');
   }catch(e){report.failed.push({name:'D1 SQL reconciliation',message:String(e?.stack||e)});}
   report.finishedAt=new Date().toISOString();

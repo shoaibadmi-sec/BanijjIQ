@@ -65,3 +65,17 @@ The final database reconciliation now asserts four invoices (three direct HTTP
 fixtures plus one from Chromium), exactly one browser sale, stock 3, four unique
 request keys, a matching browser cash-book entry, and the existing customer due.
 The database is disposable, and no hosted or production Worker is contacted.
+
+## Full-page React product editor and partial-payment coverage
+
+In the 1440px real-browser scenario the test exercises the **pinned HisabIQ
+AddProductDialog component** through its live API adapter, creates a product
+with opening stock, edits its name/selling price and verifies that the editor
+did not alter stock or its FIFO opening lot. It then starts a new POS sale,
+posts ৳40 cash against a ৳100 invoice, reads its saved receipt and checks
+that the D1 customer ledger and outstanding due are exactly ৳60.
+
+SQL reconciliation verifies **5 invoices**, **2 units remaining** for the
+original stock item, **5 idempotency keys**, one new product and its unchanged
+3-unit opening lot, and independent cash/due entries for both React browser
+sales. All transactions are written only to the disposable local D1 database.
