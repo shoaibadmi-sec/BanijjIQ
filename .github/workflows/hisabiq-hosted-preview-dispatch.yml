@@ -1,0 +1,168 @@
+# Default-branch, manual-only launcher. Never runs on push or pull_request.
+name: Authorize isolated HisabIQ React preview
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit_sha:
+        description: 'Exact 40-character reviewed commit SHA at the head of draft PR #9'
+        required: true
+        type: string
+      confirm_isolated_preview:
+        description: 'Type ISOLATED-PREVIEW-ONLY to deploy to new preview Worker and D1'
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  verify-reviewed-commit:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate PR #9 head and exact manually reviewed SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_SHA: ${{ inputs.reviewed_commit_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$REVIEWED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Expected a full reviewed 40-character commit SHA."
+            exit 1
+          fi
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/9")"
+          actual="$(jq -r '.head.sha' <<< "$pr")"
+          head_repo="$(jq -r '.head.repo.full_name' <<< "$pr")"
+          head_branch="$(jq -r '.head.ref' <<< "$pr")"
+          base_branch="$(jq -r '.base.ref' <<< "$pr")"
+          state="$(jq -r '.state' <<< "$pr")"
+          if [[ "$state" != open || "$head_repo" != "$GITHUB_REPOSITORY" ||
+                "$head_branch" != "feat/hisabiq-react-api" ||
+                "$base_branch" != main || "$REVIEWED_SHA" != "$actual" ]]; then
+            echo "::error::PR #9 branch, repository or reviewed commit has changed. No deployment."
+            exit 1
+          fi
+          echo "Exact reviewed PR #9 commit verified: $actual"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.reviewed_commit_sha }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify checkout and pinned source are clean
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_commit_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          test -z "$(git -C apps/hisabiq-web status --porcelain)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify isolation, backend and real SQL accounting
+        run: |
+          npm ci
+          node scripts/preview/build-config.mjs --self-test
+          node --test tests/preview-deploy.contract.test.mjs
+          npm run backend:build
+          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts
+      - name: Build original pinned HisabIQ React frontend
+        run: npm run react:build
+      - name: Responsive, keyboard and accessibility browser checks
+        run: |
+          cd .generated/hisabiq-web
+          npx playwright install --with-deps chromium
+          cd ../..
+          node ui-checks/run.mjs
+      - name: Real Cloudflare Worker with disposable local D1
+        run: node d1-checks/run.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hisabiq-reviewed-react-dist
+          path: .generated/hisabiq-web/dist
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hisabiq-reviewed-checks
+          path: |
+            ui-checks/output
+            d1-checks/output
+          retention-days: 14
+          if-no-files-found: warn
+
+  deploy-isolated-preview:
+    needs: verify-reviewed-commit
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    # Configure REQUIRED reviewers and deployment restrictions in Settings > Environments.
+    environment:
+      name: hisabiq-react-preview
+    concurrency:
+      group: hisabiq-react-preview-deployment
+      cancel-in-progress: false
+    env:
+      CI: 'true'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      HISABIQ_PREVIEW_D1_ID: ${{ secrets.HISABIQ_PREVIEW_D1_ID }}
+      HISABIQ_PREVIEW_SETUP_SECRET: ${{ secrets.HISABIQ_PREVIEW_SETUP_SECRET }}
+      HISABIQ_PREVIEW_ADMIN_PHONE: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PHONE }}
+      HISABIQ_PREVIEW_ADMIN_PASSWORD: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.reviewed_commit_sha }}
+          persist-credentials: false
+      - name: Confirm exact reviewed SHA
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_commit_sha }}
+        run: test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Fail closed on missing or weak preview credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID HISABIQ_PREVIEW_D1_ID HISABIQ_PREVIEW_SETUP_SECRET HISABIQ_PREVIEW_ADMIN_PHONE HISABIQ_PREVIEW_ADMIN_PASSWORD; do
+            if [[ -z "$(printenv "$key")" ]]; then
+              echo "::error::Set $key in GitHub environment hisabiq-react-preview."
+              exit 1
+            fi
+          done
+          test "$(printf '%s' "$HISABIQ_PREVIEW_SETUP_SECRET" | wc -c)" -ge 24
+          test "$(printf '%s' "$HISABIQ_PREVIEW_ADMIN_PASSWORD" | wc -c)" -ge 12
+      - name: Install locked Wrangler dependencies
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: hisabiq-reviewed-react-dist
+          path: .generated/hisabiq-web/dist
+      - name: Generate preview configuration and reject production D1 UUID
+        run: |
+          test -f .generated/hisabiq-web/dist/index.html
+          node scripts/preview/build-config.mjs
+      - name: Independently verify remote D1 UUID and preview-only name
+        run: node scripts/preview/preflight-remote-db.mjs
+      - name: Apply migrations to verified remote PREVIEW D1
+        run: npx --no-install wrangler d1 migrations apply DB --remote --config wrangler.hisabiq-preview.generated.jsonc
+      - name: Deploy isolated preview Worker; do not modify production routes
+        run: npx --no-install wrangler deploy --config wrangler.hisabiq-preview.generated.jsonc
+      - name: Install preview-only setup secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$HISABIQ_PREVIEW_SETUP_SECRET" | npx --no-install wrangler secret put SETUP_SECRET --config wrangler.hisabiq-preview.generated.jsonc
+      - name: HTTPS smoke test authenticated preview Products and POS
+        run: node scripts/preview/remote-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hisabiq-hosted-preview-smoke
+          path: preview-checks/output
+          retention-days: 14
+          if-no-files-found: warn
