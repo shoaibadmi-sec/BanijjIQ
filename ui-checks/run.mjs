@@ -298,6 +298,32 @@ try{
     await screenshot(page,'phase13-pos-shortage-768');
     results.apiCalls.push(...api);await ctx.close();
   });
+  await withCheck('vendor shortage uses live vendor ID and exact agreed cost',async()=>{
+    const ctx=await browser.newContext({viewport:{width:1024,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
+    await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
+    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
+    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+    await page.getByRole('radio',{name:/Vendor/}).click();
+    await page.getByRole('combobox',{name:'Select live vendor'}).selectOption('VEN-UI-1');
+    await page.getByRole('spinbutton',{name:'Vendor unit cost'}).fill('35');
+    await page.getByRole('button',{name:'Use vendor'}).click();
+    await page.locator('input[list="live-pos-customer-names"]').fill('UI Vendor Buyer');
+    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000003');
+    await page.getByRole('spinbutton',{name:/Amount received/}).fill('275');
+    await page.getByRole('button',{name:'Review and post real sale'}).click();
+    await page.getByRole('button',{name:'Confirm and post'}).click();
+    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
+    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
+    assert.equal(payload.items[0].fulfillmentMode,'vendor');
+    assert.equal(payload.items[0].vendorId,'VEN-UI-1');
+    assert.equal(payload.items[0].vendorUnitCost,35);
+    results.apiCalls.push(...api);await screenshot(page,'phase13-pos-vendor-1024');
+    await ctx.close();
+  });
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
     const api=[];await startMocking(ctx,api);
