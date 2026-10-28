@@ -45,101 +45,16 @@ function selectTab(key: string): void {
 </template>
 
 <style scoped>
-.module-tabs {
-  display: flex;
-  align-items: stretch;
-  width: 100%;
-  gap: 0;
-  margin: 0 0 14px;
-  border-bottom: 1px solid #dbe3ef;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-
-.module-tab {
-  position: relative;
-  flex: 0 0 auto;
-  min-width: max-content;
-  padding: 9px 14px 10px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: #111827;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.module-tab:hover {
-  background: #f8fafc;
-}
-
-.module-tab::after {
-  content: '';
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: transparent;
-}
-
-.module-tab.active {
-  color: #2563eb;
-}
-
-.module-tab.active::after {
-  background: #2563eb;
-}
-
-.module-tab-label,
-.module-tab-hint {
-  display: block;
-  white-space: nowrap;
-}
-
-.module-tab-label {
-  font-size: 0.94rem;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.module-tab-hint {
-  margin-top: 1px;
-  color: #64748b;
-  font-size: 0.78rem;
-  font-weight: 400;
-  line-height: 1.15;
-}
-
-.module-tab.active .module-tab-hint {
-  color: #64748b;
-}
-
-.module-tab:focus-visible {
-  outline: 2px solid #93c5fd;
-  outline-offset: -2px;
-}
-
-@media (max-width: 640px) {
-  .module-tabs {
-    margin-bottom: 10px;
-  }
-
-  .module-tab {
-    padding: 8px 11px 9px;
-  }
-
-  .module-tab-label {
-    font-size: 0.9rem;
-  }
-
-  .module-tab-hint {
-    font-size: 0.74rem;
-  }
-}
+.module-tabs { display: flex; align-items: stretch; gap: 20px; width: 100%; margin: 0 0 14px; border-bottom: 1px solid var(--sher-line); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.module-tabs::-webkit-scrollbar { display: none; }
+.module-tab { position: relative; flex: 0 0 auto; min-width: max-content; padding: 7px 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--sher-text-muted); font: inherit; text-align: left; cursor: pointer; }
+.module-tab:hover { color: var(--sher-text); }
+.module-tab::after { content: ''; position: absolute; inset: auto 0 -1px; height: 2px; background: transparent; }
+.module-tab.active { color: var(--sher-primary-text); }
+.module-tab.active::after { background: var(--sher-primary); }
+.module-tab-label,.module-tab-hint { display: block; white-space: nowrap; }
+.module-tab-label { font-size: var(--sher-text-sm); font-weight: 600; line-height: 1.3; }
+.module-tab-hint { margin-top: 1px; color: var(--sher-text-faint); font-family: var(--sher-font-bn); font-size: var(--sher-text-2xs); font-weight: 400; line-height: 1.3; }
+.module-tab:focus-visible { outline: 2px solid var(--sher-primary); outline-offset: -2px; }
+@media (max-width: 640px) { .module-tabs { gap: 14px; margin-bottom: 12px; } .module-tab { padding: 7px 0 9px; } }
 </style>

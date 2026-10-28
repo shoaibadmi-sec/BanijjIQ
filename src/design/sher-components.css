@@ -1,0 +1,816 @@
+/* Shared SherERP Vue components — adapted; UI-only, no changes to ERP logic. */
+/*
+ * The shared component shapes of §2.7.I — buttons, fields, tables, badges,
+ * dialogs, notices and skeletons.
+ *
+ * Why these live in one global sheet rather than in each page's scoped block:
+ * before this file, four screens each carried their own copy of `.btn`,
+ * `.field`, `.dialog` and the table rules. Four copies is four chances to
+ * drift, and at thirty modules it is thirty. A page now writes CSS only for a
+ * layout that is genuinely its own; everything a second screen will also need
+ * is here, and §2.7.I's last rule — "reuse the shared shell, card, table,
+ * badge, button, filter and state components" — has somewhere to point.
+ *
+ * Everything resolves to a token from `tokens.css`. No hex values below.
+ */
+
+/* ------------------------------------------------------------------ buttons */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sher-space-2);
+  height: var(--sher-control-h);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--sher-radius);
+  font: inherit;
+  font-size: var(--sher-text-base);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--sher-transition),
+    border-color var(--sher-transition),
+    color var(--sher-transition);
+}
+
+.btn-primary {
+  background: var(--sher-primary);
+  color: var(--sher-on-primary);
+  box-shadow: var(--sher-shadow);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--sher-primary-strong);
+}
+
+.btn-ghost {
+  background: var(--sher-raised);
+  color: var(--sher-text);
+  border-color: var(--sher-line-strong);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--sher-hover);
+}
+
+/* UI-26: a destructive action is an explicit button, and it looks like one. */
+.btn-danger {
+  background: var(--sher-raised);
+  color: var(--sher-bad);
+  border-color: var(--sher-bad-line);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--sher-bad-bg);
+}
+
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* A button that reads as a link: row actions, "Sign in again", "View all". */
+.linkish {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--sher-text-sm);
+  font-weight: 600;
+  color: var(--sher-primary-text);
+  cursor: pointer;
+}
+
+.linkish:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.linkish.danger {
+  color: var(--sher-bad);
+}
+
+.linkish:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* An icon-only control. UI-05 forbids these for a *primary* action, so this is
+   for row actions and shell affordances that also carry an accessible name. */
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: var(--sher-control-h-sm);
+  height: var(--sher-control-h-sm);
+  border: 1px solid transparent;
+  border-radius: var(--sher-radius);
+  background: transparent;
+  color: var(--sher-text-muted);
+  font-size: var(--sher-text-base);
+  cursor: pointer;
+  transition:
+    background var(--sher-transition),
+    color var(--sher-transition);
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--sher-hover);
+  color: var(--sher-text);
+}
+
+/* ------------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field label {
+  font-size: var(--sher-text-sm);
+  font-weight: 600;
+  color: var(--sher-text);
+}
+
+/*
+ * The Bangla name of the field, **beside** the English label rather than under
+ * it (UI-15…UI-17).
+ *
+ * Under the control it reads as a second helper line, and a form built that way
+ * grows a Bangla column nobody scans. On the label line it is what it actually
+ * is: the same field, said the way the shopkeeper says it. Secondary weight and
+ * colour, because the English label is still the name of the field.
+ */
+.label-bn {
+  margin-left: 6px;
+  font-family: var(--sher-font-bn);
+  font-size: var(--sher-text-xs);
+  font-weight: 400;
+  color: var(--sher-text-muted);
+}
+
+.field input,
+.field select,
+.field textarea {
+  height: var(--sher-control-h);
+  padding: 0 12px;
+  border: 1px solid var(--sher-line-strong);
+  border-radius: var(--sher-radius);
+  background: var(--sher-raised);
+  font: inherit;
+  font-size: var(--sher-text-base);
+  color: var(--sher-text);
+  transition:
+    border-color var(--sher-transition),
+    box-shadow var(--sher-transition);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--sher-primary);
+  box-shadow: 0 0 0 3px var(--sher-primary-soft);
+}
+
+.field input:disabled,
+.field select:disabled,
+.field textarea:disabled {
+  background: var(--sher-sunken);
+  color: var(--sher-text-muted);
+  cursor: not-allowed;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--sher-text-muted);
+}
+
+/*
+ * The open list of a native `<select>` is drawn by the browser, and it paints it
+ * from the colours on the element and its options — not from the page. A select
+ * whose background is `transparent` (which the picker's is, so the wrapper can
+ * own the border) therefore got a **white** list with the dark theme's pale text
+ * on it: legible in light mode, invisible in dark. Stating both colours on the
+ * option itself is what fixes it, and it has to be on `option`, because the list
+ * does not inherit from the select.
+ */
+select option {
+  background-color: var(--sher-raised);
+  color: var(--sher-text);
+}
+
+/* A textarea grows with what is typed into it, so it takes the shared border,
+   focus ring and disabled state above, but none of the fixed control height. */
+.field textarea {
+  height: auto;
+  min-height: 68px;
+  padding: 10px 12px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+/* The one-line explanation under a control. English; the Bangla sibling is
+   `.sher-bn` (UI-17), and a field may carry either or both. */
+.help {
+  margin: 0;
+  font-size: var(--sher-text-xs);
+  color: var(--sher-text-muted);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------- page rhythm and movement */
+
+/*
+ * One filter row, defined once.
+ *
+ * Every list page had written its own, and each had picked its own margin under
+ * it — 20px on Products and Customers, 16px on the Inventory Report, none on
+ * Audit — which the page container's own 16px gap was then added to. The result
+ * was the same furniture sitting at three different heights depending on which
+ * module you were in. Spacing below is the container's business, so there is no
+ * margin here at all.
+ */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--sher-space-3);
+}
+
+.filters .field {
+  margin: 0;
+  min-width: 160px;
+}
+
+.filters .field.grow {
+  flex: 1 1 260px;
+}
+
+/*
+ * How one page replaces another.
+ *
+ * Both pages share a single grid cell in `AppLayout`, so these run at the same
+ * time: the outgoing page is still fading as the incoming one arrives. That
+ * overlap is the whole point — taking turns leaves a real gap with nothing on
+ * screen, which is what made navigation read as "everything disappears, then
+ * flashes back".
+ *
+ * Inside a module it slides sideways, because you have moved along a shelf.
+ * Between modules it cross-fades, because you have gone somewhere else. Neither
+ * moves the page vertically: the old shell staggered header, tab strip and body
+ * downward a few tens of milliseconds apart, and every screenshot taken during
+ * those 150ms showed the furniture at the wrong height.
+ */
+.sher-page-slide-enter-active,
+.sher-page-slide-leave-active,
+.sher-page-fade-enter-active,
+.sher-page-fade-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 190ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+/* A page on its way out must not still be catching taps meant for the new one. */
+.sher-page-slide-leave-active,
+.sher-page-fade-leave-active {
+  pointer-events: none;
+}
+
+.sher-page-slide-enter-from {
+  opacity: 0;
+  transform: translate3d(16px, 0, 0);
+}
+
+.sher-page-slide-leave-to {
+  opacity: 0;
+  transform: translate3d(-16px, 0, 0);
+}
+
+.sher-page-fade-enter-from,
+.sher-page-fade-leave-to {
+  opacity: 0;
+}
+
+/* UI-43: motion is a nicety, never the way something is communicated. */
+@media (prefers-reduced-motion: reduce) {
+  .sher-page-slide-enter-active,
+  .sher-page-slide-leave-active,
+  .sher-page-fade-enter-active,
+  .sher-page-fade-leave-active {
+    transition: none;
+  }
+
+  .sher-page-slide-enter-from,
+  .sher-page-slide-leave-to {
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------- tables */
+
+/*
+ * §2.7.I: no vertical borders, thin dividers, left-aligned text, right-aligned
+ * numbers, state as a badge. The card is the container; the table inside it
+ * stays clean and dense, because UI-42's contrast floor cannot spare
+ * decoration behind rows.
+ */
+.table-wrap {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--sher-line);
+  border-radius: var(--sher-radius-lg);
+  background: var(--sher-raised);
+  box-shadow: var(--sher-shadow-card);
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sher-text-base);
+}
+
+.table-wrap thead th {
+  text-align: left;
+  font-size: var(--sher-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sher-text-muted);
+  font-weight: 600;
+  background: var(--sher-sunken);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--sher-line);
+  white-space: nowrap;
+}
+
+/*
+ * The Bangla name of a column sits **beside** the English one, exactly as
+ * `.label-bn` does on a form field (UI-16). Under it, every list grew a second
+ * header line the eye had to cross before reaching the first record.
+ */
+.table-wrap thead th .header-bn {
+  font-weight: 400;
+  font-size: var(--sher-text-2xs);
+  letter-spacing: normal;
+  text-transform: none;
+  opacity: 0.75;
+}
+
+/*
+ * A column that cannot be sorted is drawn **exactly** like one that can.
+ *
+ * Stock and Stock value have no sort key yet, so they were written as bare
+ * `<th>` text while their neighbours were `SortableHeader`. Two differences
+ * followed and both were visible: the browser's own `button { text-transform:
+ * none }` reset cancelled the header's uppercase inside the sortable ones, so
+ * `Product` sat beside `STOCK VALUE` in the same row; and without the button's
+ * 2.25rem line box those cells were shorter, so their labels floated up while
+ * the rest sat on the baseline. `.th-label` is that same box, minus the tap.
+ */
+.table-wrap thead th .th-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-height: 2.25rem;
+  padding: 0.25rem 0;
+}
+
+.table-wrap thead th.num .th-label {
+  justify-content: flex-end;
+}
+
+.table-wrap tbody td {
+  padding: var(--sher-row-pad);
+  border-bottom: 1px solid var(--sher-line-soft);
+  vertical-align: middle;
+}
+
+.table-wrap .num,
+.table-wrap [data-type='number'],
+.table-wrap [data-type='money'] {
+  text-align: right;
+  font-variant-numeric: normal;
+}
+
+/* Long operational tables opt into a header that remains visible while rows
+   scroll; short tables keep normal document flow. */
+.table-wrap.is-scrollable {
+  max-height: min(70dvh, 760px);
+  overflow: auto;
+}
+
+.table-wrap.is-scrollable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-wrap tbody tr:hover {
+  background: var(--sher-primary-softer);
+}
+
+.mono {
+  font-family: inherit;
+  font-size: var(--sher-text-sm);
+}
+
+.actions-col {
+  width: 1%;
+}
+
+.actions {
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: var(--sher-space-4);
+}
+
+/* ------------------------------------------------------------------ badges */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--sher-text-xs);
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--sher-radius-pill);
+  border: 1px solid var(--sher-line);
+  background: var(--sher-sunken);
+  color: var(--sher-text-muted);
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.pill-ok {
+  background: var(--sher-ok-bg);
+  color: var(--sher-ok);
+  border-color: var(--sher-ok-line);
+}
+
+.pill-warn {
+  background: var(--sher-warn-bg);
+  color: var(--sher-warn);
+  border-color: var(--sher-warn-line);
+}
+
+.pill-bad {
+  background: var(--sher-bad-bg);
+  color: var(--sher-bad);
+  border-color: var(--sher-bad-line);
+}
+
+.pill-info {
+  background: var(--sher-info-bg);
+  color: var(--sher-info);
+  border-color: var(--sher-info-line);
+}
+
+/* ------------------------------------------------------------------ notices */
+
+/*
+ * UI-28: an error shows the server's code and message. `.notice` is the inline
+ * banner for the result of an action; `ErrorNotice.vue` is the component for a
+ * failure that carries a code.
+ */
+.notice {
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: var(--sher-radius);
+  border: 1px solid;
+  font-size: var(--sher-text-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--sher-space-2);
+  flex-wrap: wrap;
+}
+
+.notice.is-ok {
+  border-color: var(--sher-ok-line);
+  background: var(--sher-ok-bg);
+  color: var(--sher-text);
+}
+
+.notice.is-bad {
+  border-color: var(--sher-bad-line);
+  background: var(--sher-bad-bg);
+  color: var(--sher-text);
+}
+
+.notice .code {
+  display: block;
+  width: 100%;
+  font-family: inherit;
+  font-size: var(--sher-text-2xs);
+  letter-spacing: 0.04em;
+  color: var(--sher-bad);
+}
+
+/* ---------------------------------------------------------------- callouts */
+
+/*
+ * A worked example, or a reassurance, sitting inside a card beneath the fields
+ * it explains.
+ *
+ * Not a `.notice`: that one reports the result of an action and is one line by
+ * design. This is part of what the form teaches — "5 Pipe + 5 Feet = 105 Feet"
+ * — so it keeps an icon column and wraps to as many lines as the explanation
+ * needs, in both languages (UI-15).
+ */
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sher-space-3);
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: var(--sher-radius);
+  font-size: var(--sher-text-sm);
+  line-height: 1.6;
+}
+
+.callout-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.callout-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.callout-title {
+  font-weight: 600;
+}
+
+.callout p {
+  margin: 0;
+}
+
+.callout.is-warn {
+  background: var(--sher-warn-bg);
+  border-color: var(--sher-warn-line);
+  color: var(--sher-text);
+}
+
+.callout.is-warn .callout-icon {
+  color: var(--sher-warn);
+}
+
+.callout.is-info {
+  background: var(--sher-info-bg);
+  border-color: var(--sher-info-line);
+  color: var(--sher-text);
+}
+
+.callout.is-info .callout-icon {
+  color: var(--sher-info);
+}
+
+/* Small print: a consequence, a caveat, or what a caller may not do. */
+.fine {
+  margin: 0;
+  font-size: var(--sher-text-xs);
+  line-height: 1.6;
+  color: var(--sher-text-muted);
+}
+
+/* ----------------------------------------------------------------- dialogs */
+
+/* UI-22's fourth pattern: short confirmations and single-purpose input. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: var(--sher-space-4);
+  background: var(--sher-scrim);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - 2 * var(--sher-space-4));
+  overflow-y: auto;
+  background: var(--sher-raised);
+  border: 1px solid var(--sher-line);
+  border-radius: var(--sher-radius-lg);
+  box-shadow: var(--sher-shadow-raised);
+  padding: var(--sher-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sher-space-3);
+}
+
+.dialog h2 {
+  margin: 0;
+  font-family: var(--sher-font-heading);
+  font-size: var(--sher-text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dialog .lede {
+  margin: 0;
+  font-size: var(--sher-text-sm);
+  color: var(--sher-text-muted);
+}
+
+.dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sher-space-4);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sher-space-3);
+  padding-top: var(--sher-space-1);
+}
+
+/* --------------------------------------------------------------- skeletons */
+
+/* UI-27: tables load as skeleton rows, never a bare spinner. */
+.skeleton {
+  border-radius: var(--sher-radius-lg);
+  border: 1px solid var(--sher-line);
+  background: linear-gradient(
+    100deg,
+    var(--sher-raised) 30%,
+    var(--sher-sunken) 50%,
+    var(--sher-raised) 70%
+  );
+  background-size: 200% 100%;
+  animation: sher-shimmer 1.4s ease-in-out infinite;
+}
+
+/* PrimeVue and native controls share one touch target on touch hardware. */
+@media (pointer: coarse) {
+  .btn,
+  .icon-btn,
+  .p-button,
+  .p-inputtext,
+  .p-select,
+  .p-multiselect {
+    min-height: var(--sher-tap);
+  }
+}
+
+@keyframes sher-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* -------------------------------------------------- phone-first (Phase 18.4) */
+
+/*
+ * A list as cards below 640px, defined once (owner decision 2026-09-03).
+ *
+ * Parties had this shape and nothing else did, so on a phone the other daily
+ * lists became a table sliding sideways — which puts the one column the list
+ * was opened for, the money, off the right-hand edge. Cards and table are the
+ * same rows from the same data; only one of them is in the document at a time.
+ *
+ * **Desktop density is untouched.** Everything here lives inside the media
+ * query, and a counter PC with a keyboard sees exactly the table it saw before
+ * — that is the half of this decision that is easiest to break by accident.
+ */
+.list-cards {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sher-space-2) var(--sher-space-3);
+  align-items: start;
+  padding: var(--sher-space-3);
+  border: 1px solid var(--sher-line);
+  border-radius: var(--sher-radius-md);
+  background: var(--sher-raised);
+}
+
+.list-card + .list-card {
+  margin-top: var(--sher-space-2);
+}
+
+/* The line a person identifies the row by — a name, a number, a date. */
+.list-card-title {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Everything that qualifies it, small and under the title. */
+.list-card-sub {
+  grid-column: 1;
+  margin: 0;
+  font-size: var(--sher-text-2xs);
+  color: var(--sher-text-muted);
+}
+
+/* The figure the list exists for, right-hand side, never off-screen. */
+.list-card-amount {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: normal;
+  white-space: nowrap;
+}
+
+.list-card-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sher-space-2);
+}
+
+@media (max-width: 640px) {
+  .list-cards {
+    display: block;
+  }
+
+  /* The table half of a card/table pair — hidden while the cards are drawn. */
+  .list-cards + .table-wrap,
+  .phone-hidden {
+    display: none;
+  }
+
+  /*
+   * A dialog fills the phone (owner decision 2026-09-03). PrimeVue sizes every
+   * dialog from an inline `style` width written for a desktop — `38rem` for the
+   * house form dialog — which on a 360px screen is a box wider than the screen
+   * with its buttons past the right edge. `!important` is the only lever that
+   * reaches an inline width, and this is the one place in the design system
+   * that needs it.
+   */
+  .p-dialog {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .p-dialog .p-dialog-content {
+    /* Header and footer are roughly 120px between them; the rest scrolls. */
+    max-height: calc(100dvh - 120px);
+  }
+
+  .dialog-actions,
+  .p-dialog-footer {
+    flex-wrap: wrap;
+  }
+
+  .dialog-actions > *,
+  .p-dialog-footer > * {
+    flex: 1 1 auto;
+  }
+
+  /*
+   * A filter row on a phone is one field per line. Side by side they are each
+   * too narrow to read their own label, which is how a shopkeeper ends up
+   * filtering by the wrong thing.
+   */
+  .filters .field,
+  .filters .field.grow {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /*
+   * The page's primary action, full width and under the thumb rather than
+   * shrunk into the top-right corner beside the title.
+   */
+  .page-actions .btn,
+  .page-actions .p-button {
+    flex: 1 1 100%;
+    justify-content: center;
+    min-height: 44px;
+  }
+}

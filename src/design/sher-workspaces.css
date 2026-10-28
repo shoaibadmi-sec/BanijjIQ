@@ -1,0 +1,198 @@
+/* SherERP_Vue shared visual system translated to the remaining BanijjIQ
+   workspaces. Keep selectors rooted to screens; do not affect invoice print,
+   forms' v-model bindings, security, or accounting logic. */
+
+/* Shared dashboard, ledger, and report furniture */
+.dashboard-page,.sales-page,.customer-page,.expense-module,.bank-page,.daybook-page,.finance-page,.reports-page,.settings-page,.vendor-page{
+  min-width:0;color:var(--sher-text);gap:var(--sher-space-3);
+}
+.dashboard-page .dashboard-toolbar{align-items:center;gap:12px}
+.dashboard-page .dashboard-toolbar h2{font-size:var(--sher-text-lg);font-weight:600;letter-spacing:-.01em}
+.dashboard-page .dashboard-stat-grid,.dashboard-page .dashboard-month-grid{gap:var(--sher-space-2)}
+.dashboard-page .dashboard-stat-card,.dashboard-page .mini-stat,
+.finance-page .finance-stats .stat-card,.bank-page .bank-stats .stat-card,
+.vendor-page .stat-card,.reports-page .report-stats .stat-card,.daybook-page .daybook-stats>div{
+  min-width:0;padding:var(--sher-card-pad);border:1px solid var(--sher-line);
+  border-radius:var(--sher-radius-lg);background:var(--sher-raised);box-shadow:none;
+}
+.dashboard-page .dashboard-stat-card span,.dashboard-page .mini-stat span,
+.finance-page .finance-stats .stat-label,.bank-page .bank-stats .stat-card span,
+.vendor-page .stat-label,.reports-page .report-stats .stat-label,.daybook-page .daybook-stats span{
+  display:block;color:var(--sher-text-muted);font-size:var(--sher-text-xs);
+  font-weight:500;letter-spacing:.03em;text-transform:uppercase;
+}
+.dashboard-page .dashboard-stat-card strong,.dashboard-page .mini-stat strong,
+.finance-page .finance-stats .stat-value,.bank-page .bank-stats .stat-card strong,
+.vendor-page .stat-value,.reports-page .report-stats .stat-value,.daybook-page .daybook-stats strong{
+  display:block;margin-top:5px;color:var(--sher-text);font-size:20px;font-weight:700;
+  line-height:1.25;overflow-wrap:anywhere;font-family:var(--sher-font);font-variant-numeric:normal;
+}
+.dashboard-page .dashboard-section-card,.reports-page>.card,.finance-page>.card,
+.settings-page .settings-card,.bank-page .card,.expense-module .card,.customer-page .card,
+.vendor-page .card,.sales-page .card{
+  background:var(--sher-raised);border:1px solid var(--sher-line);
+  border-radius:var(--sher-radius-lg);box-shadow:none;
+}
+.dashboard-page .dashboard-section-card{padding:var(--sher-card-pad)}
+.dashboard-page .dashboard-section-title,.reports-page .card h3,
+.settings-page .settings-card h3,.finance-page .card h3,.bank-page .card h3{
+  color:var(--sher-text);font-size:var(--sher-text-base);font-weight:600;
+}
+.dashboard-page .dashboard-table th,.dashboard-page .dashboard-table td{padding:8px 12px;border-color:var(--sher-line-soft)}
+.dashboard-page .dashboard-table th{background:var(--sher-sunken);font-size:var(--sher-text-xs)}
+
+/* Native module tabs already use the same underline treatment via ModuleTabs.vue */
+.sales-page .sales-toolbar{gap:8px;align-items:center}
+.sales-page .sales-toolbar input,.sales-page .sales-toolbar select,.sales-page .sales-toolbar button{
+  min-height:40px;border-radius:var(--sher-radius);border-color:var(--sher-line-strong);
+  background:var(--sher-raised);color:var(--sher-text);font-size:var(--sher-text-sm);font-weight:500;
+}
+.sales-page .sales-table-wrap,.expense-module .table-card,.customer-page .customer-list-card,
+.bank-page .compact-card,.daybook-page .daybook-table-wrap{
+  border:1px solid var(--sher-line);border-radius:var(--sher-radius-lg);
+  background:var(--sher-raised);box-shadow:none;
+}
+.sales-page .sales-table th,.sales-page .sales-table td,.expense-module .expense-table th,
+.expense-module .expense-table td,.customer-page .customer-table th,
+.customer-page .customer-table td,.customer-page .customer-ledger-table th,
+.customer-page .customer-ledger-table td,.bank-page .bank-table th,
+.bank-page .bank-table td,.daybook-page .daybook-table th,.daybook-page .daybook-table td{
+  padding:8px 12px;border-color:var(--sher-line-soft);font-size:var(--sher-text-sm);
+}
+.sales-page .sales-table th,.expense-module .expense-table th,.customer-page .customer-table th,
+.customer-page .customer-ledger-table th,.bank-page .bank-table th,.daybook-page .daybook-table th{
+  background:var(--sher-sunken);color:var(--sher-text-muted);font-size:var(--sher-text-2xs);
+  font-weight:600;letter-spacing:.04em;
+}
+.sales-page .sales-table tbody tr:hover,.expense-module .expense-table tbody tr:hover,
+.customer-page .customer-table tbody tr:hover,.bank-page .bank-table tbody tr:hover,
+.daybook-page .daybook-table tbody tr:hover{background:var(--sher-primary-softer)}
+.sales-page .sale-badge{padding:3px 8px;border-radius:var(--sher-radius-pill);font-size:var(--sher-text-2xs);font-weight:600}
+.sales-page .sale-badge.paid,.sales-page .sale-badge.completed{color:var(--sher-ok);background:var(--sher-ok-bg)}
+.sales-page .sale-badge.due,.sales-page .sale-badge.returned{color:var(--sher-bad);background:var(--sher-bad-bg)}
+.sales-page .sale-badge.partial{color:var(--sher-warn);background:var(--sher-warn-bg)}
+.sales-page .sales-alert.error{color:var(--sher-bad);background:var(--sher-bad-bg)}
+.sales-page .sales-alert.ok{color:var(--sher-ok);background:var(--sher-ok-bg)}
+.customer-page .customer-toolbar{margin-bottom:12px;gap:8px}
+.customer-page .customer-toolbar input,.customer-page .customer-toolbar select{height:40px;border-color:var(--sher-line-strong)}
+.customer-page .balance-status{font-size:24px;font-weight:700;line-height:1.2}
+.customer-page .balance-due,.customer-page .balance-pill-due{color:var(--sher-bad)}
+.customer-page .balance-advance,.customer-page .balance-settled,.customer-page .balance-pill-advance,.customer-page .balance-pill-settled{color:var(--sher-ok)}
+.customer-page .balance-pill-due{background:var(--sher-bad-bg)}
+.customer-page .balance-pill-advance,.customer-page .balance-pill-settled{background:var(--sher-ok-bg)}
+.customer-page .customer-action-menu,.bank-page .bank-action-menu{
+  background:var(--sher-raised);border:1px solid var(--sher-line);
+  border-radius:var(--sher-radius);box-shadow:var(--sher-shadow-raised);
+}
+.customer-page .customer-action-menu button:hover,.bank-page .bank-action-menu button:hover{
+  background:var(--sher-hover);
+}
+
+/* Expenses, daybook and bank: consistent small fields and financial state */
+.expense-module .notice{background:var(--sher-info-bg);color:var(--sher-text)}
+.expense-module .notice.error{background:var(--sher-bad-bg);color:var(--sher-bad)}
+.expense-module .notice.success{background:var(--sher-ok-bg);color:var(--sher-ok)}
+.expense-module .session-warning,.bank-page .cash-session-note{
+  background:var(--sher-warn-bg);border:1px solid var(--sher-warn-line);color:var(--sher-warn);
+}
+.expense-module .expense-form-grid label,.expense-module .modal-body label{
+  color:var(--sher-text);font-size:var(--sher-text-sm);font-weight:600;
+}
+.expense-module .expense-form-grid input,.expense-module .expense-form-grid select,
+.expense-module .expense-toolbar input,.expense-module .expense-toolbar select{
+  min-height:40px;border:1px solid var(--sher-line-strong);border-radius:var(--sher-radius);
+  background:var(--sher-raised);color:var(--sher-text);
+}
+.daybook-page .daybook-stats{gap:var(--sher-space-2)}
+.daybook-page .daybook-table th{background:var(--sher-sunken)}
+.daybook-page .daybook-toolbar{gap:8px}
+.daybook-page .daybook-toolbar input,.daybook-page .daybook-toolbar select{height:40px;border-color:var(--sher-line-strong)}
+.daybook-page .positive{color:var(--sher-ok)!important}
+.daybook-page .negative{color:var(--sher-bad)!important}
+.bank-page .bank-stats{gap:var(--sher-space-2)}
+.bank-page .bank-form-card,.bank-page .correction-card{max-width:1000px}
+.bank-page .bank-ledger-toolbar{gap:8px}
+
+/* Finance and Reporting: compact flat panels, calm KPI hierarchy */
+.finance-page .finance-stats{gap:var(--sher-space-2);margin:12px 0 14px}
+.finance-page .finance-hint,.reports-page .report-note{color:var(--sher-text-muted);font-size:var(--sher-text-sm)}
+.reports-page .report-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+.reports-page .report-toolbar label{color:var(--sher-text-muted);font-size:var(--sher-text-xs);font-weight:600}
+.reports-page .report-toolbar input{height:40px;max-width:160px;border-color:var(--sher-line-strong)}
+.reports-page .report-stats{gap:var(--sher-space-2);margin:12px 0 16px}
+.reports-page .report-grid-two,.reports-page .balance-grid{gap:var(--sher-space-3)}
+.reports-page .card{margin-bottom:12px}
+.reports-page .report-stats .stat-value{font-size:20px;font-weight:700}
+.reports-page .totals-row{border-bottom:1px solid var(--sher-line-soft)}
+.reports-page .report-warning{border-left:3px solid var(--sher-warn)}
+.reports-page .report-loss{border-left:3px solid var(--sher-bad)}
+.reports-page .dangerText{color:var(--sher-bad)}
+.reports-page .table-scroll{border-radius:var(--sher-radius)}
+
+/* SherERP settings: unraised rows/cards, helpful bilingual labels and simple save bar */
+.settings-page .settings-grid{gap:var(--sher-space-3)}
+.settings-page .settings-card{margin:0;padding:var(--sher-card-pad)}
+.settings-page .settings-card h3{margin:0 0 12px}
+.settings-page .setting-help{color:var(--sher-text-muted);font-size:var(--sher-text-xs);line-height:1.5}
+.settings-page .switch-line{gap:10px;padding:8px 0;border-top:1px solid var(--sher-line-soft)}
+.settings-page .switch-line input{width:18px;height:18px;accent-color:var(--sher-primary)}
+.settings-page .switch-line small{color:var(--sher-text-muted)}
+.settings-page .settings-savebar{padding:12px 0;background:linear-gradient(0deg,var(--sher-surface) 70%,transparent)}
+.settings-page .logo-preview{background:var(--sher-sunken);border:1px dashed var(--sher-line-strong)}
+.settings-page .logo-actions small{color:var(--sher-text-muted)}
+
+/* Vendors preserve their workflows but match the main SherERP blue/neutral shell */
+.vendor-page{
+ --vendor-green:var(--sher-primary);--vendor-green-dark:var(--sher-primary-strong);
+ --vendor-green-soft:var(--sher-primary-soft);--vendor-border:var(--sher-line);
+ --vendor-muted:var(--sher-text-muted);
+ gap:var(--sher-space-3);
+}
+.vendor-page .vendor-tabs{gap:var(--sher-space-5);padding:0;border-color:var(--sher-line)}
+.vendor-page .vendor-tab{padding:8px 0 10px;font-size:var(--sher-text-sm);font-weight:600;color:var(--sher-text-muted)}
+.vendor-page .vendor-tab:hover{color:var(--sher-primary-text)}
+.vendor-page .vendor-tab.active{color:var(--sher-primary-text)}
+.vendor-page .vendor-tab.active::after{background:var(--sher-primary)}
+.vendor-page .vendor-tab .bn-hint{font-size:var(--sher-text-2xs);font-weight:400;color:var(--sher-text-faint)}
+.vendor-page .vendor-list-table tbody tr:hover{background:var(--sher-primary-softer)}
+.vendor-page .vendor-list-table strong{color:var(--sher-text)}
+.vendor-page .vendor-list-table .action-trigger{border-color:var(--sher-line);background:var(--sher-raised);color:var(--sher-primary-text)}
+.vendor-page .vendor-list-table .action-trigger:hover{background:var(--sher-primary-softer)}
+.vendor-page .vendor-select-bar{background:var(--sher-raised);border-color:var(--sher-line);border-radius:var(--sher-radius-lg);box-shadow:none}
+
+/* Consistent modal shape and focus for these workspaces; document printing excluded. */
+.sales-page .modal,.customer-page .modal,.expense-module .modal,.bank-page .modal,
+.daybook-page .modal,.finance-page .modal,.reports-page .modal,.settings-page .modal,.vendor-page .modal{
+ background:var(--sher-raised);border:1px solid var(--sher-line);
+ border-radius:var(--sher-radius-lg);box-shadow:var(--sher-shadow-raised);
+}
+.sales-page .modal-header,.customer-page .modal-header,.expense-module .modal-header,
+.bank-page .modal-header,.finance-page .modal-header,.settings-page .modal-header,.vendor-page .modal-header{
+ border-color:var(--sher-line);
+}
+@media(max-width:900px){
+ .sales-page .sales-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .sales-page .sales-toolbar>:first-child{grid-column:1/-1}
+ .reports-page .report-grid-two,.reports-page .balance-grid{grid-template-columns:minmax(0,1fr)}
+ .finance-page .finance-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .daybook-page .daybook-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:640px){
+ .dashboard-page .dashboard-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .dashboard-page .dashboard-stat-card,.dashboard-page .mini-stat,
+ .finance-page .finance-stats .stat-card,.bank-page .bank-stats .stat-card,
+ .vendor-page .stat-card,.reports-page .report-stats .stat-card,.daybook-page .daybook-stats>div{padding:12px}
+ .dashboard-page .dashboard-stat-card strong,.finance-page .finance-stats .stat-value,
+ .reports-page .report-stats .stat-value{font-size:18px}
+ .finance-page .finance-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .daybook-page .daybook-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .sales-page .sales-toolbar{grid-template-columns:minmax(0,1fr)}
+ .sales-page .sales-toolbar>*{grid-column:1/-1}
+ .settings-page .settings-grid{grid-template-columns:minmax(0,1fr)}
+ .settings-page .settings-card.full-width{grid-column:1}
+ .reports-page .report-toolbar{display:grid;grid-template-columns:auto 1fr auto 1fr}
+ .reports-page .report-toolbar input{width:100%;max-width:none}
+}
+@media(prefers-reduced-motion:reduce){
+ .vendor-page .vendor-tab,.sales-page .action-trigger{transition:none}
+}

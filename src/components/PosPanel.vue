@@ -26,6 +26,8 @@ let completeSaleButtonResetTimer: ReturnType<typeof setTimeout> | null = null;
 const error = ref('');
 const search = ref('');
 const selectedCategory = ref('All');
+// SherERP catalogue view: the cashier can switch between compact tiles and rows.
+const catalogueView = ref<'grid' | 'list'>('grid');
 const highlightedProductIndex = ref(0);
 const products = ref<PosProduct[]>([]);
 const customers = ref<PosCustomer[]>([]);
@@ -458,22 +460,34 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
       <button class="btn" @click="newSale">Cancel Update</button>
     </div>
 
-    <div class="pos-layout">
-      <div class="card product-card-panel">
-        <label>Search Products <span class="bn-hint">— পণ্য খুঁজুন</span></label>
+    <div class="pos-search-bar">
+        <label for="pos-product-search" class="pos-search-label">Search Products <span class="bn-hint">— পণ্য খুঁজুন</span></label>
         <div class="pos-search-wrap">
-          <input v-model="search" class="search-input pos-search" type="search" autocomplete="off" placeholder="Name, brand, barcode, category or unit..." @keydown="onSearchKeydown">
+          <span class="pos-search-icon" aria-hidden="true">⌕</span>
+          <input id="pos-product-search" v-model="search" class="search-input pos-search" type="search" autocomplete="off" placeholder="Name, brand, barcode, category or unit..." @keydown="onSearchKeydown">
           <button v-if="search" type="button" class="pos-search-clear" aria-label="Clear product search" title="Clear search" @click="clearProductSearch">×</button>
         </div>
 
+    </div>
+
+    <div class="pos-layout">
+      <div class="card product-card-panel">
+        <div class="pos-catalogue-tools">
         <div v-if="categories.length" class="category-filter" aria-label="Product categories">
           <button type="button" class="category-chip" :class="{active:selectedCategory==='All'}" @click="selectedCategory='All'">All</button>
           <button v-for="category in categories" :key="category" type="button" class="category-chip" :class="{active:selectedCategory===category}" @click="selectedCategory=category">{{category}}</button>
         </div>
 
+          <div class="pos-view-toggle" role="group" aria-label="Product catalogue view">
+            <button type="button" :class="{ active: catalogueView === 'grid' }" :aria-pressed="catalogueView === 'grid'" @click="catalogueView = 'grid'">Grid</button>
+            <button type="button" :class="{ active: catalogueView === 'list' }" :aria-pressed="catalogueView === 'list'" @click="catalogueView = 'list'">List</button>
+          </div>
+        </div>
+
         <div v-if="loading" class="empty-state">Loading products...</div>
-        <div v-else class="product-grid">
+        <div v-else class="product-grid" :class="{ 'is-list': catalogueView === 'list' }">
           <button v-for="(p,index) in filteredProducts" :key="p.id" type="button" class="product-tile" :class="{'is-highlighted':index===highlightedProductIndex}" @mouseenter="highlightedProductIndex=index" @click="addProduct(p)">
+            <span class="p-image" aria-hidden="true">{{p.name.slice(0, 2).toUpperCase()}}</span>
             <span class="p-name">{{p.name}}</span>
             <span class="p-price">{{money(p.sellingPrice)}}</span>
             <span class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unit}} in stock</span>
@@ -716,4 +730,92 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
   .inv-signatures{break-inside:avoid!important;page-break-inside:avoid!important}
   @page{margin:8mm}
 }
+
+/* SherERP_Vue POS catalogue/cart layout port — styles deliberately stay scoped.
+   Business logic, cart state, prices, invoice printing, serials and FIFO are unchanged. */
+.gas-pos{gap:var(--sher-space-3);font-size:var(--sher-text-base)}
+.gas-pos .start-session-card{border-color:var(--sher-line);border-radius:var(--sher-radius-lg);background:var(--sher-raised);box-shadow:none;padding:var(--sher-card-pad)}
+.gas-pos .session-copy h3{font-size:var(--sher-text-md);font-weight:600}
+.gas-pos .session-copy p{color:var(--sher-text-muted);font-size:var(--sher-text-sm)}
+.gas-pos .session-banner{gap:12px;border:1px solid var(--sher-ok-line);border-radius:var(--sher-radius-lg);padding:10px 14px;background:var(--sher-ok-bg);color:var(--sher-text);font-size:var(--sher-text-sm)}
+.gas-pos .session-banner.update-banner{background:var(--sher-warn-bg);border-color:var(--sher-warn-line)}
+.pos-search-bar{display:flex;align-items:center;gap:12px;min-width:0;padding:8px 14px;border:1px solid var(--sher-line);border-radius:var(--sher-radius-lg);background:var(--sher-raised)}
+.pos-search-label{flex:0 0 auto;min-width:120px;margin:0;color:var(--sher-text);font-size:var(--sher-text-sm);font-weight:600}
+.pos-search-label .bn-hint{display:block;font-size:var(--sher-text-2xs)}
+.pos-search-bar .pos-search-wrap{position:relative;flex:1;min-width:0;margin:0;display:flex;align-items:center}
+.pos-search-icon{position:absolute;left:13px;color:var(--sher-text-faint);font-size:24px;line-height:1;pointer-events:none}
+.pos-search-bar .pos-search{width:100%;height:36px;padding:6px 40px 6px 41px!important;border:1px solid var(--sher-line-strong);border-radius:var(--sher-radius);background:var(--sher-raised);color:var(--sher-text);font-size:14px}
+.pos-search-bar:focus-within{border-color:var(--sher-primary);box-shadow:0 0 0 2px var(--sher-primary-soft)}
+.pos-search-bar .pos-search-clear{right:8px;border-radius:999px;background:var(--sher-sunken);color:var(--sher-text-muted)}
+.gas-pos .pos-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,27rem);gap:var(--sher-space-3);align-items:start}
+.gas-pos .product-card-panel,.gas-pos .checkout-card{margin:0;min-width:0;padding:var(--sher-card-pad);border:1px solid var(--sher-line);border-radius:var(--sher-radius-lg);background:var(--sher-raised);box-shadow:none}
+.gas-pos .checkout-card{position:sticky;top:8px}
+.pos-catalogue-tools{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;min-width:0}
+.pos-catalogue-tools .category-filter{flex:1;min-width:0;margin:0;padding:2px 0 4px;gap:6px}
+.gas-pos .category-chip{min-height:30px;padding:5px 12px;border:1px solid var(--sher-line);border-radius:9999px;background:var(--sher-raised);color:var(--sher-text);font-size:var(--sher-text-sm);font-weight:500}
+.gas-pos .category-chip:hover{background:var(--sher-hover)}
+.gas-pos .category-chip.active{background:var(--sher-primary);color:var(--sher-on-primary);border-color:var(--sher-primary)}
+.pos-view-toggle{display:flex;flex:0 0 auto;gap:2px;padding:2px;border:1px solid var(--sher-line);border-radius:var(--sher-radius);background:var(--sher-sunken)}
+.pos-view-toggle button{border:0;border-radius:6px;background:transparent;color:var(--sher-text-muted);padding:5px 9px;font:500 var(--sher-text-xs)/1.4 var(--sher-font);cursor:pointer}
+.pos-view-toggle button.active{background:var(--sher-raised);color:var(--sher-text);box-shadow:var(--sher-shadow)}
+.gas-pos .product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));gap:8px;padding:1px;max-height:60vh}
+.gas-pos .product-tile{min-width:0;min-height:0;padding:8px;gap:5px;border-color:var(--sher-line);border-radius:var(--sher-radius-md);background:var(--sher-raised);color:var(--sher-text);transition:border-color 120ms ease,box-shadow 120ms ease}
+.gas-pos .product-tile:hover,.gas-pos .product-tile.is-highlighted{background:var(--sher-raised);border-color:var(--sher-primary);box-shadow:0 0 0 2px var(--sher-primary-soft)}
+.p-image{display:grid;place-items:center;width:100%;height:54px;border-radius:var(--sher-radius);background:var(--sher-sunken);color:var(--sher-text-faint);font-size:17px;font-weight:700}
+.gas-pos .p-name{font-weight:600;font-size:var(--sher-text-sm);line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gas-pos .p-price{font-family:var(--sher-font);font-size:var(--sher-text-base);font-weight:700;color:var(--sher-text)}
+.gas-pos .p-stock{font-size:11px;color:var(--sher-ok);background:var(--sher-ok-bg);border-radius:9999px;padding:2px 7px;align-self:flex-start}
+.gas-pos .p-stock.danger{color:var(--sher-bad);background:var(--sher-bad-bg)}
+.gas-pos .product-grid.is-list{grid-template-columns:minmax(0,1fr)}
+.gas-pos .is-list .product-tile{display:grid;grid-template-columns:46px minmax(0,1fr) auto;grid-template-rows:auto auto;align-items:center;gap:2px 12px;padding:9px 12px}
+.gas-pos .is-list .p-image{grid-row:1/3;width:46px;height:46px;font-size:14px}
+.gas-pos .is-list .p-name{grid-column:2;grid-row:1;font-size:14px}
+.gas-pos .is-list .p-stock{grid-column:2;grid-row:2;justify-self:start}
+.gas-pos .is-list .p-price{grid-column:3;grid-row:1/3;white-space:nowrap;font-size:15px}
+.gas-pos .cart-title{margin:14px 0 8px;padding:12px 0 0;border-top:1px solid var(--sher-line);font-size:var(--sher-text-md);font-weight:600}
+.gas-pos .customer-actions .btn{min-height:30px;padding:5px 9px;border:0;background:transparent;color:var(--sher-primary-text);font-size:var(--sher-text-xs);font-weight:600}
+.gas-pos .customer-actions .btn:hover{text-decoration:underline;background:transparent}
+.gas-pos .cart-list{gap:0;max-height:38vh}
+.gas-pos .cart-row{grid-template-columns:minmax(0,1fr) 60px 86px 82px 26px;gap:5px;padding:8px 0;border-bottom:1px solid var(--sher-line-soft)}
+.gas-pos .c-name{font-weight:600;font-size:var(--sher-text-sm)}
+.gas-pos .cart-row input{min-width:0;height:34px;padding:5px 6px!important;border-color:var(--sher-line-strong);border-radius:var(--sher-radius-sm)}
+.gas-pos .c-line-total,.gas-pos .c-cost{font-family:var(--sher-font);font-variant-numeric:normal}
+.gas-pos .c-cost.is-revealed{background:var(--sher-text);color:var(--sher-raised)}
+.gas-pos .cart-remove{color:var(--sher-bad);width:26px;height:34px}
+.gas-pos .totals-row{font-size:var(--sher-text-sm);padding:5px 0}
+.gas-pos .totals-row.grand{font-size:15px;font-weight:700;border-color:var(--sher-line)}
+.gas-pos .totals-row.grand strong{color:var(--sher-primary-text);font-size:22px}
+.gas-pos .totals-row.due{color:var(--sher-bad)}
+.gas-pos .totals-row.change{color:var(--sher-ok)}
+.gas-pos .complete-btn{min-height:48px;border-radius:var(--sher-radius-md);font-size:15px;font-weight:700}
+.gas-pos .shortage-row{background:var(--sher-bad-bg);border:1px solid var(--sher-bad-line);border-radius:var(--sher-radius);margin-top:5px}
+.gas-pos .shortage-head{color:var(--sher-bad)}
+.gas-pos .cart-tracking-row{background:var(--sher-sunken);border-color:var(--sher-line)}
+@media(max-width:1088px){
+ .gas-pos .pos-layout{grid-template-columns:minmax(0,1fr)}
+ .gas-pos .checkout-card{position:static}
+ .gas-pos .product-grid{max-height:42vh}
+ .gas-pos .cart-list{max-height:none}
+}
+@media(max-width:640px){
+ .pos-search-bar{padding:9px 11px}
+ .pos-search-label{display:none}
+ .pos-search-bar .pos-search{height:40px}
+ .pos-catalogue-tools{gap:6px;align-items:flex-start}
+ .pos-view-toggle button{padding:5px 6px}
+ .gas-pos .product-grid{grid-template-columns:repeat(2,minmax(0,1fr));max-height:44vh;gap:7px}
+ .gas-pos .product-grid.is-list{grid-template-columns:minmax(0,1fr)}
+ .gas-pos .product-card-panel,.gas-pos .checkout-card{padding:12px}
+ .gas-pos .customer-actions{display:flex;gap:6px}
+ .gas-pos .customer-actions .btn{width:auto;min-height:36px}
+ .gas-pos .cart-row{grid-template-columns:minmax(0,1fr) 62px 80px 72px 24px;gap:5px}
+}
+@media(max-width:460px){
+ .gas-pos .product-card-panel,.gas-pos .checkout-card{padding:10px}
+ .gas-pos .cart-row{display:grid;grid-template-columns:minmax(0,1fr) 66px 84px 26px;grid-template-areas:'name name name remove' 'qty price total total';padding:8px;border:1px solid var(--sher-line);border-radius:var(--sher-radius)}
+ .gas-pos .cart-row input{min-width:0}
+ .gas-pos .p-name{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+ .pos-catalogue-tools .category-filter{max-width:calc(100% - 110px)}
+}
+@media print{.pos-search-bar,.pos-view-toggle{display:none!important}}
 </style>

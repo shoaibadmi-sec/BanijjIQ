@@ -1,0 +1,248 @@
+/* Adapted from SherERP_Vue/apps/web/src/design/tokens.css. Source repository omits font files: system fonts are used as fallback. */
+/* SherERP's shared visual vocabulary. DESIGN.md is translated here into
+   semantic application tokens; pages consume --sher-* names only. */
+
+:root {
+  color-scheme: light;
+  --sher-primary: #2563eb;
+  --sher-primary-strong: #1e40af;
+  --sher-primary-soft: #dbeafe;
+  --sher-primary-softer: #eff6ff;
+  --sher-primary-text: #1d4ed8;
+  --sher-on-primary: #ffffff;
+
+  --sher-surface-page: #f5f5f5;
+  --sher-surface-card: #ffffff;
+  --sher-surface-muted: #fafafa;
+  --sher-surface-raised: #ffffff;
+  --sher-surface-sidebar: #ffffff;
+  --sher-surface-header: #ffffff;
+  --sher-surface-hover: #f5f5f5;
+  --sher-surface-selected: #eff6ff;
+  --sher-scrim: rgb(10 10 10 / 46%);
+  --sher-surface: var(--sher-surface-page);
+  --sher-raised: var(--sher-surface-card);
+  --sher-sunken: var(--sher-surface-muted);
+  --sher-sidebar: var(--sher-surface-sidebar);
+  --sher-headerbar: var(--sher-surface-header);
+  --sher-hover: var(--sher-surface-hover);
+
+  --sher-border-subtle: #e5e5e5;
+  --sher-border-strong: #d4d4d4;
+  --sher-border-soft: #eeeeee;
+  --sher-line: var(--sher-border-subtle);
+  --sher-line-strong: var(--sher-border-strong);
+  --sher-line-soft: var(--sher-border-soft);
+  --sher-text-primary: #171717;
+  --sher-text-secondary: #525252;
+  --sher-text-tertiary: #737373;
+  --sher-text-disabled: #a3a3a3;
+  --sher-text: var(--sher-text-primary);
+  --sher-text-muted: var(--sher-text-secondary);
+  --sher-text-faint: var(--sher-text-tertiary);
+
+  --sher-tip-bg: #171717;
+  --sher-tip-fg: #ffffff;
+  --sher-tip-line: rgb(255 255 255 / 10%);
+
+  --sher-ok: #15803d;
+  --sher-ok-bg: #f0fdf4;
+  --sher-ok-line: #bbf7d0;
+  --sher-warn: #a16207;
+  --sher-warn-bg: #fffbeb;
+  --sher-warn-line: #fde68a;
+  --sher-bad: #be123c;
+  --sher-bad-bg: #fff1f2;
+  --sher-bad-line: #fecdd3;
+  --sher-info: #1d4ed8;
+  --sher-info-bg: #eff6ff;
+  --sher-info-line: #bfdbfe;
+  --sher-success: var(--sher-ok);
+  --sher-success-soft: var(--sher-ok-bg);
+  --sher-success-ink: var(--sher-ok);
+  --sher-warning: var(--sher-warn);
+  --sher-warning-soft: var(--sher-warn-bg);
+  --sher-warning-ink: var(--sher-warn);
+  --sher-danger: var(--sher-bad);
+  --sher-danger-soft: var(--sher-bad-bg);
+  --sher-danger-line: var(--sher-bad-line);
+  --sher-danger-ink: var(--sher-bad);
+  --sher-accent: var(--sher-primary);
+  --sher-border: var(--sher-line);
+  --sher-bg: var(--sher-surface-page);
+  --sher-surface-2: var(--sher-surface-muted);
+
+  --sher-tone-blue: #2563eb;
+  --sher-tone-blue-fill: #eff6ff;
+  --sher-tone-slate: #475569;
+  --sher-tone-slate-fill: #f8fafc;
+  --sher-tone-green: #15803d;
+  --sher-tone-green-fill: #f0fdf4;
+  --sher-tone-amber: #a16207;
+  --sher-tone-amber-fill: #fffbeb;
+  --sher-tone-violet: #6d28d9;
+  --sher-tone-violet-fill: #f5f3ff;
+  --sher-tone-rose: #be123c;
+  --sher-tone-rose-fill: #fff1f2;
+  --sher-on-tone: var(--sher-text-primary);
+  --sher-tone-disc-alpha: 0.1;
+  --sher-nav-active-bg: var(--sher-primary-soft);
+  --sher-nav-active-fg: var(--sher-primary-text);
+  --sher-nav-active-icon: var(--sher-primary);
+
+  --sher-radius-sm: 6px;
+  --sher-radius: 8px;
+  --sher-radius-md: 10px;
+  --sher-radius-lg: 12px;
+  --sher-radius-xl: 16px;
+  --sher-radius-pill: 9999px;
+  --sher-control-h: 40px;
+  --sher-control-h-sm: 32px;
+  --sher-tap: 40px;
+  --sher-card-pad: 16px;
+  --sher-row-pad: 8px 12px;
+  --sher-border-w: 1px;
+  --sher-space-1: 4px;
+  --sher-space-2: 8px;
+  --sher-space-3: 12px;
+  --sher-space-4: 16px;
+  --sher-space-5: 20px;
+  --sher-space-6: 24px;
+  --sher-sidebar-width: 256px;
+  --sher-sidebar-width-collapsed: 68px;
+  --sher-content-max: 1600px;
+  --sher-readable-max: 1200px;
+
+  --sher-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sher-font-heading: 'Inter', system-ui, ui-sans-serif, system-ui, sans-serif;
+  --sher-font-bn: 'Noto Sans Bengali', 'Nirmala UI', sans-serif;
+  --sher-font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  --sher-text-2xs: 11px;
+  --sher-text-xs: 12px;
+  --sher-text-sm: 13px;
+  --sher-text-base: 14px;
+  --sher-text-md: 16px;
+  --sher-text-lg: 18px;
+  --sher-text-xl: 24px;
+  --sher-text-2xl: 30px;
+
+  --sher-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  --sher-shadow-card: none;
+  --sher-shadow-raised: 0 16px 40px rgb(0 0 0 / 16%);
+  --sher-shadow-tone: none;
+  --sher-transition: 150ms ease;
+  --sher-bottom-nav-h: 0px;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --sher-primary: #60a5fa;
+  --sher-primary-strong: #3b82f6;
+  --sher-primary-soft: rgb(59 130 246 / 18%);
+  --sher-primary-softer: rgb(59 130 246 / 10%);
+  --sher-primary-text: #93c5fd;
+  --sher-on-primary: #07101f;
+  --sher-surface-page: #0b0d10;
+  --sher-surface-card: #111418;
+  --sher-surface-muted: #171a1f;
+  --sher-surface-raised: #1b1f25;
+  --sher-surface-sidebar: #0e1115;
+  --sher-surface-header: #0e1115;
+  --sher-surface-hover: #1a1e24;
+  --sher-surface-selected: rgb(59 130 246 / 14%);
+  --sher-scrim: rgb(0 0 0 / 68%);
+  --sher-border-subtle: #272b31;
+  --sher-border-strong: #393f47;
+  --sher-border-soft: #20242a;
+  --sher-text-primary: #f5f5f5;
+  --sher-text-secondary: #b6b8bc;
+  --sher-text-tertiary: #8b8e94;
+  --sher-text-disabled: #62666d;
+  --sher-tip-bg: #272b31;
+  --sher-tip-fg: #ffffff;
+  --sher-tip-line: #393f47;
+  --sher-ok: #4ade80;
+  --sher-ok-bg: rgb(34 197 94 / 14%);
+  --sher-ok-line: rgb(74 222 128 / 30%);
+  --sher-warn: #fbbf24;
+  --sher-warn-bg: rgb(245 158 11 / 14%);
+  --sher-warn-line: rgb(251 191 36 / 30%);
+  --sher-bad: #fb7185;
+  --sher-bad-bg: rgb(244 63 94 / 14%);
+  --sher-bad-line: rgb(251 113 133 / 30%);
+  --sher-info: #93c5fd;
+  --sher-info-bg: rgb(59 130 246 / 14%);
+  --sher-info-line: rgb(147 197 253 / 30%);
+  --sher-tone-blue: #93c5fd;
+  --sher-tone-blue-fill: rgb(59 130 246 / 12%);
+  --sher-tone-slate: #cbd5e1;
+  --sher-tone-slate-fill: rgb(148 163 184 / 10%);
+  --sher-tone-green: #4ade80;
+  --sher-tone-green-fill: rgb(34 197 94 / 11%);
+  --sher-tone-amber: #fbbf24;
+  --sher-tone-amber-fill: rgb(245 158 11 / 11%);
+  --sher-tone-violet: #c4b5fd;
+  --sher-tone-violet-fill: rgb(139 92 246 / 12%);
+  --sher-tone-rose: #fda4af;
+  --sher-tone-rose-fill: rgb(244 63 94 / 11%);
+  --sher-on-tone: var(--sher-text-primary);
+  --sher-nav-active-bg: var(--sher-primary-soft);
+  --sher-nav-active-fg: var(--sher-primary-text);
+  --sher-nav-active-icon: var(--sher-primary-text);
+  --sher-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+  --sher-shadow-raised: 0 20px 48px rgb(0 0 0 / 60%);
+}
+
+* { box-sizing: border-box; }
+
+html,
+body,
+#app { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--sher-font);
+  font-size: var(--sher-text-base);
+  line-height: 1.5;
+  color: var(--sher-text);
+  background: var(--sher-surface-page);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea { font-family: inherit; }
+
+.sher-bn {
+  font-family: var(--sher-font-bn);
+  font-size: var(--sher-text-2xs);
+  line-height: 1.55;
+  color: var(--sher-text-secondary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sher-primary);
+  outline-offset: 2px;
+  border-radius: var(--sher-radius-sm);
+}
+
+@media (pointer: coarse) {
+  :root { --sher-tap: 44px; }
+}
+
+@media (max-width: 640px) {
+  :root { --sher-bottom-nav-h: calc(68px + env(safe-area-inset-bottom)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
