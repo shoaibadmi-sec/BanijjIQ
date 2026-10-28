@@ -15,7 +15,8 @@
     "cloudflare:deploy": "npm run build && wrangler deploy",
     "cloudflare:migrate:local": "wrangler d1 migrations apply DB --local",
     "cloudflare:migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "cloudflare:backup": "wrangler d1 export DB --remote --output=./backup.sql"
+    "cloudflare:backup": "wrangler d1 export DB --remote --output=./backup.sql",
+    "test:mohim-parity": "tsx --test tests/mohim-*.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

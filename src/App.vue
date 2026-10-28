@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { notifySuccess, notifyError } from './utils/notify';
+const ProductUnitConversionsDialog = defineAsyncComponent(() => import('./components/ProductUnitConversionsDialog.vue'));
 const PosPanel = defineAsyncComponent(() => import('./components/PosPanel.vue'));
 const SalesPanel = defineAsyncComponent(() => import('./components/SalesPanel.vue'));
 const CustomersPanel = defineAsyncComponent(() => import('./components/CustomersPanel.vue'));
@@ -190,6 +191,7 @@ const productSort = computed({
 const modal = ref<ModalName>('');
 const editingId = ref<string | null>(null);
 const stockProduct = ref<Product | null>(null);
+const conversionProduct = ref<Product | null>(null);
 const lotsProduct = ref<Product | null>(null);
 const lots = ref<StockLot[]>([]);
 const manageMode = ref<ManageMode>('category');
@@ -2161,6 +2163,7 @@ onBeforeUnmount(() => {
     >
       <template v-if="actionMenu.type === 'product' && actionMenu.product">
         <button @click="runAction(() => openEditProduct(actionMenu!.product!))">Edit</button>
+        <button @click="runAction(() => { conversionProduct = actionMenu!.product!; })">Multi-unit</button>
         <button @click="runAction(() => openStock(actionMenu!.product!))">Stock</button>
         <button @click="runAction(() => openLots(actionMenu!.product!))">Lots</button>
         <button @click="runAction(() => toggleStatus(actionMenu!.product!))">{{ actionMenu.product.status === 'Active' ? 'Deactivate' : 'Activate' }}</button>
@@ -2244,6 +2247,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <ProductUnitConversionsDialog v-if="conversionProduct" :product-id="conversionProduct.productId" :product-name="conversionProduct.productName" :base-unit="conversionProduct.unit" @close="conversionProduct=null" @saved="load" />
     <div class="modal-overlay" v-if="modal === 'product'">
       <div class="modal">
         <div class="modal-header">

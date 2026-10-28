@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { notifySuccess, notifyError } from '../utils/notify';
 import ModuleTabs from './ModuleTabs.vue';
 import SalesInvoiceDetail from './SalesInvoiceDetail.vue';
+import BatchSalesReturnsDialog from './BatchSalesReturnsDialog.vue';
 import {
   completeSalesReturn, deleteSale, getSaleDetail, getSaleReturnData, getSalesManagementList,
   getSalesReturnDetail, getSalesReturnHistory, receiveSalesCustomerPayment, searchSalesInvoicesForReturn
@@ -58,6 +59,7 @@ const returnForm = reactive({
   backdatedReason:''
 });
 const returnSaving = ref(false);
+const showBatchReturns = ref(false);
 
 const historySearch = ref('');
 const returnDetail = ref<SalesReturnDetail|null>(null);
@@ -275,8 +277,12 @@ onBeforeUnmount(()=>document.removeEventListener('pointerdown',onSalesPointerDow
     </template>
 
     <template v-else-if="activeTab==='newReturn'">
+      <BatchSalesReturnsDialog v-if="showBatchReturns" @close="showBatchReturns=false" @completed="async (message) => { showBatchReturns=false; flash(message); await load(); activeTab='returnHistory'; }" />
       <div class="card return-search-card">
-        <label>Find Invoice by Invoice Number or Customer Phone</label>
+        <div class="return-search-row" style="justify-content:space-between;align-items:center">
+          <label>Find Invoice by Invoice Number or Customer Phone</label>
+          <button type="button" class="btn btn-primary" @click="showBatchReturns=true">Find Customer / Batch Return <span class="bn-hint">একাধিক রশিদ</span></button>
+        </div>
         <div class="return-search-row"><input v-model.trim="returnSearch" placeholder="e.g. INV-000012 or 01911-100001" @keydown.enter="findReturnInvoices"><button class="btn btn-primary" :disabled="returnSearchLoading" @click="findReturnInvoices">{{returnSearchLoading?'Searching...':'Find Invoice'}}</button><button class="btn" @click="clearReturn">Clear</button></div>
         <div v-if="returnMatches.length" class="sales-table-wrap return-results"><table class="sales-table"><thead><tr><SortableHeader table-id="sales-return-search" column="invoiceId">Invoice</SortableHeader><SortableHeader table-id="sales-return-search" column="date" type="date">Date</SortableHeader><SortableHeader table-id="sales-return-search" column="customerName">Customer</SortableHeader><SortableHeader table-id="sales-return-search" column="grandTotal" type="number" class="num">Total</SortableHeader><SortableHeader table-id="sales-return-search" column="paymentStatus">Status</SortableHeader><th></th></tr></thead><tbody>
           <tr v-for="m in $sortRows('sales-return-search', returnMatches)" :key="m.invoiceId"><td class="mono">{{m.invoiceId}}</td><td>{{m.date}}</td><td>{{m.customerName}}<span v-if="m.customerPhone" class="subline">{{m.customerPhone}}</span></td><td class="num mono">{{money(m.grandTotal)}}</td><td>{{m.paymentStatus}}</td><td><button class="btn btn-sm" @click="loadReturnInvoice(m.invoiceId)">Load</button></td></tr>

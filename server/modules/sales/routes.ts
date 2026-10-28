@@ -1,4 +1,5 @@
 import type { SherDatabase } from '../../db/types.js';
+import { searchReturnCustomers, getCustomerReturnInvoices, completeSalesReturnBatchRoute } from './batchReturns.service.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
 import {
@@ -20,6 +21,10 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   if (path === '/api/sales-management' && request.method === 'GET') return getSalesManagementRoute(db);
   if (path === '/api/sales-management/customer-payment' && request.method === 'POST') return receiveCustomerPaymentRoute(db, await readBody<any>(request), user);
+  if (path === '/api/sales-returns/customers/search' && request.method === 'GET') return searchReturnCustomers(db, url);
+  const customerReturnInvoicesMatch = path.match(/^\/api\/sales-returns\/customers\/([^/]+)\/invoices$/);
+  if (customerReturnInvoicesMatch && request.method === 'GET') return getCustomerReturnInvoices(db, decodeURIComponent(customerReturnInvoicesMatch[1]));
+  if (path === '/api/sales-returns/batch' && request.method === 'POST') return completeSalesReturnBatchRoute(db, await readBody<any>(request), user);
   if (path === '/api/sales-returns/search' && request.method === 'GET') return searchSalesInvoicesForReturnRoute(db, url);
   const salesReturnHistoryDetailMatch = path.match(/^\/api\/sales-returns\/history\/([^/]+)$/);
   if (salesReturnHistoryDetailMatch && request.method === 'GET') return getSalesReturnDetailRoute(db, decodeURIComponent(salesReturnHistoryDetailMatch[1]));

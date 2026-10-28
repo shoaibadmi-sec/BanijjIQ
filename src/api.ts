@@ -824,3 +824,27 @@ export async function getAuditLogs(filters: { dateFrom?: string; dateTo?: string
   if (filters.query) qs.set('q', filters.query);
   return request(`/api/admin/audit?${qs.toString()}`);
 }
+
+// Optional mixed-unit configuration; canonical product stock remains in the base unit.
+export interface ProductUnitRelation { unit: string; count: number; smallerUnit: string; factor?: number }
+export async function getProductConversions(id: string): Promise<{ok:true; productId:string; baseUnit:string; relations: ProductUnitRelation[]}> {
+  return request(`/api/products/${encodeURIComponent(id)}/conversions`);
+}
+export async function saveProductConversions(id: string, relations: ProductUnitRelation[]): Promise<{ok:true; productId:string; baseUnit:string; relations: ProductUnitRelation[]}> {
+  return request(`/api/products/${encodeURIComponent(id)}/conversions`, { method:'PUT', body: JSON.stringify({relations}) });
+}
+
+export interface BatchReturnCustomer { id:string;name:string;phone:string;currentDue:number;invoiceCount:number }
+export interface BatchReturnInvoice { invoiceId:string;date:string;grandTotal:number;paidAmount:number;dueAmount:number;returnedAmount:number;remainingQuantity:number }
+export function searchBatchReturnCustomers(q:string): Promise<{ok:true;customers:BatchReturnCustomer[]}> {
+  return request(`/api/sales-returns/customers/search?q=${encodeURIComponent(q)}`);
+}
+export function getBatchReturnCustomerInvoices(id:string): Promise<{ok:true;customer:{customer_id:string;customer_name:string;phone:string};invoices:BatchReturnInvoice[]}> {
+  return request(`/api/sales-returns/customers/${encodeURIComponent(id)}/invoices`);
+}
+export function completeBatchSalesReturn(payload: {
+  customerId:string;refundMethod:'Cash'|'Store Credit';date:string;reason:string;notes?:string;backdatedReason?:string;
+  invoices:Array<{invoiceId:string;items:Array<{productId:string;qty:number;unitPrice:number}>}>;
+}): Promise<{ok:true;batchId:string;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>;totalReturnAmount:number}> {
+  return request('/api/sales-returns/batch',{method:'POST',body:JSON.stringify(payload)});
+}
