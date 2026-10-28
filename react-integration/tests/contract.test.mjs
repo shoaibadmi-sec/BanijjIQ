@@ -105,6 +105,6 @@ test('Phase 13 real return route preserves source Sales preview and blocks uncer
   assert.ok(!prep.includes('path="sales" element={<LiveSalesReturns'));
   for(const check of ['getReturnableInvoice(id)','postSalesReturn(payload)',
     'getSalesReturnHistory()','setUnknown(true)','availableSerials','SerialPickerDialog',
-    'canUseModule(user,\\'returns\\',\\'add\\')','Review real return','total>sale.netSale'])
+    "canUseModule(user,'returns','add')",'Review real return','total>sale.netSale'])
     assert.ok(returns.includes(check),check);
 });
