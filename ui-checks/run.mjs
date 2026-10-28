@@ -308,7 +308,10 @@ try{
     await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
     await page.getByRole('button',{name:'Resolve stock shortage'}).click();
     await page.getByRole('radio',{name:/Vendor/}).click();
-    await page.getByRole('combobox',{name:'Select live vendor'}).selectOption('VEN-UI-1');
+    await page.getByRole('textbox',{name:'New vendor name'}).fill('UI Quick Vendor');
+    await page.getByRole('textbox',{name:'New vendor phone'}).fill('01000000222');
+    await page.getByRole('button',{name:'+ Add & select vendor'}).click();
+    await page.getByRole('combobox',{name:'Select live vendor'}).selectOption('VEN-UI-2');
     await page.getByRole('spinbutton',{name:'Vendor unit cost'}).fill('35');
     await page.getByRole('button',{name:'Use vendor'}).click();
     await page.locator('input[list="live-pos-customer-names"]').fill('UI Vendor Buyer');
@@ -319,7 +322,8 @@ try{
     await page.getByText('Sale posted successfully').waitFor({timeout:12000});
     const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
     assert.equal(payload.items[0].fulfillmentMode,'vendor');
-    assert.equal(payload.items[0].vendorId,'VEN-UI-1');
+    assert.equal(payload.items[0].vendorId,'VEN-UI-2');
+    assert.equal(api.filter(x=>x.path==='/api/pos/vendors'&&x.method==='POST').length,1);
     assert.equal(payload.items[0].vendorUnitCost,35);
     results.apiCalls.push(...api);await screenshot(page,'phase13-pos-vendor-1024');
     await ctx.close();
