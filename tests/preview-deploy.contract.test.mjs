@@ -52,3 +52,17 @@ test('hosted smoke never posts inventory, cash, invoices or returns',()=>{
   assert.ok(!smoke.includes("call('POST','/api/pos/cash-session/start'"));
   assert.ok(!smoke.includes('console.log(response.token)'));
 });
+
+
+test('manual default-branch launcher pins reviewed PR #9 and prevents accidental deploy',()=>{
+  const launcher=read('.github/workflows/hisabiq-hosted-preview-dispatch.yml');
+  for(const marker of ["name: Authorize isolated HisabIQ React preview","workflow_dispatch:",
+    "github.ref == 'refs/heads/main'","inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY'",
+    "reviewed_commit_sha:","repos/$GITHUB_REPOSITORY/pulls/9",
+    '"$REVIEWED_SHA" != "$actual"',"name: hisabiq-react-preview",
+    "needs: verify-reviewed-commit","scripts/preview/preflight-remote-db.mjs"])
+    assert.ok(launcher.includes(marker), marker);
+  assert.ok(!launcher.includes('\n  push:'));
+  assert.ok(!launcher.includes('\n  pull_request:'));
+  assert.ok(!launcher.includes('wrangler deploy --config wrangler.jsonc'));
+});

@@ -52,23 +52,30 @@ read, modified or assumed in the preparation of PR #9.
 
 ## Execution
 
-The existing \`HisabIQ React / BanijjIQ API integration\` workflow contains an
-optional \`deploy-hosted-preview\` job. It **never** deploys for pull requests,
-CI runs or normal workflow dispatches. It runs only with all of these:
+The registered default-branch launcher executes tests before reaching
+its environment-protected deployment step. It runs only with all of these:
 
-- manual \`workflow_dispatch\`, on the branch \`feat/hisabiq-react-api\`
-- \`deploy_hosted_preview = true\`
-- \`confirm_isolated_preview = ISOLATED-PREVIEW-ONLY\`
+- manual `workflow_dispatch` of the default-branch launcher on `main`
+- `reviewed_commit_sha` equal to the exact current head SHA of draft PR #9
+- `confirm_isolated_preview = ISOLATED-PREVIEW-ONLY`
 - successful React build, full SQLite/Worker-local D1 accounting checks,
   and Chromium UI tests in the same run
 - valid environment secrets and any configured environment reviewer approval
 
-**GitHub limitation:** manual \`workflow_dispatch\` must be registered from a
-workflow present on the repository's *default branch*. PR #9 contains the
-workflow on a feature branch only, so the standard Actions “Run workflow”
-button may not be usable until an authorized maintainer separately makes a
-safe dispatch entrypoint available on the default branch. Do not merge an
-incomplete ERP PR to bypass this. No hosted deployment has been performed.
+**Default-branch manual launcher is registered:** `.github/workflows/hisabiq-hosted-preview-dispatch.yml`
+was committed to `main` at `2607bc729c121d288e3a32996cf68da94be1269d`,
+without merging PR #9 or deploying the ERP. In GitHub **Actions →
+Authorize isolated HisabIQ React preview → Run workflow**, select `main`,
+enter the current reviewed full **40-character PR #9 head SHA** as
+`reviewed_commit_sha`, and enter `ISOLATED-PREVIEW-ONLY` as
+`confirm_isolated_preview`.
+
+The launcher checks that PR #9 remains open in this repository on the exact
+reviewed commit. It reruns SQL, browser and local Worker/D1 checks before
+entering the `hisabiq-react-preview` GitHub environment. Configure its
+six secrets and required reviewer approval **before** dispatching. The
+workflow has no push or pull-request triggers. No hosted deployment has
+been performed.
 
 Once dispatch is authorized, the job creates an isolated Wrangler config,
 checks the **remote** D1 UUID and name through Cloudflare's metadata API,
