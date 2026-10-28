@@ -1,0 +1,10 @@
+{
+  "d1_databases": [
+    {
+      "binding": "PREVIEW_DB",
+      "database_name": "shererp-bundle-preview-db",
+      "database_id": "18154f25-adde-42e0-b7c0-bd5501535061",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
