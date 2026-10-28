@@ -224,7 +224,7 @@ export function LivePosPage() {
           I checked Sales and confirmed this invoice was not posted — allow retry
         </Button>
       </div>}
-    </div>
+    </div>}
     {busy && <p role="status" className="rounded-xl border border-border bg-card p-4 text-sm text-ink-500">Loading live POS…</p>}
     {!busy && bootstrap && <>
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs text-ink-600">
