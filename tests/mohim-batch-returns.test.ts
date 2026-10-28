@@ -9,7 +9,7 @@ const user={userId:'USR-1',fullName:'Cashier',phone:'',role:'admin',status:'Acti
 function fixture() {
   const db=new SqliteDatabase(':memory:');
   const migration=runMigrations(db.native,resolve('migrations'));
-  assert.equal(migration.applied.length,29);
+  assert.equal(migration.applied.length,30);
   db.native.prepare('INSERT INTO app_users (user_id,full_name,phone,password_hash,password_salt) VALUES (?,?,?,?,?)')
     .run(user.userId,user.fullName,'01700009999','hash','salt');
   db.native.prepare("INSERT INTO cash_sessions (session_id,opened_by,opening_cash,status) VALUES (?,?,0,'Open')").run('CS-1',user.userId);

@@ -70,6 +70,8 @@ export async function completeSalesReturnBatchRoute(db: SherDatabase, input: Bat
     if(!id||seenInvoices.has(id)) return bad('Select distinct invoices; duplicates are not allowed.');
     seenInvoices.add(id);
     const sale=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND customer_id=? AND is_deleted=0`).bind(id,customerId).first<any>();
+    const bundle=await db.prepare("SELECT 1 FROM sale_items WHERE invoice_id=? AND sold_product_type='Bundle' LIMIT 1").bind(id).first();
+    if(bundle)return bad('This invoice contains a bundle. Use the single-invoice full-set return workflow; mixed batch returns require bundle provenance reconciliation.');
     if(!sale) return bad(`Invoice ${id} does not belong to this customer or has been deleted.`);
     if(date<String(sale.sale_date)) return bad(`Return date cannot precede invoice ${id} sale date.`);
     const items=Array.isArray(source.items)?source.items:[];

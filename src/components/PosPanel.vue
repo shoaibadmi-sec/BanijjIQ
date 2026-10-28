@@ -162,7 +162,7 @@ function sessionTime(v?:string){
   const d=new Date(normalized);
   return Number.isNaN(d.getTime()) ? v : d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
 }
-function lineShortage(l:PosCartLine){ return Math.max(0,Number(l.qty||0)-Number(l.stock||0)); }
+function lineShortage(l:PosCartLine){ return l.productType==='Bundle'?0:Math.max(0,Number(l.qty||0)-Number(l.stock||0)); }
 function hasCost(productId:string){ return showPurchasePrice.value && productCostById.value[productId] !== undefined; }
 function revealCost(productId:string){
   if(!hasCost(productId)) return;
@@ -231,8 +231,8 @@ function addProduct(p:PosProduct){
     else line.qty=Math.round(Number(line.qty||0))+1;
   }
   else cart.value.push({
-    productId:p.id,name:p.name,unit:p.unit,conversions:p.conversions||[],unitBreakdown:p.conversions?.length?[{unit:p.unit,count:1}]:undefined,qty:1,unitPrice:p.sellingPrice,stock:p.stock,
-    vendorId:'',vendorUnitCost:null,fulfillmentMode:p.stock>0?'own':undefined,
+    productId:p.id,name:p.name,unit:p.unit,productType:p.productType,conversions:p.conversions||[],unitBreakdown:p.conversions?.length?[{unit:p.unit,count:1}]:undefined,qty:1,unitPrice:p.sellingPrice,stock:p.stock,
+    vendorId:'',vendorUnitCost:null,fulfillmentMode:p.productType==='Bundle'?'negative':p.stock>0?'own':undefined,
     trackSerial:!!p.trackSerial,trackExpiry:!!p.trackExpiry,trackWarranty:!!p.trackWarranty,serialNumbers:[]
   });
 }
@@ -494,7 +494,8 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
           <button v-for="(p,index) in filteredProducts" :key="p.id" type="button" class="product-tile" :class="{'is-highlighted':index===highlightedProductIndex}" @mouseenter="highlightedProductIndex=index" @click="addProduct(p)">
             <span class="p-name">{{p.name}}</span>
             <span class="p-price">{{money(p.sellingPrice)}}</span>
-            <span class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unit}} in stock</span>
+            <span v-if="p.productType==='Bundle'" class="p-stock">Bundle · {{formatQty(p.stock)}} sets available (negative components allowed)</span>
+             <span v-else class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unit}} in stock</span>
           </button>
         </div>
         <div v-if="!loading&&!filteredProducts.length" class="empty-state">No products found.</div>
@@ -571,6 +572,7 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
               <button v-if="l.trackSerial" type="button" class="btn btn-sm" @click="openSerialPicker(i)">Select Serial / IMEI</button>
             </div>
 
+            <div v-if="l.productType==='Bundle'" class="bn-hint">Bundle — ১ সেট · components deducted automatically; negative stock is permitted.</div>
             <div v-if="lineShortage(l)>0" class="shortage-row">
               <template v-if="l.trackSerial || l.trackExpiry">
                 <div class="shortage-head"><strong>Only {{formatQty(l.stock)}} tracked item(s) ready</strong><span>{{formatQty(lineShortage(l))}} item(s) still need valid Serial / Expiry tracking or stock.</span></div>
