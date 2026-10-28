@@ -14,8 +14,8 @@ test('real backend authentication and read-only bootstrap use existing BanijjIQ 
   assert.ok(api.includes('Bearer '));
   assert.ok(api.includes('shererp_auth_token'));
   const gate=read('overlay/src/integration/BackendGate.tsx');
-  assert.ok(gate.includes('not for live transactions'));
-  assert.ok(gate.includes('Only the Products and basic POS routes use real APIs'));
+  assert.ok(gate.includes('basic POS posts real accounting transactions'));
+  assert.ok(gate.includes('Products and basic POS use the real API'));
   const products=read('overlay/src/integration/LiveProductsPage.tsx');
   assert.ok(products.includes('getBootstrap()'));
   assert.ok(products.includes('Read only'));
@@ -37,4 +37,15 @@ test('live POS uses existing transaction endpoint and makes unsupported products
     '!p.trackSerial && !p.trackExpiry && p.stock > 0','line.qty > line.product.stock',
     'paidAmount > total','paymentType: PosSalePayload']) assert.ok(page.includes(marker),marker);
   assert.ok(!page.includes('previewInvoiceCounter'),'Fake invoices cannot appear as posted');
+});
+
+test('ambiguous network failures do not encourage duplicate sale posting', () => {
+  const api=read('overlay/src/integration/banijjApi.ts');
+  const pos=read('overlay/src/integration/LivePosPage.tsx');
+  assert.ok(api.includes('class BackendRequestError'));
+  assert.ok(api.includes('export const getSalesByPhone'));
+  assert.ok(pos.includes('postingRef.current = true'));
+  assert.ok(pos.includes('setOutcomeUnknown(true)'));
+  assert.ok(pos.includes('Check recent invoices for this phone'));
+  assert.ok(pos.includes('I checked Sales and confirmed this invoice was not posted'));
 });

@@ -9,7 +9,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import type { Product } from '../types/erp';
 import { canUseModule, useBackendSession } from './BackendGate';
 import {
-  getPosBootstrap, postSale, startCashSession,
+  BackendRequestError, getPosBootstrap, getSalesByPhone, postSale, startCashSession,
   type PosBootstrap, type PosProduct, type PosInvoice, type PosSalePayload
 } from './banijjApi';
 
@@ -40,6 +40,10 @@ export function LivePosPage() {
   const [openingCash, setOpeningCash] = useState('0');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [finished, setFinished] = useState<PosInvoice | null>(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
+  const [salesChecked, setSalesChecked] = useState(false);
+  const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
+  const postingRef = useRef(false);
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -81,6 +85,7 @@ export function LivePosPage() {
   const errors = useMemo(() => {
     const found: string[] = [];
     if (!canPost) found.push('Your account cannot post POS sales.');
+    if (outcomeUnknown) found.push('Sale outcome is unknown. Check recent sales before attempting another post.');
     if (!bootstrap?.activeSession) found.push('Start your cash session first.');
     if (!lines.length) found.push('Add at least one product.');
     if (!customerName.trim() || !customerPhone.trim()) found.push('Customer name and phone are required.');
@@ -95,7 +100,7 @@ export function LivePosPage() {
     }
     return found;
   }, [canPost, bootstrap, lines, customerName, customerPhone, discountAmount, subtotal,
-      paidAmount, total, requiresAccount, matchingAccounts, bankAccountId]);
+      paidAmount, total, requiresAccount, matchingAccounts, bankAccountId, outcomeUnknown]);
   const addProduct = (p: Product) => {
     const record = bootstrap?.products.find(item => item.id === p.id);
     if (!record || !supported(record)) {
@@ -130,6 +135,7 @@ export function LivePosPage() {
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setFeedback('');setError('');
+    setOutcomeUnknown(false);setSalesChecked(false);setRecentSales([]);
     requestAnimationFrame(() => productRef.current?.focus());
   };
   const startDay = async () => {
@@ -143,7 +149,8 @@ export function LivePosPage() {
     finally { setSaving(false); }
   };
   const confirmPost = async () => {
-    if (saving || errors.length) { setError(errors[0] || 'Sale cannot be posted.'); return; }
+    if (postingRef.current || saving || errors.length) { setError(errors[0] || 'Sale cannot be posted.'); return; }
+    postingRef.current = true;
     const method = paymentMethod;
     const paymentType: PosSalePayload['paymentType'] = paidAmount === 0 ? 'Due' : paidAmount >= total ? 'Cash' : 'Partial';
     const payload: PosSalePayload = {
@@ -165,9 +172,26 @@ export function LivePosPage() {
       setReviewOpen(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not post sale. Your cart is retained.');
+      const unknown = !(err instanceof BackendRequestError) || err.status === null || err.status >= 500;
+      if (unknown) {
+        setOutcomeUnknown(true);setSalesChecked(false);
+        setError('The sale may already have been posted. Do not retry until you check recent invoices for this phone.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Sale rejected. Your cart is retained.');
+      }
       setReviewOpen(false);
-    } finally { setSaving(false); }
+    } finally { postingRef.current = false; setSaving(false); }
+  };
+  const checkRecentSales = async () => {
+    setSalesChecked(false);
+    try {
+      const result = await getSalesByPhone(customerPhone.trim());
+      setRecentSales(result.sales.slice(0, 10));
+      setSalesChecked(true);
+      setFeedback('Review the invoices below and check your Sales ledger. Only clear this warning if no invoice was posted.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not check recent invoices.');
+    }
   };
   if (!canView) return <section className="rounded-xl border border-danger bg-danger-bg p-4 text-sm text-danger" role="alert">
     You do not have permission to use POS. · বিক্রির অনুমতি নেই
@@ -189,6 +213,18 @@ export function LivePosPage() {
     </p>
     {error && <p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {feedback && <p role="status" className="rounded-lg bg-info-bg p-3 text-sm text-info">{feedback}</p>}
+    {outcomeUnknown && <div className="space-y-2 rounded-lg border border-danger bg-danger-bg p-3 text-xs text-danger" role="alert">
+      <strong>Possible duplicate sale — posting result unknown.</strong>
+      <p>Do not repeat the sale blindly. Check recent invoices and the sales ledger before retrying.</p>
+      <Button variant="outline" size="sm" onClick={() => void checkRecentSales()}>Check recent invoices for this phone</Button>
+      {salesChecked && <div className="space-y-1">
+        {recentSales.length ? recentSales.map(item=><p key={item.invoiceId}>{item.invoiceId} · {item.date} · {taka(item.grandTotal)} · {item.paymentStatus}</p>)
+          : <p>No invoice returned for this phone. Check the Sales ledger too.</p>}
+        <Button variant="outline" size="sm" onClick={() => {setOutcomeUnknown(false);setError('');}}>
+          I checked Sales and confirmed this invoice was not posted — allow retry
+        </Button>
+      </div>}
+    </div>
     {busy && <p role="status" className="rounded-xl border border-border bg-card p-4 text-sm text-ink-500">Loading live POS…</p>}
     {!busy && bootstrap && <>
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs text-ink-600">

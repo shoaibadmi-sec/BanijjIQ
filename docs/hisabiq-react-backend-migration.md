@@ -42,3 +42,7 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 - Cash session opening is an explicit user action. Real sale posting requires customer name/phone, existing active session, no stock shortage, no tracked serial/expiry, valid integer quantities, valid discounts and payment account where needed. Confirmation modal is mandatory; post only once pending; successful response shows the server invoice ID.
 - Not yet supported in the integrated POS: mixed units, negative/vendor fulfillment, tracked products, bundles, installment, split payments, invoice editing/printing, draft/templates. Such features remain unoffered, not silently approximated.
 - Both new routes use backend permission declarations; Hono continues enforcing permissions server-side.
+
+### Post-result ambiguity safeguards
+- If POST /api/pos/sales fails due to network transport or server 5xx, the UI treats the transaction result as **unknown**, not safely failed. It blocks retry, shows recent invoices for the entered phone through /api/pos/sales-by-phone, and requires explicit reconciliation before allowing another post.
+- A synchronous submission lock prevents rapid duplicate clicks. This is a client-side guard only; backend idempotency keys remain a recommended production enhancement before switching away from Vue.

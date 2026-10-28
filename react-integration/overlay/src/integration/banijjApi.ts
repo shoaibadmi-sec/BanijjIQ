@@ -25,6 +25,13 @@ export const readToken = () => localStorage.getItem(tokenKey) || '';
 export const storeToken = (value: string) => localStorage.setItem(tokenKey, value);
 export const clearToken = () => localStorage.removeItem(tokenKey);
 
+export class BackendRequestError extends Error {
+  constructor(message: string, public readonly status: number | null) {
+    super(message);
+    this.name = 'BackendRequestError';
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!path.startsWith('/api/')) throw new Error('API requests must use a relative /api/ path');
   const headers = new Headers(options.headers);
@@ -32,11 +39,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (options.body) headers.set('Content-Type', 'application/json');
   const token = readToken();
   if (token) headers.set('Authorization', 'Bearer ' + token);
-  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  let response: Response;
+  try { response = await fetch(path, { ...options, headers, credentials: 'same-origin' }); }
+  catch { throw new BackendRequestError('Network connection failed. The server may have received your request.', null); }
   const payload = await response.json().catch(() => null) as (T & { ok?: boolean; error?: string }) | null;
   if (!response.ok || !payload || payload.ok === false) {
     if (response.status === 401) clearToken();
-    throw new Error(payload?.error || 'Request failed (' + response.status + ')');
+    throw new BackendRequestError(payload?.error || 'Request failed (' + response.status + ')', response.status);
   }
   return payload as T;
 }
@@ -88,3 +97,7 @@ export const postSale = (payload: PosSalePayload) =>
   request<{ ok: true; invoice: PosInvoice }>('/api/pos/sales', {
     method: 'POST', body: JSON.stringify(payload)
   });
+
+export const getSalesByPhone = (phone: string) =>
+  request<{ ok: true; sales: Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }> }>(
+    '/api/pos/sales-by-phone?phone=' + encodeURIComponent(phone));

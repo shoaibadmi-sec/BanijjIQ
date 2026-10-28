@@ -65,7 +65,7 @@ export function BackendGate({ children }: { children: ReactNode }) {
   }
   return <>
     <div role="status" className="relative z-[200] flex flex-wrap items-center justify-between gap-2 border-b border-warning bg-warning-bg px-3 py-2 text-xs text-warning">
-      <span><strong>Migration preview — not for live transactions.</strong> Only the Products and basic POS routes use real APIs; other modules are demos.</span>
+      <span><strong>Migration preview — basic POS posts real accounting transactions.</strong> Products and basic POS use the real API; other modules still use demo data.</span>
       <span className="flex flex-wrap items-center gap-3">
         <a href="#/app/live-products" className="font-semibold underline">Open live products</a>
         <span className="text-ink-600">{user?.fullName}</span>
