@@ -110,7 +110,7 @@ export async function runRealD1Browser(){
           checks.push('browser cash sale and saved D1 receipt, exactly one POST');
 
           await page.keyboard.press('Escape'); // Close saved receipt dialog.
-          await page.getByRole('button',{name:'New Sale'}).click();
+          await page.getByRole('button',{name:'New Sale',exact:true}).click();
           await page.getByText('D1 CI Copper Wire').first().waitFor({timeout:10000});
           const dueProduct=page.locator('[data-live-pos] button').filter({hasText:'D1 CI Copper Wire'}).first();
           await dueProduct.click();
