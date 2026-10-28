@@ -471,7 +471,8 @@ export function LivePosPage() {
     />}
     <LiveStockShortageDialog open={!!shortageLine} onOpenChange={open=>{if(!open)setShortageId(null);}}
       name={shortageLine?.product.name||''} qty={shortageLine?.qty||0} stock={shortageLine?.product.stock||0}
-      vendors={bootstrap?.vendors||[]} onApply={applyShortage}/>
+      vendors={bootstrap?.vendors||[]} onApply={applyShortage}
+      onVendorCreated={vendor=>setBootstrap(old=>old?{...old,vendors:[...old.vendors,vendor]}:old)}/>
     <Dialog open={reviewOpen} onOpenChange={open=>!saving&&setReviewOpen(open)}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Confirm real sale · বিক্রি নিশ্চিত করুন</DialogTitle>
