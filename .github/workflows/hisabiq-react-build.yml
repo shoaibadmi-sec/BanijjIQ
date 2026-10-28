@@ -6,6 +6,8 @@ on:
       - 'apps/hisabiq-web'
       - 'react-integration/**'
       - 'ui-checks/**'
+      - 'd1-checks/**'
+      - 'wrangler.d1-ci.jsonc'
       - 'server/modules/products/**'
       - 'server/modules/sales/**'
       - 'migrations/**'
@@ -51,6 +53,16 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Run mocked-API Playwright UI checks
         run: node ui-checks/run.mjs
+      - name: Test real Cloudflare Worker with isolated local D1
+        run: node d1-checks/run.mjs
+      - name: Upload local Worker/D1 SQL reconciliation and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hisabiq-worker-d1-local-checks
+          path: d1-checks/output
+          retention-days: 14
+          if-no-files-found: warn
       - name: Upload responsive screenshots, axe reports and browser logs
         if: always()
         uses: actions/upload-artifact@v4
