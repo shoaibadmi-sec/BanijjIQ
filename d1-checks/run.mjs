@@ -16,6 +16,9 @@ const production=JSON.parse(readFileSync(join(root,'wrangler.jsonc'),'utf8'));
 assert.notEqual(fixture.name,production.name);
 assert.notEqual(fixture.d1_databases[0].database_id,production.d1_databases[0].database_id);
 assert.equal(fixture.d1_databases[0].database_id,'11111111-1111-4111-8111-111111111111');
+const pkg=JSON.parse(readFileSync(join(root,'node_modules/wrangler/package.json'),'utf8'));
+const cliPath=join(root,'node_modules/wrangler',
+  typeof pkg.bin==='string'?pkg.bin:pkg.bin.wrangler);
 const setupSecret='LOCAL-CI-ONLY-NOT-A-PRODUCTION-SECRET';
 const state=mkdtempSync(join(tmpdir(),'banijjiq-d1-ci-'));
 const out=join(root,'d1-checks/output');
@@ -30,7 +33,7 @@ function wrangler(args,{json=false}={}){
   assert.ok(args.some(x=>x==='--local'),'D1 command must be --local');
   assert.ok(args.includes('--persist-to'),'D1 command must have isolated persistence');
   assert.ok(!args.includes('--remote'),'Remote D1 forbidden in CI');
-  const result=spawnSync('npx',['--no-install','wrangler',...args,'--config',config],
+  const result=spawnSync(process.execPath,[cliPath,...args,'--config',config],
     {cwd:root,encoding:'utf8',timeout:120000,env:{...process.env,CI:'true',CLOUDFLARE_API_TOKEN:'',CLOUDFLARE_ACCOUNT_ID:''}});
   if(result.error)throw result.error;
   if(result.status!==0)throw new Error('Local Wrangler failed: '+(result.stderr||result.stdout).slice(-8000));
@@ -83,7 +86,7 @@ try{
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='pos_sale_requests'").length);
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='sales'").length);
   });
-  worker=spawn('npx',['--no-install','wrangler','dev',
+  worker=spawn(process.execPath,[cliPath,'dev',
     '--config',config,'--local','--persist-to',state,
     '--ip','127.0.0.1','--port','8788',
     '--var','SETUP_SECRET:'+setupSecret],{
