@@ -71,7 +71,9 @@ jobs:
       - name: Run mocked-API Playwright UI checks
         run: node ui-checks/run.mjs
       - name: Test real Cloudflare Worker with isolated local D1
-        run: node d1-checks/run.mjs
+        run: |
+          node d1-checks/run.mjs
+          node d1-checks/phase12.mjs
       - name: Upload local Worker/D1 SQL reconciliation and logs
         if: always()
         uses: actions/upload-artifact@v4
