@@ -32,7 +32,8 @@ const productData=[
 ];
 const user={userId:'UI-E2E-ADMIN',fullName:'UI Test Administrator',
   phone:'01000000000',role:'admin',permissions:{
-    products:{view:true,add:true,edit:true},pos:{view:true,add:true,edit:true}}};
+    products:{view:true,add:true,edit:true},pos:{view:true,add:true,edit:true},
+    returns:{view:true,add:true,edit:true}}};
 const posProducts=productData.map(p=>({
   id:p.productId,name:p.productName,productName:p.productName,brand:p.brand,category:p.category,
   unit:p.unit,barcode:p.barcode,sellingPrice:p.sellingPrice,stock:p.sellableStock,
@@ -70,6 +71,7 @@ function startMocking(context,calls){
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
       ok:true,products:posProducts,customers:[],bankAccounts:[],
+      vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
       activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
       invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop','Shop Name Bangla':'টেস্ট দোকান',
         'Address':'Fixture address, Rajshahi','Phone 1':'01000000000',
@@ -77,11 +79,39 @@ function startMocking(context,calls){
     });
     if(path==='/api/pos/sales'&&request.method()==='POST'){
       const posted=request.postDataJSON();
-      assert.equal(posted.items[0]?.productId,'PRD-000001');
+      assert.ok(['PRD-000001','PRD-000002','PRD-000003'].includes(posted.items[0]?.productId));
+      if(posted.items[0]?.productId==='PRD-000003')
+        assert.deepEqual(posted.items[0].serialNumbers,['SN-UI-001']);
+      calls.push({method:'ASSERT',path:'/api/pos/sales',payload:posted});
       return respond({ok:true,invoice});
     }
     if(path==='/api/pos/invoices/UI-E2E-INV-001'&&request.method()==='GET')
       return respond({ok:true,invoice});
+    if(path.startsWith('/api/pos/products/')&&path.endsWith('/tracking-options')&&request.method()==='GET')
+      return respond({ok:true,serials:[{serialNumber:'SN-UI-001'}]});
+    if(path==='/api/pos/vendors'&&request.method()==='POST')
+      return respond({ok:true,vendor:{id:'VEN-UI-2',name:request.postDataJSON().name,
+        phone:request.postDataJSON().phone,currentDue:0,status:'Active'}});
+    if(path==='/api/sales-returns/search'&&request.method()==='GET')
+      return respond({ok:true,matches:[{invoiceId:'UI-E2E-RET-INVOICE',date:'2026-10-28',
+        customerName:'UI Return Buyer',customerPhone:'01000000001',grandTotal:700,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(path==='/api/sales-returns/UI-E2E-RET-INVOICE/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-E2E-RET-INVOICE',date:'2026-10-28',
+        customerId:'CUS-UI',customerName:'UI Return Buyer',customerPhone:'01000000001',
+        grandTotal:700,paidAmount:700,dueAmount:0,previouslyReturnedAmount:0,
+        netSale:700,items:[{productId:'PRD-000003',name:'Serial Tracked Motor',
+          soldQty:1,vendorQty:0,previouslyReturnedQty:0,availableQty:1,unitPrice:700,
+          trackSerial:true,trackExpiry:false,trackWarranty:true,availableSerials:['SN-UI-001']}]}} );
+    if(path==='/api/sales-returns'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.equal(payload.invoiceId,'UI-E2E-RET-INVOICE');
+      assert.deepEqual(payload.items[0].serialNumbers,['SN-UI-001']);
+      calls.push({method:'ASSERT',path:'/api/sales-returns',payload});
+      return respond({ok:true,returnId:'SRT-UI-E2E-001',totalReturnAmount:700});
+    }
+    if(path==='/api/sales-returns'&&request.method()==='GET')
+      return respond({ok:true,returns:[]});
     if(path==='/api/pos/sales-by-phone'&&request.method()==='GET')
       return respond({ok:true,sales:[]});
     // Unknown requests intentionally fail closed; never reach a live backend.
@@ -222,6 +252,73 @@ try{
       await ctx.close();
     });
   }
+  await withCheck('tracked serial POS selects backend eligible IMEI and posts once',async()=>{
+    const ctx=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/pos');
+    await page.locator('[data-live-pos]').waitFor();
+    await page.locator('[data-live-pos] button').filter({hasText:'Serial Tracked Motor'}).first().click();
+    await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+    await page.getByRole('button',{name:/SN-UI-001/}).click();
+    await page.getByRole('button',{name:'Use serials'}).click();
+    await page.locator('input[list="live-pos-customer-names"]').fill('UI Tracking Buyer');
+    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000001');
+    await page.getByRole('spinbutton',{name:/Amount received/}).fill('700');
+    await page.getByRole('button',{name:'Review and post real sale'}).click();
+    await page.getByRole('button',{name:'Confirm and post'}).click();
+    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
+    assert.equal(api.filter(x=>x.path==='/api/pos/sales'&&x.method==='POST').length,1);
+    assert.equal(api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload.items[0].productId,'PRD-000003');
+    await screenshot(page,'phase13-pos-serial-1440');
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('shortage dialog explicitly chooses negative sourcing',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
+    await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
+    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
+    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+    await page.getByRole('radio',{name:/Negative Sale/}).click();
+    await page.getByRole('button',{name:'Allow negative sale'}).click();
+    await page.locator('input[list="live-pos-customer-names"]').fill('UI Shortage Buyer');
+    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000002');
+    await page.getByRole('spinbutton',{name:/Amount received/}).fill('275');
+    await page.getByRole('button',{name:'Review and post real sale'}).click();
+    await page.getByRole('button',{name:'Confirm and post'}).click();
+    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
+    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
+    assert.equal(payload.items[0].fulfillmentMode,'negative');
+    assert.equal(payload.items[0].qty,5);
+    await screenshot(page,'phase13-pos-shortage-768');
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor({timeout:10000});
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('UI-E2E-RET-INVOICE');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-E2E-RET-INVOICE/}).click();
+    await page.getByRole('spinbutton',{name:'Return quantity for Serial Tracked Motor'}).fill('1');
+    await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+    await page.getByRole('button',{name:/SN-UI-001/}).click();
+    await page.getByRole('button',{name:'Use serials'}).click();
+    await page.getByPlaceholder('Why was this returned?').fill('Damaged after sale');
+    await page.getByRole('button',{name:'Review real return'}).click();
+    await page.getByRole('button',{name:'Confirm & refund'}).click();
+    await page.getByText('SRT-UI-E2E-001').waitFor({timeout:12000});
+    assert.equal(api.filter(x=>x.path==='/api/sales-returns'&&x.method==='POST').length,1);
+    await screenshot(page,'phase13-sales-return-390');
+    results.apiCalls.push(...api);await ctx.close();
+  });
 }finally{
   try{await browser?.close()}catch{}
   server.kill('SIGTERM');
