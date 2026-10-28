@@ -34,3 +34,6 @@ Download/
 
 # Generated pinned React frontend build worktree (never commit)
 .generated/
+
+# Generated config for manually approved Cloudflare-hosted preview
+wrangler.hisabiq-preview.generated.jsonc

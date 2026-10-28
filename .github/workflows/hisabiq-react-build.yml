@@ -6,6 +6,8 @@ on:
       - 'apps/hisabiq-web'
       - 'react-integration/**'
       - 'ui-checks/**'
+      - 'scripts/preview/**'
+      - 'wrangler.hisabiq-preview.generated.jsonc'
       - 'd1-checks/**'
       - 'wrangler.d1-ci.jsonc'
       - 'server/modules/products/**'
@@ -16,6 +18,17 @@ on:
       - '.github/workflows/hisabiq-react-build.yml'
       - 'package.json'
   workflow_dispatch:
+    inputs:
+      deploy_hosted_preview:
+        description: 'Deploy a distinct Cloudflare-hosted preview (never production)'
+        required: true
+        default: false
+        type: boolean
+      confirm_isolated_preview:
+        description: 'Type ISOLATED-PREVIEW-ONLY to authorize a remote preview deployment'
+        required: false
+        default: ''
+        type: string
 permissions:
   contents: read
 jobs:
@@ -36,6 +49,10 @@ jobs:
         run: |
           git submodule status
           node --test react-integration/tests/contract.test.mjs
+      - name: Check hosted-preview isolation (dry run, no Cloudflare credentials)
+        run: |
+          node scripts/preview/build-config.mjs --self-test
+          node --test tests/preview-deploy.contract.test.mjs
       - name: Typecheck BanijjIQ backend
         run: |
           npm ci
@@ -76,3 +93,74 @@ jobs:
           name: hisabiq-react-preview-dist
           path: .generated/hisabiq-web/dist
           retention-days: 7
+
+  deploy-hosted-preview:
+    # Neither pull requests nor routine CI can deploy a Worker.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_hosted_preview == true && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && github.ref == 'refs/heads/feat/hisabiq-react-api' }}
+    needs: react-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    environment:
+      name: hisabiq-react-preview
+    concurrency:
+      group: hisabiq-react-preview-hosted-deploy
+      cancel-in-progress: false
+    env:
+      CI: 'true'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      HISABIQ_PREVIEW_D1_ID: ${{ secrets.HISABIQ_PREVIEW_D1_ID }}
+      HISABIQ_PREVIEW_SETUP_SECRET: ${{ secrets.HISABIQ_PREVIEW_SETUP_SECRET }}
+      HISABIQ_PREVIEW_ADMIN_PHONE: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PHONE }}
+      HISABIQ_PREVIEW_ADMIN_PASSWORD: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Require distinct preview credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID HISABIQ_PREVIEW_D1_ID HISABIQ_PREVIEW_SETUP_SECRET HISABIQ_PREVIEW_ADMIN_PHONE HISABIQ_PREVIEW_ADMIN_PASSWORD; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "::error title=Missing preview credential::Set $key in GitHub environment hisabiq-react-preview."
+              exit 1
+            fi
+          done
+          test "${#HISABIQ_PREVIEW_ADMIN_PASSWORD}" -ge 12
+          test "${#HISABIQ_PREVIEW_SETUP_SECRET}" -ge 24
+      - name: Install pinned backend and Wrangler dependencies
+        run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: hisabiq-react-preview-dist
+          path: .generated/hisabiq-web/dist
+      - name: Generate preview-only Wrangler config, refusing production UUID
+        run: |
+          test -f .generated/hisabiq-web/dist/index.html
+          node scripts/preview/build-config.mjs
+      - name: Verify remote D1 UUID AND name before applying any migrations
+        run: node scripts/preview/preflight-remote-db.mjs
+      - name: Apply migrations ONLY to isolated remote D1
+        run: npx --no-install wrangler d1 migrations apply DB --remote --config wrangler.hisabiq-preview.generated.jsonc
+      - name: Deploy separate React preview Worker
+        run: npx --no-install wrangler deploy --config wrangler.hisabiq-preview.generated.jsonc
+      - name: Set the preview-only administrator setup secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$HISABIQ_PREVIEW_SETUP_SECRET" | npx --no-install wrangler secret put SETUP_SECRET --config wrangler.hisabiq-preview.generated.jsonc
+      - name: Verify hosted preview health, login, Products and POS reads
+        run: node scripts/preview/remote-smoke.mjs
+      - name: Upload sanitized preview check results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hisabiq-hosted-preview-smoke
+          path: preview-checks/output
+          retention-days: 14
+          if-no-files-found: warn
