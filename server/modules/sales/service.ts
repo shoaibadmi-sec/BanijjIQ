@@ -94,14 +94,23 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
   });
 }
 
-async function resolveCustomerForSale(db:SherDatabase,input:PosSaleInput,dueAmount:number):Promise<string>{
-  if(dueAmount<=0) return cleanText(input.customerId);
-  const phone=cleanText(input.customerPhone); const existing=await db.prepare(`SELECT customer_id FROM customers WHERE phone=? AND is_deleted=0 LIMIT 1`).bind(phone).first<{customer_id:string}>();
-  if(existing){ await db.prepare(`UPDATE customers SET customer_name=?,father_name=?,address=?,updated_at=datetime('now') WHERE customer_id=?`).bind(cleanText(input.customerName),cleanText(input.customerFatherName),cleanText(input.customerAddress),existing.customer_id).run(); return existing.customer_id; }
-  const id=`CUS-${crypto.randomUUID().slice(0,8).toUpperCase()}`; await db.prepare(`INSERT INTO customers (customer_id,customer_name,phone,father_name,address,current_due,status,is_deleted) VALUES (?,?,?,?,?,0,'Active',0)`).bind(id,cleanText(input.customerName),phone,cleanText(input.customerFatherName),cleanText(input.customerAddress)).run(); return id;
+async function saleFingerprint(input:PosSaleInput):Promise<string>{
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(input)));
+  return Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,'0')).join('');
 }
 
 export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:AuthUser):Promise<Response>{
+  const requestId=cleanText(input.clientRequestId);
+  if(requestId&&!/^[A-Za-z0-9_-]{8,128}$/.test(requestId))return error('Invalid sale request key.');
+  const fingerprint=requestId?await saleFingerprint(input):'';
+  if(requestId){
+    const prior=await db.prepare('SELECT payload_sha256,invoice_id FROM pos_sale_requests WHERE request_id=?').bind(requestId)
+      .first<{payload_sha256:string;invoice_id:string}>();
+    if(prior){
+      if(prior.payload_sha256!==fingerprint)return error('Sale request key was already used for different sale details.',409);
+      return getInvoiceRoute(db,prior.invoice_id);
+    }
+  }
   if(!(await getOpenCashSession(db))) return error('Start your cash session first (POS page → Start Day) before recording any transaction.');
   const customerName=cleanText(input.customerName), customerPhone=cleanText(input.customerPhone); if(!customerName||!customerPhone) return error('Customer name and phone are required for every sale.');
   if(!input.items?.length) return error('Cart is empty.');
@@ -132,7 +141,23 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
   const paymentStatus=dueAmount<=0?'Paid':paidAmount>0?'Partial':'Due', paymentMethod=paidAmount>0?(cleanText(input.paymentMethod)||'Cash'):''; let bankId='',bankName='';
   if(paidAmount>0&&(paymentMethod==='Bank'||paymentMethod==='Mobile Banking')){bankId=cleanText(input.bankAccountId);if(!bankId)return error(paymentMethod==='Mobile Banking'?'Select a mobile banking account.':'Select a bank account.');const b=await db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active'`).bind(bankId).first<any>();if(!b)return error('Bank/mobile banking account not found.');const wantType=paymentMethod==='Mobile Banking'?'Mobile Banking':'Bank',actualType=cleanText(b.account_type)||'Bank';if(actualType!==wantType)return error(`Selected account is not a ${wantType} account.`);bankName=b.account_name;}
-  const customerId=await resolveCustomerForSale(db,input,dueAmount), invoiceId=`INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`, stmts:SqlPreparedStatement[]=[];
+  const invoiceId=`INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`, stmts:SqlPreparedStatement[]=[];
+  // Customer creation and contact edits must not escape a failed invoice batch.
+  let customerId=cleanText(input.customerId);
+  if(dueAmount>0){
+    const existing=await db.prepare('SELECT customer_id,current_due FROM customers WHERE phone=? AND is_deleted=0 LIMIT 1')
+      .bind(customerPhone).first<{customer_id:string;current_due:number}>();
+    customerId=existing?.customer_id || `CUS-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
+    if(existing)stmts.push(db.prepare(
+      "UPDATE customers SET customer_name=?,father_name=?,address=?,updated_at=datetime('now') WHERE customer_id=?"
+    ).bind(customerName,cleanText(input.customerFatherName),cleanText(input.customerAddress),customerId));
+    else stmts.push(db.prepare(
+      "INSERT INTO customers (customer_id,customer_name,phone,father_name,address,current_due,status,is_deleted) VALUES (?,?,?,?,?,0,'Active',0)"
+    ).bind(customerId,customerName,customerPhone,cleanText(input.customerFatherName),cleanText(input.customerAddress)));
+  }
+  if(requestId)stmts.push(db.prepare(
+    'INSERT INTO pos_sale_requests (request_id,payload_sha256,invoice_id) VALUES (?,?,?)'
+  ).bind(requestId,fingerprint,invoiceId));
   stmts.push(db.prepare(`INSERT INTO sales (invoice_id,sale_date,sale_time,customer_id,customer_name,customer_phone,customer_address,customer_father_name,subtotal,discount,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method,bank_account_id,bank_account_name,is_backdated,backdated_reason,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Completed',?)`).bind(invoiceId,date,nowTime(),customerId,customerName,customerPhone,cleanText(input.customerAddress),cleanText(input.customerFatherName),subtotal,discount,grandTotal,paidAmount,dueAmount,input.paymentType,paymentStatus,paymentMethod,bankId,bankName,date<todayDate()?1:0,cleanText(input.backdatedReason),user.fullName));
   for(const line of lines){
     const displayName=String(line.product.brand||'').trim()?`${String(line.product.brand).trim()} ${line.product.product_name}`:line.product.product_name;
@@ -152,8 +177,21 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     if(Number(line.product.track_warranty||0)&&Number(line.product.warranty_period_value||0)>0){const end=warrantyEndDate(date,line.product.warranty_period_value,line.product.warranty_period_unit);const serialDraws=line.trackingDraws.filter((t:any)=>t.serialId);if(serialDraws.length){for(const t of serialDraws)stmts.push(db.prepare(`INSERT INTO warranty_records (warranty_id,invoice_id,sale_date,product_id,product_name,customer_id,customer_name,customer_phone,serial_id,serial_number,quantity,remaining_quantity,warranty_end_date,status) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,?,'Active')`).bind(`WAR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,invoiceId,date,line.product.product_id,displayName,customerId,customerName,customerPhone,t.serialId,t.serialNumber||'',end));}else{stmts.push(db.prepare(`INSERT INTO warranty_records (warranty_id,invoice_id,sale_date,product_id,product_name,customer_id,customer_name,customer_phone,quantity,remaining_quantity,warranty_end_date,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Active')`).bind(`WAR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,invoiceId,date,line.product.product_id,displayName,customerId,customerName,customerPhone,line.q,line.q,end));}}
   }
   if(paidAmount>0){if(paymentMethod==='Bank'||paymentMethod==='Mobile Banking')stmts.push(db.prepare(`INSERT INTO bank_book (entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Sale',?,?,0,?,0)`).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,date,invoiceId,`POS sale to ${customerName}`,paidAmount));else stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Sale',?,?,0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,invoiceId,`POS sale to ${customerName}`,paidAmount));}
-  if(dueAmount>0){const cust=await db.prepare(`SELECT current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(cust?.current_due||0)+dueAmount;stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sale',?,?,0,?,'')`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,customerId,customerName,invoiceId,dueAmount,newDue));}
-  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALE','SALE',?,?)`).bind(user.userId,invoiceId,`Total ${grandTotal}; paid ${paidAmount}; due ${dueAmount}`)); await db.batch(stmts);
+  if(dueAmount>0){const cust=await db.prepare(`SELECT current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(cust?.current_due||0)+dueAmount;stmts.push(db.prepare(`UPDATE customers SET current_due=current_due+?,updated_at=datetime('now') WHERE customer_id=?`).bind(dueAmount,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sale',?,?,0,?,'')`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,customerId,customerName,invoiceId,dueAmount,newDue));}
+  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALE','SALE',?,?)`).bind(user.userId,invoiceId,`Total ${grandTotal}; paid ${paidAmount}; due ${dueAmount}`));
+  try{await db.batch(stmts);}catch(err){
+    // A concurrent duplicate request can lose the unique-index race.
+    // The losing batch rolls back: return the committed invoice when available.
+    if(requestId){
+      const prior=await db.prepare('SELECT payload_sha256,invoice_id FROM pos_sale_requests WHERE request_id=?')
+        .bind(requestId).first<{payload_sha256:string;invoice_id:string}>();
+      if(prior){
+        if(prior.payload_sha256!==fingerprint)return error('Sale request key was already used for different sale details.',409);
+        return getInvoiceRoute(db,prior.invoice_id);
+      }
+    }
+    throw err;
+  }
   return json({ok:true,invoice:{invoiceId,date,customerName,customerPhone,customerFatherName:cleanText(input.customerFatherName),customerAddress:cleanText(input.customerAddress),subtotal,discount,grandTotal,paidAmount,dueAmount,paymentStatus,paymentMethod,items:lines.map(l=>({productId:l.product.product_id,productName:(String(l.product.brand||'').trim()?`${String(l.product.brand).trim()} ${l.product.product_name}`:l.product.product_name),quantity:l.q,unit:l.product.unit||'',unitPrice:l.price,lineTotal:l.q*l.price}))}});
 }
 
