@@ -35,7 +35,7 @@ test('live POS uses existing transaction endpoint and makes unsupported products
   const page=read('overlay/src/integration/LivePosPage.tsx');
   for(const marker of ['ProductCombobox','getPosBootstrap','postSale(payload)','startCashSession(amount)',
     'canUseModule(user, \'pos\', \'add\')','reviewOpen','Confirm and post','single-unit',
-    '!p.trackSerial && !p.trackExpiry && p.stock > 0','line.qty > line.product.stock',
+    'getPosTrackingOptions(id)','SerialPickerDialog','LiveStockShortageDialog','line.qty > line.product.stock',
     'paidAmount > total','paymentType: PosSalePayload']) assert.ok(page.includes(marker),marker);
   assert.ok(!page.includes('previewInvoiceCounter'),'Fake invoices cannot appear as posted');
 });
@@ -78,4 +78,33 @@ test('POS request id persists across retries and rotates on new sale',()=>{
   assert.ok(api.includes('clientRequestId: string'));
   assert.ok(pos.includes('clientRequestId: saleRequestId.current'));
   assert.ok(pos.includes('saleRequestId.current=crypto.randomUUID()'));
+});
+
+
+test('Phase 13 React uses only real tracking and vendor APIs, not demo vendor stores',()=>{
+  const api=read('overlay/src/integration/banijjApi.ts');
+  const pos=read('overlay/src/integration/LivePosPage.tsx');
+  const dialog=read('overlay/src/integration/LiveStockShortageDialog.tsx');
+  for(const route of ['/api/pos/products/','/tracking-options','/api/pos/vendors',
+    '/api/sales-returns/search','/api/sales-returns/'])
+    assert.ok(api.includes(route),route);
+  assert.ok(pos.includes('SerialPickerDialog'));
+  assert.ok(pos.includes('getPosTrackingOptions(id)'));
+  assert.ok(pos.includes('fulfillmentMode: l.source.mode'));
+  assert.ok(pos.includes('line.serialNumbers.length!==line.qty'));
+  assert.ok(pos.includes('line.source.mode==='));
+  assert.ok(dialog.includes('createPosVendor('));
+  assert.ok(dialog.includes('role="radiogroup"'));
+  assert.ok(!dialog.includes('partyPreviewStore'),'Only live vendor IDs are permitted');
+});
+
+test('Phase 13 real return route preserves source Sales preview and blocks uncertain refunds',()=>{
+  const prep=read('../scripts/prepare-hisabiq-react.mjs');
+  const returns=read('overlay/src/integration/LiveSalesReturnsPage.tsx');
+  assert.ok(prep.includes('live-sales-returns'));
+  assert.ok(!prep.includes('path="sales" element={<LiveSalesReturns'));
+  for(const check of ['getReturnableInvoice(id)','postSalesReturn(payload)',
+    'getSalesReturnHistory()','setUnknown(true)','availableSerials','SerialPickerDialog',
+    'canUseModule(user,\\'returns\\',\\'add\\')','Review real return','total>sale.netSale'])
+    assert.ok(returns.includes(check),check);
 });
