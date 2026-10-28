@@ -5,6 +5,7 @@ on:
       - '.gitmodules'
       - 'apps/hisabiq-web'
       - 'react-integration/**'
+      - 'ui-checks/**'
       - 'server/modules/products/**'
       - 'scripts/prepare-hisabiq-react.mjs'
       - '.github/workflows/hisabiq-react-build.yml'
@@ -40,6 +41,20 @@ jobs:
         run: test -z "$(git -C apps/hisabiq-web status --porcelain)"
       - name: Ensure React production assets exist
         run: test -f .generated/hisabiq-web/dist/index.html
+      - name: Install Chromium for UI visual and accessibility checks
+        run: |
+          cd .generated/hisabiq-web
+          npx playwright install --with-deps chromium
+      - name: Run mocked-API Playwright UI checks
+        run: node ui-checks/run.mjs
+      - name: Upload responsive screenshots, axe reports and browser logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hisabiq-react-ui-checks
+          path: ui-checks/output
+          retention-days: 14
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: hisabiq-react-preview-dist
