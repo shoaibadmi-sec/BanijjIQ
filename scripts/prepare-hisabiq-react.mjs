@@ -1,12 +1,23 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, dirname, relative, resolve, sep } from 'node:path';
 
 const root = resolve(process.cwd());
-const web = join(root, 'apps/hisabiq-web');
+const sourceWeb = join(root, 'apps/hisabiq-web');
+const web = join(root, '.generated/hisabiq-web');
 const overlay = join(root, 'react-integration/overlay');
-if (!existsSync(join(web, 'src/App.tsx')) || !existsSync(join(web, 'package.json'))) {
-  throw new Error('Missing pinned HisabIQ React source. Run git submodule update --init apps/hisabiq-web');
+if (!existsSync(join(sourceWeb, 'src/App.tsx')) || !existsSync(join(sourceWeb, 'package.json'))) {
+  throw new Error('Missing pinned HisabIQ source. Run git submodule update --init apps/hisabiq-web');
 }
+// Always construct a clean build worktree: never patch or overwrite the pinned original source.
+rmSync(web, { recursive: true, force: true });
+mkdirSync(dirname(web), { recursive: true });
+cpSync(sourceWeb, web, {
+  recursive: true,
+  filter: path => {
+    const name = relative(sourceWeb, path);
+    return !name.split(sep).some(part => ['.git','node_modules','dist','.wrangler'].includes(part));
+  }
+});
 function copyDirectory(from, to) {
   for (const item of readdirSync(from, { withFileTypes: true })) {
     const source = join(from, item.name);
@@ -15,12 +26,10 @@ function copyDirectory(from, to) {
     else if (item.isFile()) { mkdirSync(dirname(destination), { recursive: true }); copyFileSync(source, destination); }
   }
 }
-// The original HisabIQ design remains an unmodified, pinned Git submodule.
-// Integration overlays are applied to the build worktree only.
 copyDirectory(overlay, web);
 
-const path = join(web, 'src/App.tsx');
-let app = readFileSync(path, 'utf8');
+const appPath = join(web, 'src/App.tsx');
+let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
 const routeAnchor = '<Route path="dashboard" element={<Dashboard />} />';
 if (!app.includes(importAnchor) || !app.includes(routeAnchor)) {
@@ -29,5 +38,5 @@ if (!app.includes(importAnchor) || !app.includes(routeAnchor)) {
 app = app.replace(importAnchor,
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));\n"+importAnchor);
 app = app.replace(routeAnchor, routeAnchor+'\n          <Route path="live-products" element={<LiveProducts />} />');
-writeFileSync(path, app);
-console.log('Pinned HisabIQ UI prepared with BanijjIQ authentication + read-only product integration.');
+writeFileSync(appPath, app);
+console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + read-only Products.');

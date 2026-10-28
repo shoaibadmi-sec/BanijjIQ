@@ -16,10 +16,10 @@ cd BanijjIQ
 git checkout feat/hisabiq-react-api
 npm run react:build
 ```
-The React app compiles to `apps/hisabiq-web/dist`. GitHub Actions automatically builds it on this PR and uploads compiled assets. `npm run build` and the existing live Cloudflare config still build/deploy the **old Vue frontend**, deliberately.
+The build makes a disposable, ignored copy in `.generated/hisabiq-web`; the React app compiles to `.generated/hisabiq-web/dist`. GitHub Actions automatically builds it on this PR and uploads compiled assets. `npm run build` and the existing live Cloudflare config still build/deploy the **old Vue frontend**, deliberately.
 
 ## Integration overlay
-`scripts/prepare-hisabiq-react.mjs` overlays `react-integration/overlay` onto the checked-out source **at build time**. The source submodule remains pinned and directly reusable.
+`scripts/prepare-hisabiq-react.mjs` copies the pinned source into `.generated/hisabiq-web` and applies `react-integration/overlay` **only to that disposable build worktree**. The Git submodule stays clean, pinned, and directly reusable.
 - Login, account verification and logout use existing `/api/auth/*` endpoints with the same bearer-token key as the existing Vue app.
 - `#/app/live-products` is the first **real API-backed** read-only HisabIQ-style screen, using `/api/bootstrap` product records.
 - All other inherited HisabIQ_UI screens still use fixture / demo stores and MUST NOT be mistaken for real sales, inventory, ledger or cash posting. A visible banner says so.

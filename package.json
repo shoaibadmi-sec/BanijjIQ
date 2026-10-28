@@ -17,8 +17,8 @@
     "cloudflare:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "cloudflare:backup": "wrangler d1 export DB --remote --output=./backup.sql",
     "react:prepare": "git submodule update --init --recursive apps/hisabiq-web && node scripts/prepare-hisabiq-react.mjs",
-    "react:build": "npm run react:prepare && npm ci --prefix apps/hisabiq-web && npm run build --prefix apps/hisabiq-web",
-    "react:dev": "npm run react:prepare && npm run dev --prefix apps/hisabiq-web"
+    "react:build": "npm run react:prepare && npm ci --prefix .generated/hisabiq-web && npm run build --prefix .generated/hisabiq-web",
+    "react:dev": "npm run react:prepare && npm run dev --prefix .generated/hisabiq-web"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

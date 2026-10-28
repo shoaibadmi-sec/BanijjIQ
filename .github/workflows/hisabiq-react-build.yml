@@ -30,10 +30,12 @@ jobs:
           node --test react-integration/tests/contract.test.mjs
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
+      - name: Verify source submodule stays clean
+        run: test -z "$(git -C apps/hisabiq-web status --porcelain)"
       - name: Ensure React production assets exist
-        run: test -f apps/hisabiq-web/dist/index.html
+        run: test -f .generated/hisabiq-web/dist/index.html
       - uses: actions/upload-artifact@v4
         with:
           name: hisabiq-react-preview-dist
-          path: apps/hisabiq-web/dist
+          path: .generated/hisabiq-web/dist
           retention-days: 7

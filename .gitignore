@@ -31,3 +31,6 @@ Download/
 # Local Worker secrets
 .dev.vars*
 !.dev.vars.example
+
+# Generated pinned React frontend build worktree (never commit)
+.generated/
