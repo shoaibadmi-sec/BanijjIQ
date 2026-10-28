@@ -7,18 +7,23 @@ import { PageHeader } from '../components/PageHeader';
 import { ProductCombobox } from '../components/pos/ProductCombobox';
 import { StatusBadge } from '../components/StatusBadge';
 import { ReceiptPreview } from '../components/brand/ReceiptPreview';
+import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
+import { LiveStockShortageDialog, type ShortageSelection } from './LiveStockShortageDialog';
+import { Link } from 'react-router-dom';
 import './liveReceiptPrint.css';
 import type { Product } from '../types/erp';
 import { canUseModule, useBackendSession } from './BackendGate';
 import {
-  BackendRequestError, getPosBootstrap, getPosInvoice, getSalesByPhone, postSale, startCashSession,
+  BackendRequestError, getPosBootstrap, getPosInvoice, getPosTrackingOptions, getSalesByPhone, postSale, startCashSession,
   type PosBootstrap, type PosProduct, type PosInvoice, type PosSalePayload
 } from './banijjApi';
 
-type Line = { product: PosProduct; qty: number; price: number };
+type Line = { product: PosProduct; qty: number; price: number; serialNumbers: string[];
+  source: ShortageSelection };
+const noSerials: string[] = [];
 const taka = (n: number) => '৳' + Number(n || 0).toLocaleString('en-BD', { maximumFractionDigits: 2 });
 const asNumber = (n: unknown) => Number.isFinite(Number(n)) ? Number(n) : 0;
-const supported = (p: PosProduct) => !p.trackSerial && !p.trackExpiry && p.stock > 0;
+const supported = (p: PosProduct) => p.stock > 0 || (!p.trackSerial && !p.trackExpiry);
 
 export function LivePosPage() {
   const user = useBackendSession();
@@ -30,6 +35,10 @@ export function LivePosPage() {
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
+  const [shortageId,setShortageId] = useState<string | null>(null);
+  const [serialId,setSerialId] = useState<string | null>(null);
+  const [availableSerials,setAvailableSerials] = useState<string[]>([]);
+  const [loadingTracking,setLoadingTracking] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [fatherName, setFatherName] = useState('');
@@ -79,6 +88,9 @@ export function LivePosPage() {
   } satisfies Product)), [bootstrap]);
   const simpleCount = selectable.length;
   const excludedCount = (bootstrap?.products.length || 0) - simpleCount;
+  const serialLine = lines.find(l=>l.product.id===serialId);
+  const shortageLine = lines.find(l=>l.product.id===shortageId);
+  const serialProduct=selectable.find(p=>p.id===serialId);
   const subtotal = useMemo(() => lines.reduce((sum, l) => sum + l.qty * l.price, 0), [lines]);
   const discountAmount = asNumber(discount);
   const paidAmount = paid.trim() ? asNumber(paid) : 0;
@@ -101,8 +113,21 @@ export function LivePosPage() {
     for (const line of lines) {
       if (!Number.isSafeInteger(line.qty) || line.qty <= 0) found.push(line.product.name + ': enter a whole-number quantity.');
       if (!Number.isFinite(line.price) || line.price < 0) found.push(line.product.name + ': invalid selling price.');
-      if (!supported(line.product)) found.push(line.product.name + ': advanced/tracked products are not available yet.');
-      if (line.qty > line.product.stock) found.push(line.product.name + ': quantity exceeds available stock.');
+      if (!supported(line.product)) found.push(line.product.name + ': no sellable tracked stock.');
+      if (line.product.trackSerial && line.serialNumbers.length!==line.qty)
+        found.push(line.product.name + ': select exactly '+line.qty+' serial number(s).');
+      if (line.product.trackSerial && new Set(line.serialNumbers.map(x=>x.toLowerCase())).size!==line.serialNumbers.length)
+        found.push(line.product.name + ': duplicate serial selection.');
+      if (line.qty > line.product.stock) {
+        if (line.product.trackSerial || line.product.trackExpiry)
+          found.push(line.product.name + ': tracked stock cannot use vendor/negative sourcing.');
+        else if (line.source.mode==='own')
+          found.push(line.product.name + ': review the stock shortage before checkout.');
+        else if (line.source.mode==='vendor' &&
+          (!(bootstrap?.vendors||[]).some(v=>v.id===line.source.vendorId) ||
+           !Number.isFinite(line.source.vendorUnitCost) || line.source.vendorUnitCost<0))
+          found.push(line.product.name + ': select an active vendor and valid unit cost.');
+      }
     }
     return found;
   }, [canPost, bootstrap, lines, customerName, customerPhone, discountAmount, subtotal,
@@ -110,17 +135,20 @@ export function LivePosPage() {
   const addProduct = (p: Product) => {
     const record = bootstrap?.products.find(item => item.id === p.id);
     if (!record || !supported(record)) {
-      setFeedback('This product requires serial/expiry or stock-shortage handling. Use the existing Vue POS until its React integration is complete.');
+      setFeedback('No sellable tracked stock is available. Complete serial/expiry tracking or receive new stock first.');
       return;
     }
     setFeedback('');
     setLines(current => {
       const found = current.find(l => l.product.id === record.id);
       if (found) {
-        if (found.qty >= found.product.stock) { setFeedback('Available stock reached for '+record.name); return current; }
-        return current.map(l => l.product.id === record.id ? { ...l, qty: l.qty + 1 } : l);
+        if ((found.product.trackSerial || found.product.trackExpiry) && found.qty>=found.product.stock) {
+          setFeedback('Sellable tracked stock reached for '+record.name);return current;
+        }
+        return current.map(l => l.product.id === record.id ?
+          { ...l, qty: l.qty + 1, serialNumbers: [], source: {mode:'own'} as ShortageSelection } : l);
       }
-      return [...current, { product: record, qty: 1, price: record.sellingPrice }];
+      return [...current, { product: record, qty: 1, price: record.sellingPrice, serialNumbers: [], source:{mode:'own'} }];
     });
     requestAnimationFrame(() => {
       quantityRefs.current[record.id]?.focus();
@@ -128,7 +156,26 @@ export function LivePosPage() {
     });
   };
   const patchLine = (id: string, patch: Partial<Pick<Line, 'qty' | 'price'>>) =>
-    setLines(old => old.map(line => line.product.id === id ? { ...line, ...patch } : line));
+    setLines(old => old.map(line => line.product.id === id ?
+      { ...line, ...patch, ...(patch.qty!==undefined?{
+        serialNumbers:[],source:{mode:'own'} as ShortageSelection
+      }:{}) } : line));
+  const openSerialPicker = async (id:string) => {
+    if(loadingTracking)return;
+    setLoadingTracking(true);setError('');
+    try {
+      const result=await getPosTrackingOptions(id);
+      setAvailableSerials(result.serials.map(x=>x.serialNumber));
+      setSerialId(id);
+    } catch(err){setError(err instanceof Error?err.message:'Could not load serial availability.');}
+    finally{setLoadingTracking(false);}
+  };
+  const applyShortage = (selection:ShortageSelection,clampedQty:number) => {
+    if(!shortageId)return;
+    setLines(old=>old.flatMap(line=>line.product.id!==shortageId?[line]:
+      clampedQty>0?[{...line,qty:clampedQty,source:selection,serialNumbers:[]}]:[]));
+    setShortageId(null);
+  };
   const selectCustomer = (value: string, field: 'name' | 'phone') => {
     const customer = bootstrap?.customers.find(c => field === 'name'
       ? c.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase()
@@ -141,6 +188,7 @@ export function LivePosPage() {
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
+    setShortageId(null);setSerialId(null);setAvailableSerials([]);
     saleRequestId.current=crypto.randomUUID();
     setOutcomeUnknown(false);setSalesChecked(false);setRecentSales([]);
     requestAnimationFrame(() => productRef.current?.focus());
@@ -170,7 +218,9 @@ export function LivePosPage() {
       paymentMethod: method, bankAccountId: requiresAccount ? bankAccountId : '',
       items: lines.map(l => ({
         productId: l.product.id, name: l.product.name, qty: l.qty,
-        unitPrice: l.price, fulfillmentMode: 'own'
+        unitPrice: l.price, fulfillmentMode: l.source.mode,
+        ...(l.product.trackSerial?{serialNumbers:l.serialNumbers}:{}),
+        ...(l.source.mode==='vendor'?{vendorId:l.source.vendorId,vendorUnitCost:l.source.vendorUnitCost}:{})
       }))
     };
     setSaving(true);setError('');
@@ -222,13 +272,16 @@ export function LivePosPage() {
         <span className="hidden items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-[11px] text-ink-500 lg:flex">
           <Keyboard className="size-3.5"/><kbd>F2</kbd> Search <kbd>F8</kbd> Paid
         </span>
-        <StatusBadge tone="teal">Real API · Basic POS</StatusBadge>
+        <StatusBadge tone="teal">Real API · Tracked POS</StatusBadge>
+        <Link to="/app/live-sales-returns" className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-teal-700 hover:bg-teal-50">
+          Sales Returns · বিক্রয় ফেরত
+        </Link>
         <Button variant="outline" size="sm" disabled={busy || saving} onClick={() => void load()}>
           <RefreshCw className="size-3.5"/> Refresh
         </Button>
       </div>} />
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
-      Real transactions: basic whole-unit sales only. Tracked stock, multi-unit, vendor/negative stock, bundles, installments, split payment, drafts, returns and invoice printing are not yet connected here.
+      Real single-unit sales with serial/expiry and verified shortage sourcing. Multi-unit, bundles, installments, split payment, drafts and A4 invoice printing are not yet connected. Sales returns use the separate live returns page.
     </p>
     {error && <p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {feedback && <p role="status" className="rounded-lg bg-info-bg p-3 text-sm text-info">{feedback}</p>}
@@ -250,8 +303,8 @@ export function LivePosPage() {
         <span>Cash session: <strong className={bootstrap.activeSession ? 'text-success' : 'text-warning'}>
           {bootstrap.activeSession ? 'Open' : 'Closed'}
         </strong></span>
-        <span>{simpleCount} regular sellable products</span>
-        <span>{excludedCount} products require advanced handling or stock</span>
+        <span>{simpleCount} selectable products</span>
+        <span>{excludedCount} tracked products have no sellable stock</span>
       </div>
       {!bootstrap.activeSession && <div className="flex flex-wrap items-end gap-3 rounded-xl border border-warning/30 bg-warning-bg p-3">
         <label className="flex flex-col gap-1 text-xs text-ink-700">Opening cash · শুরুর টাকা
@@ -277,7 +330,17 @@ export function LivePosPage() {
                 <span className="text-right text-xs text-ink-400">{index+1}.</span>
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-medium text-ink">{line.product.name}</p>
-                  <p className="text-[11px] text-ink-500">{line.product.unit} · {line.product.stock} available</p>
+                  <p className="text-[11px] text-ink-500">{line.product.unit} · {line.product.stock} sellable</p>
+                  {line.product.trackSerial&&<button type="button" disabled={loadingTracking||saving}
+                    onClick={()=>void openSerialPicker(line.product.id)} className="text-[11px] font-medium text-teal-700 hover:underline">
+                    Serial / IMEI · {line.serialNumbers.length}/{line.qty} selected
+                  </button>}
+                  {(line.product.trackSerial||line.product.trackExpiry) && <span className="ml-2 text-[10px] text-ink-500">Tracked stock</span>}
+                  {!line.product.trackSerial&&!line.product.trackExpiry&&line.qty>line.product.stock&&
+                    <button type="button" onClick={()=>setShortageId(line.product.id)}
+                      className="block text-[11px] font-medium text-warning hover:underline">
+                      {line.source.mode==='own'?'Resolve stock shortage':line.source.mode==='vendor'?'Vendor sourcing selected':'Negative sale selected'}
+                    </button>}
                 </div>
                 <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
                   type="number" min="1" step="1" value={line.qty}
@@ -395,6 +458,20 @@ export function LivePosPage() {
         </aside>
       </div>
     </>}
+    <SerialPickerDialog
+      product={serialProduct as Product}
+      open={!!serialLine&&!!serialProduct}
+      onOpenChange={open=>{if(!open)setSerialId(null);}}
+      eligible={availableSerials}
+      selected={serialLine?.serialNumbers||noSerials}
+      required={serialLine?.qty||0}
+      maxCount={serialLine?.qty||0}
+      blocked={noSerials}
+      onSave={serials=>{if(serialId)setLines(old=>old.map(l=>l.product.id===serialId?{...l,serialNumbers:serials}:l));}}
+    />
+    <LiveStockShortageDialog open={!!shortageLine} onOpenChange={open=>{if(!open)setShortageId(null);}}
+      name={shortageLine?.product.name||''} qty={shortageLine?.qty||0} stock={shortageLine?.product.stock||0}
+      vendors={bootstrap?.vendors||[]} onApply={applyShortage}/>
     <Dialog open={reviewOpen} onOpenChange={open=>!saving&&setReviewOpen(open)}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Confirm real sale · বিক্রি নিশ্চিত করুন</DialogTitle>
