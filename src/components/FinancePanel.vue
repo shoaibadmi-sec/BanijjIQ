@@ -359,7 +359,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outsideClick
             <tbody>
               <tr v-for="r in $sortRows('finance-ledger', ledgerRows)" :key="r.financeId">
                 <td>{{ r.date }} <span v-if="r.isBackdated" class="badge badge-warning" :title="r.backdatedReason">⚠</span></td><td class="mono">{{ r.financeId }}</td><td>{{ r.transactionTypeLabel }}</td><td>{{ r.person }}</td><td>{{ r.paymentMethod }}</td>
-                <td class="num mono">{{ r.debit ? money(r.debit) : '' }}</td><td class="num mono">{{ r.credit ? money(r.credit) : '' }}</td><td class="num mono">{{ money(r.balance) }}</td><td>{{ r.createdBy }}</td>
+                <td class="num"><span v-if="r.debit" class="finance-money-out" title="Money out / টাকা বের হয়েছে" aria-label="Money out">↓ {{ money(r.debit) }}</span></td><td class="num"><span v-if="r.credit" class="finance-money-in" title="Money in / টাকা জমা হয়েছে" aria-label="Money in">↑ {{ money(r.credit) }}</span></td><td class="num mono">{{ money(r.balance) }}</td><td>{{ r.createdBy }}</td>
                 <td class="action-cell"><button class="btn btn-sm action-trigger finance-action-trigger" @click="openActions($event,r)">Actions</button></td>
               </tr>
             </tbody>
@@ -613,4 +613,6 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outsideClick
   .finance-stats .stat-card{padding:12px 14px}
   .finance-stats .stat-value{font-size:20px}
 }
+.finance-money-out { color: #b42318; font-weight: 600; white-space: nowrap; }
+.finance-money-in { color: #087a4b; font-weight: 600; white-space: nowrap; }
 </style>

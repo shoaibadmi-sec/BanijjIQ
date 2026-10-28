@@ -52,7 +52,7 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (path === '/api/brands' && request.method === 'GET') return listLookups(db, 'brand');
   if (path === '/api/brands' && request.method === 'POST') return addLookup(db, 'brand', await readBody<{ name?: string }>(request));
   if (path === '/api/units' && request.method === 'GET') return listLookups(db, 'unit');
-  if (path === '/api/units' && request.method === 'POST') return addLookup(db, 'unit', await readBody<{ name?: string }>(request));
+  if (path === '/api/units' && request.method === 'POST') return addLookup(db, 'unit', await readBody<{ name?: string; symbol?: string }>(request));
 
   const trackingLotMatch = path.match(/^\/api\/product-tracking\/lots\/([^/]+)$/);
   if (trackingLotMatch && request.method === 'GET') return getPendingLotTrackingRoute(db, decodeURIComponent(trackingLotMatch[1]));
@@ -109,7 +109,7 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (brandMatch && request.method === 'PUT') return updateLookup(db, 'brand', decodeURIComponent(brandMatch[1]), await readBody<{ name?: string }>(request));
 
   const unitMatch = path.match(/^\/api\/units\/([^/]+)$/);
-  if (unitMatch && request.method === 'PUT') return updateLookup(db, 'unit', decodeURIComponent(unitMatch[1]), await readBody<{ name?: string }>(request));
+  if (unitMatch && request.method === 'PUT') return updateLookup(db, 'unit', decodeURIComponent(unitMatch[1]), await readBody<{ name?: string; symbol?: string }>(request));
 
   const catStatusMatch = path.match(/^\/api\/categories\/([^/]+)\/status$/);
   if (catStatusMatch && request.method === 'PUT') {

@@ -129,6 +129,8 @@ const lookupManageLoading = ref(false);
 const categoryManageName = ref('');
 const brandManageName = ref('');
 const unitManageName = ref('');
+const unitManageSymbol = ref('');
+const lookupEditingSymbol = ref('');
 const categoryManageSearch = ref('');
 const brandManageSearch = ref('');
 const unitManageSearch = ref('');
@@ -300,7 +302,7 @@ const filteredBrandManageItems = computed(() => {
 });
 const filteredUnitManageItems = computed(() => {
   const q = unitManageSearch.value.trim().toLowerCase();
-  return q ? unitManageItems.value.filter((item) => item.name.toLowerCase().includes(q)) : unitManageItems.value;
+  return q ? unitManageItems.value.filter((item) => item.name.toLowerCase().includes(q) || (item.symbol || '').toLowerCase().includes(q)) : unitManageItems.value;
 });
 const unitNames = computed(() => units.value.map((u) => u.name));
 const unitSelectOptions = computed(() => [{ label: 'No unit', value: '' }, ...unitNames.value.map((name) => ({ label: name, value: name }))]);
@@ -689,7 +691,7 @@ async function addLookup(): Promise<void> {
       brands.value.push({ id: item.id, name: item.name });
     } else {
       const item = await addProductUnit(name);
-      units.value.push({ id: item.id, name: item.name });
+      units.value.push({ id: item.id, name: item.name, symbol: item.symbol });
     }
     manageNewName.value = '';
     showSuccess(`${manageMode.value === 'category' ? 'Category' : manageMode.value === 'brand' ? 'Brand' : 'Unit'} added`);
@@ -749,8 +751,9 @@ async function addLookupFromSection(kind: ManageMode): Promise<void> {
   try {
     if (kind === 'category') await addProductCategory(name);
     else if (kind === 'brand') await addProductBrand(name);
-    else await addProductUnit(name);
+    else await addProductUnit(name, unitManageSymbol.value.trim());
     nameRef.value = '';
+    if (kind === 'unit') unitManageSymbol.value = '';
     lookupSectionAddMode.value = null;
     lookupManageModal.value = null;
     await load();
@@ -766,7 +769,7 @@ function openLookupSectionAdd(kind: ManageMode): void {
   lookupManageModal.value = { kind, mode: 'add', item: null };
   if (kind === 'category') categoryManageName.value = '';
   else if (kind === 'brand') brandManageName.value = '';
-  else unitManageName.value = '';
+  else { unitManageName.value = ''; unitManageSymbol.value = ''; }
 }
 
 function closeLookupSectionAdd(kind: ManageMode): void {
@@ -780,6 +783,7 @@ function beginLookupEdit(kind: ManageMode, item: ProductLookupManageItem): void 
   lookupEditingKind.value = kind;
   lookupEditingId.value = item.id;
   lookupEditingName.value = item.name;
+  lookupEditingSymbol.value = kind === 'unit' ? (item.symbol || '') : '';
   lookupManageModal.value = { kind, mode: 'edit', item };
 }
 
@@ -788,6 +792,8 @@ function closeLookupManageModal(): void {
   lookupEditingId.value = null;
   lookupEditingKind.value = null;
   lookupEditingName.value = '';
+  lookupEditingSymbol.value = '';
+  unitManageSymbol.value = '';
   categoryManageName.value = '';
   brandManageName.value = '';
   unitManageName.value = '';
@@ -810,7 +816,7 @@ async function saveLookupEdit(kind: ManageMode, item: ProductLookupManageItem): 
   try {
     if (kind === 'category') await updateProductCategory(item.id, name);
     else if (kind === 'brand') await updateProductBrand(item.id, name);
-    else await updateProductUnit(item.id, name);
+    else await updateProductUnit(item.id, item.name, lookupEditingSymbol.value.trim());
     lookupEditingId.value = null;
     lookupEditingKind.value = null;
     lookupManageModal.value = null;
@@ -1844,15 +1850,16 @@ onBeforeUnmount(() => {
                   </div>
                   <div class="table-scroll lookup-table-wrap">
                     <table class="lookup-management-table">
-                      <thead><tr><th>Unit</th><th>Status</th><th class="lookup-actions-head">Actions</th></tr></thead>
+                      <thead><tr><th>Unit Name</th><th>Symbol</th><th>Status</th><th class="lookup-actions-head">Actions</th></tr></thead>
                       <tbody>
-                        <tr v-if="lookupManageLoading"><td colspan="3" class="empty-state">Loading units...</td></tr>
+                        <tr v-if="lookupManageLoading"><td colspan="4" class="empty-state">Loading units...</td></tr>
                         <tr v-for="item in filteredUnitManageItems" :key="item.id">
                           <td><strong>{{ item.name }}</strong></td>
+                          <td>{{ item.symbol || '—' }}</td>
                           <td><span class="badge" :class="item.status === 'Active' ? 'badge-success' : 'badge-danger'">{{ item.status }}</span></td>
                           <td class="lookup-table-actions"><button class="btn btn-sm" @click="beginLookupEdit('unit', item)">Edit</button><button class="btn btn-sm" @click="toggleLookupStatus('unit', item)">{{ item.status === 'Active' ? 'Deactivate' : 'Activate' }}</button></td>
                         </tr>
-                        <tr v-if="!lookupManageLoading && filteredUnitManageItems.length === 0"><td colspan="3" class="empty-state">{{ unitManageSearch ? 'No matching units.' : 'No units yet.' }}</td></tr>
+                        <tr v-if="!lookupManageLoading && filteredUnitManageItems.length === 0"><td colspan="4" class="empty-state">{{ unitManageSearch ? 'No matching units.' : 'No units yet.' }}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -2224,18 +2231,25 @@ onBeforeUnmount(() => {
             v-else-if="lookupManageModal.mode === 'add'"
             v-model.trim="unitManageName"
             autofocus
-            placeholder="e.g. PCS, Feet, Kg"
+            placeholder="e.g. Pieces, Feet, Kilogram"
             @keyup.enter="saveLookupManageModal"
             @keyup.esc="closeLookupManageModal"
           />
           <input
             v-else
             v-model.trim="lookupEditingName"
+            :readonly="lookupManageModal.kind === 'unit'"
             autofocus
             :placeholder="lookupManageModal.kind === 'category' ? 'Category name' : lookupManageModal.kind === 'brand' ? 'Brand name' : 'Unit name'"
             @keyup.enter="saveLookupManageModal"
             @keyup.esc="closeLookupManageModal"
           />
+          <template v-if="lookupManageModal.kind === 'unit'">
+            <label>Symbol (optional) <span class="bn-hint" style="display:inline;">— সংক্ষিপ্ত একক, যেমন PCS</span></label>
+            <input v-if="lookupManageModal.mode === 'add'" v-model.trim="unitManageSymbol" maxlength="12" placeholder="e.g. PCS" @keyup.enter="saveLookupManageModal" />
+            <input v-else v-model.trim="lookupEditingSymbol" maxlength="12" placeholder="e.g. PCS" @keyup.enter="saveLookupManageModal" />
+            <p class="bn-hint">The symbol is for display only; changing it never changes stock or previous transactions.</p>
+          </template>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn" @click="closeLookupManageModal">Cancel</button>
