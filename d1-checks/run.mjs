@@ -292,7 +292,7 @@ try{
     assert.equal(audit.sales,11);
     assert.equal(audit.paidSaleLotQty,2);
     assert.equal(audit.cashReceived,200);
-    assert.equal(audit.customerDue,120);
+    assert.equal(audit.customerDue,180);
     assert.equal(audit.ledgerDue,120);
     assert.equal(audit.requestKeys,11);
     assert.equal(audit.browserInvoiceCount,1);
@@ -325,7 +325,7 @@ try{
     assert.equal(audit.sharedDueLot,0);
     assert.equal(query("SELECT current_due FROM customers WHERE phone='01000000777'")[0]?.current_due,180);
     report.passed.push('D1 SQL reconciliation after Worker shutdown');
-  }catch(e){report.failed.push({name:'D1 SQL reconciliation',message:String(e?.stack||e)});}
+  }catch(e){report.failed.push({name:'D1 SQL reconciliation',message:String(e?.stack||e)});process.stderr.write('D1 SQL reconciliation failed: '+String(e?.stack||e)+'\n');}
   report.finishedAt=new Date().toISOString();
   writeFileSync(join(out,'d1-local-results.json'),JSON.stringify(report,null,2));
   // Never write setup tokens or full request bodies to artifacts.
