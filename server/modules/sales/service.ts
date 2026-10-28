@@ -65,7 +65,7 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
   const [pr, cr, br, vr, session, settingsRows] = await Promise.all([
-    db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' ORDER BY product_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT p.product_id,p.product_name,COALESCE(p.brand,'') brand,p.category,p.unit,COALESCE(u.symbol,'') AS unit_symbol,p.barcode,p.purchase_price,p.selling_price,p.current_stock,p.minimum_stock,p.track_serial,p.track_expiry,p.track_warranty,p.warranty_period_value,p.warranty_period_unit FROM products p LEFT JOIN product_units u ON LOWER(u.unit_name)=LOWER(p.unit) WHERE p.is_deleted=0 AND p.status<>'Inactive' ORDER BY p.product_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
@@ -79,7 +79,7 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
   const vendorsAll=(vr.results||[]).map((v:any)=>({id:v.vendor_id,name:v.vendor_name,phone:v.phone||'',currentDue:Number(v.current_due||0),status:v.status}));
   return json({ ok:true,
     products:(pr.results||[]).map((p:any)=>({
-      id:p.product_id,name:(String(p.brand||'').trim()?`${String(p.brand).trim()} ${p.product_name}`:p.product_name),productName:p.product_name,brand:p.brand||'',category:p.category,unit:p.unit,barcode:p.barcode||'',
+      id:p.product_id,name:(String(p.brand||'').trim()?`${String(p.brand).trim()} ${p.product_name}`:p.product_name),productName:p.product_name,brand:p.brand||'',category:p.category,unit:p.unit,unitSymbol:p.unit_symbol||'',barcode:p.barcode||'',
       ...(showPurchasePrice?{purchasePrice:Number(p.purchase_price||0)}:{}),
       sellingPrice:Number(p.selling_price||0),stock:availability.get(String(p.product_id))?.sellable??Number(p.current_stock||0),totalStock:Number(p.current_stock||0),
       pendingTracking:availability.get(String(p.product_id))?.pending??0,expiredStock:availability.get(String(p.product_id))?.expired??0,minimumStock:Number(p.minimum_stock||0),

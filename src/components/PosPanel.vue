@@ -228,7 +228,7 @@ function addProduct(p:PosProduct){
   const line=cart.value.find(x=>x.productId===p.id);
   if(line) line.qty=Math.round(Number(line.qty||0))+1;
   else cart.value.push({
-    productId:p.id,name:p.name,unit:p.unit,qty:1,unitPrice:p.sellingPrice,stock:p.stock,
+    productId:p.id,name:p.name,unit:p.unit,unitSymbol:p.unitSymbol||'',qty:1,unitPrice:p.sellingPrice,stock:p.stock,
     vendorId:'',vendorUnitCost:null,fulfillmentMode:p.stock>0?'own':undefined,
     trackSerial:!!p.trackSerial,trackExpiry:!!p.trackExpiry,trackWarranty:!!p.trackWarranty,serialNumbers:[]
   });
@@ -476,7 +476,7 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
           <button v-for="(p,index) in filteredProducts" :key="p.id" type="button" class="product-tile" :class="{'is-highlighted':index===highlightedProductIndex}" @mouseenter="highlightedProductIndex=index" @click="addProduct(p)">
             <span class="p-name">{{p.name}}</span>
             <span class="p-price">{{money(p.sellingPrice)}}</span>
-            <span class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unit}} in stock</span>
+            <span class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unitSymbol || p.unit}} in stock</span>
           </button>
         </div>
         <div v-if="!loading&&!filteredProducts.length" class="empty-state">No products found.</div>
@@ -521,7 +521,7 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
               <div class="c-name">
                 <strong>{{l.name}}</strong>
                 <div class="cart-meta">
-                  {{l.unit||''}}
+                  {{l.unitSymbol || l.unit || ''}}
                   <button
                     v-if="hasCost(l.productId)"
                     type="button"

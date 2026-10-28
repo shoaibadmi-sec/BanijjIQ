@@ -38,6 +38,7 @@ export type ProductStatus = 'Active' | 'Inactive';
 export interface LookupItem {
   id: string;
   name: string;
+  symbol?: string;
 }
 
 export interface Product {
@@ -393,6 +394,7 @@ export interface BankAccount {
 }
 
 export interface PosProduct {
+  unitSymbol?: string;
   id: string;
   name: string;
   productName: string;
@@ -441,6 +443,7 @@ export interface CashSessionSummary {
 }
 
 export interface PosCartLine {
+  unitSymbol?: string;
   purchasePrice?: number;
   unit?: string;
   productId: string;

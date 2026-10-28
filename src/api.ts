@@ -136,7 +136,7 @@ export async function resolveSupplierWarrantyRma(rmaId:string, payload: import('
   return request(`/api/product-tracking/supplier-warranty/${encodeURIComponent(rmaId)}/resolve`, { method:'POST', body:JSON.stringify(payload) });
 }
 
-export interface ProductLookupManageItem { id: string; name: string; status: 'Active' | 'Inactive' }
+export interface ProductLookupManageItem { id: string; name: string; symbol?: string; status: 'Active' | 'Inactive' }
 
 export async function getProductCategories(): Promise<{ ok: true; items: ProductLookupManageItem[] }> {
   return request('/api/categories');
@@ -166,12 +166,12 @@ export async function updateProductBrand(id: string, name: string): Promise<{ ok
   return request(`/api/brands/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name }) });
 }
 
-export async function addProductUnit(name: string): Promise<{ ok: true; id: string; name: string }> {
-  return request('/api/units', { method: 'POST', body: JSON.stringify({ name }) });
+export async function addProductUnit(name: string, symbol = ''): Promise<{ ok: true; id: string; name: string; symbol: string }> {
+  return request('/api/units', { method: 'POST', body: JSON.stringify({ name, symbol }) });
 }
 
-export async function updateProductUnit(id: string, name: string): Promise<{ ok: true; id: string; name: string }> {
-  return request(`/api/units/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name }) });
+export async function updateProductUnit(id: string, name: string, symbol: string): Promise<{ ok: true; id: string; name: string; symbol: string }> {
+  return request(`/api/units/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name, symbol }) });
 }
 
 export async function setProductCategoryStatus(id: string, status: 'Active' | 'Inactive'): Promise<{ ok: true }> {

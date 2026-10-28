@@ -140,7 +140,7 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
     `).all(),
     db.prepare(`SELECT category_id AS id, category_name AS name FROM product_categories WHERE status = 'Active' ORDER BY category_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT brand_id AS id, brand_name AS name FROM product_brands WHERE status = 'Active' ORDER BY brand_name COLLATE NOCASE ASC`).all(),
-    db.prepare(`SELECT unit_id AS id, unit_name AS name FROM product_units WHERE status = 'Active' ORDER BY unit_name COLLATE NOCASE ASC`).all(),
+    db.prepare(`SELECT unit_id AS id, unit_name AS name, COALESCE(symbol, '') AS symbol FROM product_units WHERE status = 'Active' ORDER BY unit_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT supplier_id AS id, supplier_name AS name, current_due AS currentDue FROM suppliers WHERE status = 'Active' AND is_deleted = 0 ORDER BY supplier_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT bank_account_id AS id, account_name AS name, account_type AS accountType FROM bank_accounts WHERE status = 'Active' ORDER BY account_name COLLATE NOCASE ASC`).all()
   ]);
@@ -358,16 +358,35 @@ export async function listLookups(db: SherDatabase, kind: 'category' | 'brand' |
   const table = kind === 'category' ? 'product_categories' : kind === 'brand' ? 'product_brands' : 'product_units';
   const idColumn = kind === 'category' ? 'category_id' : kind === 'brand' ? 'brand_id' : 'unit_id';
   const nameColumn = kind === 'category' ? 'category_name' : kind === 'brand' ? 'brand_name' : 'unit_name';
-  const rows = await db.prepare(`SELECT ${idColumn} AS id, ${nameColumn} AS name, status FROM ${table} ORDER BY ${nameColumn} COLLATE NOCASE ASC`).all();
+  const rows = kind === 'unit'
+    ? await db.prepare(`SELECT unit_id AS id, unit_name AS name, COALESCE(symbol, '') AS symbol, status FROM product_units ORDER BY unit_name COLLATE NOCASE ASC`).all()
+    : await db.prepare(`SELECT ${idColumn} AS id, ${nameColumn} AS name, status FROM ${table} ORDER BY ${nameColumn} COLLATE NOCASE ASC`).all();
   return json({ ok: true, items: rows.results ?? [] });
 }
 
-export async function addLookup(db: SherDatabase, kind: 'category' | 'brand' | 'unit', body: { name?: string }): Promise<Response> {
+export async function addLookup(db: SherDatabase, kind: 'category' | 'brand' | 'unit', body: { name?: string; symbol?: string }): Promise<Response> {
+  const symbol = cleanText(body.symbol);
+  if (kind === 'unit' && symbol.length > 12) return error('Unit symbol must be 12 characters or fewer.');
   const item = await ensureLookup(db, kind === 'category' ? 'product_categories' : kind === 'brand' ? 'product_brands' : 'product_units', cleanText(body.name));
+  // Unit names are canonical identifiers. Symbols never rewrite conversions, products, or transactions.
+  if (kind === 'unit') {
+    await db.prepare('UPDATE product_units SET symbol = ? WHERE unit_id = ?').bind(symbol, item.id).run();
+    return json({ ok: true, ...item, symbol });
+  }
   return json({ ok: true, ...item });
 }
 
-export async function updateLookup(db: SherDatabase, kind: 'category' | 'brand' | 'unit', id: string, body: { name?: string }): Promise<Response> {
+export async function updateLookup(db: SherDatabase, kind: 'category' | 'brand' | 'unit', id: string, body: { name?: string; symbol?: string }): Promise<Response> {
+  // Mohim invariant: a unit's full name is stable business identity; only its symbol is editable.
+  if (kind === 'unit') {
+    const existing = await db.prepare('SELECT unit_name AS name FROM product_units WHERE unit_id = ?').bind(id).first<{ name: string }>();
+    if (!existing) return error('Unit not found.', 404);
+    if (body.name !== undefined && cleanText(body.name) !== existing.name) return error('Unit names cannot be changed after creation. Edit the symbol instead.');
+    const symbol = cleanText(body.symbol);
+    if (symbol.length > 12) return error('Unit symbol must be 12 characters or fewer.');
+    await db.prepare('UPDATE product_units SET symbol = ? WHERE unit_id = ?').bind(symbol, id).run();
+    return json({ ok: true, id, name: existing.name, symbol });
+  }
   const table = kind === 'category' ? 'product_categories' : kind === 'brand' ? 'product_brands' : 'product_units';
   const idColumn = kind === 'category' ? 'category_id' : kind === 'brand' ? 'brand_id' : 'unit_id';
   const nameColumn = kind === 'category' ? 'category_name' : kind === 'brand' ? 'brand_name' : 'unit_name';
