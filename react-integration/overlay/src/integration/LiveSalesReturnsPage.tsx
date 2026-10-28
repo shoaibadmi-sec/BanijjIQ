@@ -33,6 +33,7 @@ export function LiveSalesReturnsPage(){
   const [success,setSuccess]=useState<{id:string;amount:number}|null>(null);
   const [unknown,setUnknown]=useState(false);
   const [history,setHistory]=useState<Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>>([]);
+  const [historyChecked,setHistoryChecked]=useState(false);
   const [review,setReview]=useState(false);
   const [posting,setPosting]=useState(false);
   const activeLine=sale?.items.find(x=>x.productId===picker);
@@ -104,8 +105,8 @@ export function LiveSalesReturnsPage(){
     }finally{setPosting(false);}
   };
   const checkHistory=async()=>{
-    setBusy(true);setError('');
-    try{setHistory((await getSalesReturnHistory()).returns.slice(0,30));}
+    setBusy(true);setError('');setHistoryChecked(false);
+    try{setHistory((await getSalesReturnHistory()).returns.slice(0,30));setHistoryChecked(true);}
     catch(e){setError(e instanceof Error?e.message:'Could not verify return history.');}
     finally{setBusy(false);}
   };
@@ -129,8 +130,8 @@ export function LiveSalesReturnsPage(){
         <RefreshCw className="size-4"/> Check real Return History
       </Button>
       {history.map(h=><p className="text-xs" key={h.returnId}>{h.returnId} · {h.invoiceId} · {money(h.totalReturnAmount)}</p>)}
-      {history.length>0&&<Button variant="outline" size="sm" onClick={()=>{
-        setUnknown(false);setSale(null);setItems([]);setHistory([]);setError('');
+      {historyChecked&&<Button variant="outline" size="sm" onClick={()=>{
+        setUnknown(false);setSale(null);setItems([]);setHistory([]);setHistoryChecked(false);setError('');
       }}>I verified the invoice and return ledger — start a fresh search</Button>}
     </div>}
     {success&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
