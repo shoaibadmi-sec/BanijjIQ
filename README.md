@@ -11,7 +11,7 @@ Requires Node.js 22+.
 ```bash
 npm ci
 npm run backend:migrate
-npm run backend:dev
+BANIJJIQ_SETUP_SECRET="<choose-a-random-secret>" npm run backend:dev
 # In another terminal:
 npm run dev
 ```
@@ -28,6 +28,8 @@ cp wrangler.example.jsonc wrangler.jsonc
 npm ci
 npm run build
 npm run cloudflare:migrate:remote
+# Required before public deployment: create a secret using the interactive Wrangler prompt
+npx wrangler secret put SETUP_SECRET
 npm run cloudflare:deploy
 ```
 
@@ -40,3 +42,20 @@ Only project source code, SQL schema migrations and development configuration ex
 ## Original project
 
 Source snapshot: `/run/media/shoaib/Program/Backup Project 11-9-26/SherERP-new` on the developer's local workstation (reviewed October 28, 2026).
+
+
+## Secure first-administrator setup
+
+**A fresh deployment does not permit anonymous admin creation.** The setup endpoint
+requires the private `SETUP_SECRET` bound through Cloudflare Workers secrets.
+Never commit this value into GitHub or a Wrangler config file.
+
+After deploying and initializing the empty database, create the first administrator by
+calling `POST https://YOUR-WORKER.workers.dev/api/setup/admin` with the
+`x-setup-secret` request header and a JSON body containing `fullName`,
+`phone`, and `password`. Keep the secret out of shell history and shared logs.
+After the first administrator exists, further setup attempts are rejected.
+You may remove the `SETUP_SECRET` binding after the initial setup.
+
+The Node.js runtime reads the equivalent `BANIJJIQ_SETUP_SECRET` environment
+variable for local bootstrap.

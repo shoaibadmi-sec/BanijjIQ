@@ -10,7 +10,7 @@ mkdirSync(dirname(config.databasePath), { recursive: true });
 
 const db = new SqliteDatabase(config.databasePath);
 const migrationSummary = runMigrations(db.native, config.migrationsDir);
-const app = createApp(db);
+const app = createApp(db, process.env.BANIJJIQ_SETUP_SECRET);
 
 const server = serve({
   fetch: app.fetch,

@@ -20,7 +20,7 @@ npx wrangler login
 npm run cloudflare:deploy
 ```
 
-Wrangler will provision a new D1 resource for the `DB` binding and deploy a new Worker named `shererp-new`.
+Wrangler will provision a new D1 resource for the `DB` binding and deploy a new Worker named `banijjiq`.
 After provisioning, Wrangler may write the generated D1 resource details back to `wrangler.jsonc`.
 
 ## 4. Apply the SherERP schema to the new remote D1
@@ -47,3 +47,13 @@ npm run cloudflare:dev
 npm run backend:migrate
 npm run backend:dev
 ```
+
+
+## BanijjIQ safety requirements
+
+- Deploy only with the new `banijjiq-db` D1 binding. Never reuse an existing SherERP database ID.
+- Configure `wrangler.jsonc` locally from `wrangler.example.jsonc`; this local file is gitignored.
+- Build is included in the `cloudflare:deploy` npm script.
+- Before publishing, configure a secret: `npx wrangler secret put SETUP_SECRET`.
+- An initial administrator must send an `x-setup-secret` header to `POST /api/setup/admin`.
+- Keep the setup secret out of source control, CI logs, and terminal history.

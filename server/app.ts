@@ -4,6 +4,7 @@ import { handleApiRequest } from './core/handler.js';
 
 type SherBindings = {
   DB: SherDatabase;
+  SETUP_SECRET?: string;
 };
 
 type SherHonoEnv = {
@@ -17,7 +18,7 @@ type SherHonoEnv = {
  * Cloudflare passes no database here; Hono resolves the native D1 binding
  * from c.env.DB for every request.
  */
-export function createApp(nodeDatabase?: SherDatabase): Hono<SherHonoEnv> {
+export function createApp(nodeDatabase?: SherDatabase, nodeSetupSecret?: string): Hono<SherHonoEnv> {
   const app = new Hono<SherHonoEnv>();
 
   app.get('/', (c) => c.json({
@@ -27,6 +28,16 @@ export function createApp(nodeDatabase?: SherDatabase): Hono<SherHonoEnv> {
   }));
 
   app.all('/api/*', async (c) => {
+    // Prevent a public first-visitor admin takeover on a fresh D1 database.
+    // Set SETUP_SECRET as a Cloudflare Worker secret before publishing.
+    if (c.req.path === '/api/setup/admin' && c.req.method === 'POST') {
+      const expected = nodeDatabase ? nodeSetupSecret : c.env?.SETUP_SECRET;
+      const provided = c.req.header('x-setup-secret');
+      if (!expected || !provided || provided !== expected) {
+        return c.json({ ok: false, error: 'Administrator setup requires a valid setup secret' }, 403);
+      }
+    }
+
     const db = nodeDatabase ?? c.env?.DB;
     if (!db) {
       return c.json({ ok: false, error: 'Database binding is not configured' }, 500);
