@@ -19,6 +19,9 @@ test('Mohim unit symbols are display metadata and never alter product identity o
     let added = await response.json() as { id: string; name: string; symbol: string };
     assert.equal(added.symbol, 'PCS');
 
+    response = await addLookup(db, 'unit', { name: 'pieces', symbol: 'P' });
+    assert.equal(response.status, 409, 'Duplicate unit name must not overwrite existing symbol');
+
     const before = db.native.prepare('SELECT unit_name, symbol FROM product_units WHERE unit_id = ?').get(added.id) as { unit_name: string; symbol: string };
     assert.deepEqual(before, { unit_name: 'Pieces', symbol: 'PCS' });
 

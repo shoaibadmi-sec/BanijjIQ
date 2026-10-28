@@ -403,7 +403,7 @@ async function loadRequestedInvoice(req:PosLoadRequest|null|undefined){
       cart.value=inv.items.map(i=>{
         const p=products.value.find(x=>x.id===i.productId);
         const current=p?.stock||0,vendorQty=Number(i.vendorQty||0),ownQty=Math.max(0,Math.round(Number(i.qty||0))-Math.round(vendorQty));
-        return {productId:i.productId,name:i.name,unit:p?.unit||'',qty:Math.max(1,Math.round(i.qty)),unitPrice:i.unitPrice,stock:current+ownQty,vendorId:i.vendorId||'',vendorUnitCost:i.vendorUnitCost??null,fulfillmentMode:vendorQty>0?'vendor':'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
+        return {productId:i.productId,name:i.name,unit:p?.unit||'',unitSymbol:p?.unitSymbol||'',qty:Math.max(1,Math.round(i.qty)),unitPrice:i.unitPrice,stock:current+ownQty,vendorId:i.vendorId||'',vendorUnitCost:i.vendorUnitCost??null,fulfillmentMode:vendorQty>0?'vendor':'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
       });
       sale.customerId=inv.customerId||'';sale.customerName=inv.customerName||'';sale.customerPhone=inv.customerPhone||'';
       sale.customerAddress=inv.customerAddress||'';sale.customerFatherName=inv.customerFatherName||'';sale.discount=Number(inv.discount||0);
@@ -413,7 +413,7 @@ async function loadRequestedInvoice(req:PosLoadRequest|null|undefined){
       updateInvoiceId.value='';updateReason.value='';
       cart.value=inv.items.map(i=>{
         const p=products.value.find(x=>x.id===i.productId);
-        return {productId:i.productId,name:i.productName,unit:p?.unit||'',qty:Math.max(1,Math.round(i.quantity)),unitPrice:i.unitPrice,stock:p?.stock||0,vendorId:'',vendorUnitCost:null,fulfillmentMode:'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
+        return {productId:i.productId,name:i.productName,unit:p?.unit||'',unitSymbol:p?.unitSymbol||'',qty:Math.max(1,Math.round(i.quantity)),unitPrice:i.unitPrice,stock:p?.stock||0,vendorId:'',vendorUnitCost:null,fulfillmentMode:'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
       });
       sale.customerId='';sale.customerName=inv.customerName||'';sale.customerPhone=inv.customerPhone||'';
       sale.customerAddress=inv.customerAddress||'';sale.customerFatherName=inv.customerFatherName||'';sale.discount=Number(inv.discount||0);

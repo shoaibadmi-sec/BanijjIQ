@@ -76,6 +76,7 @@ fully deployed production release. The source commit is the fixed reference for 
 
 - `npm run build` (Vue/Vite frontend typecheck + production compile).
 - `tsc -p tsconfig.server.json --noEmit` (Hono / D1 TypeScript).
+- GitHub Actions `.github/workflows/mohim-parity.yml` runs all type/build/parity checks and ephemeral Cloudflare local D1 migration on every PR.
 - `npm run test:parity` (in-memory fresh SQLite migrations, unit symbol add/edit/list,
   original-name and stock invariants, POS display-unit data, invalid rename rejection).
 - `0028_unit_symbols.sql` separately tested against a **temporary in-memory restore**

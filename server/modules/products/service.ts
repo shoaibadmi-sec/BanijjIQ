@@ -367,6 +367,10 @@ export async function listLookups(db: SherDatabase, kind: 'category' | 'brand' |
 export async function addLookup(db: SherDatabase, kind: 'category' | 'brand' | 'unit', body: { name?: string; symbol?: string }): Promise<Response> {
   const symbol = cleanText(body.symbol);
   if (kind === 'unit' && symbol.length > 12) return error('Unit symbol must be 12 characters or fewer.');
+  if (kind === 'unit') {
+    const duplicate = await db.prepare('SELECT unit_id FROM product_units WHERE LOWER(unit_name) = LOWER(?) LIMIT 1').bind(cleanText(body.name)).first();
+    if (duplicate) return error('A unit with this name already exists.', 409);
+  }
   const item = await ensureLookup(db, kind === 'category' ? 'product_categories' : kind === 'brand' ? 'product_brands' : 'product_units', cleanText(body.name));
   // Unit names are canonical identifiers. Symbols never rewrite conversions, products, or transactions.
   if (kind === 'unit') {

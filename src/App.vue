@@ -302,7 +302,7 @@ const filteredBrandManageItems = computed(() => {
 });
 const filteredUnitManageItems = computed(() => {
   const q = unitManageSearch.value.trim().toLowerCase();
-  return q ? unitManageItems.value.filter((item) => item.name.toLowerCase().includes(q)) : unitManageItems.value;
+  return q ? unitManageItems.value.filter((item) => item.name.toLowerCase().includes(q) || (item.symbol || '').toLowerCase().includes(q)) : unitManageItems.value;
 });
 const unitNames = computed(() => units.value.map((u) => u.name));
 const unitSelectOptions = computed(() => [{ label: 'No unit', value: '' }, ...unitNames.value.map((name) => ({ label: name, value: name }))]);
