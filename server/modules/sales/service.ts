@@ -1,4 +1,6 @@
 import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
+import { hasBundleProducts, completeBundleSaleRoute } from './bundlePosting.service.js';
+import { hasBundleSaleItem, hasBundleRequest, completeBundleReturnRoute, deleteBundleInvoiceRoute } from './bundleReturns.service.js';
 import { validateSaleUnitBreakdown } from '../products/units.service.js';
 import type { AuthUser } from '../auth/types.js';
 import { daysSince, hasModulePermission } from '../auth/permissions.js';
@@ -66,7 +68,7 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
   const [pr, cr, br, vr, session, settingsRows] = await Promise.all([
-    db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' AND product_type='Standard' ORDER BY product_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,product_type,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive'  ORDER BY product_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
@@ -83,13 +85,21 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
     if (!unitsByProduct.has(row.productId)) unitsByProduct.set(row.productId, []);
     unitsByProduct.get(row.productId)!.push({unit:row.unit,smallerUnit:row.smallerUnit,count:Number(row.count),factor:Number(row.factor)});
   }
+  const bundleParts=await db.prepare(`SELECT bc.bundle_id AS bundleId,bc.quantity_per_set AS perSet,p.current_stock AS stock
+    FROM bundle_components bc JOIN products b ON b.product_id=bc.bundle_id AND b.bundle_revision=bc.revision
+    JOIN products p ON p.product_id=bc.component_id WHERE bc.is_active=1 AND b.status='Active'`).all<any>();
+  const availableSets=new Map<string,number>();
+  for(const c of bundleParts.results||[]){
+    const count=Math.max(0,Math.floor(Math.max(0,Number(c.stock||0))/Math.max(1,Number(c.perSet))));
+    availableSets.set(c.bundleId,Math.min(availableSets.get(c.bundleId)??Number.POSITIVE_INFINITY,count));
+  }
   const availability=await getAvailabilityMap(db);
   const vendorsAll=(vr.results||[]).map((v:any)=>({id:v.vendor_id,name:v.vendor_name,phone:v.phone||'',currentDue:Number(v.current_due||0),status:v.status}));
   return json({ ok:true,
     products:(pr.results||[]).map((p:any)=>({
-      id:p.product_id,name:(String(p.brand||'').trim()?`${String(p.brand).trim()} ${p.product_name}`:p.product_name),productName:p.product_name,brand:p.brand||'',category:p.category,unit:p.unit,conversions:unitsByProduct.get(p.product_id)||[],barcode:p.barcode||'',
+      id:p.product_id,name:(String(p.brand||'').trim()?`${String(p.brand).trim()} ${p.product_name}`:p.product_name),productName:p.product_name,brand:p.brand||'',category:p.category,unit:p.unit,productType:p.product_type,conversions:p.product_type==='Bundle'?[]:(unitsByProduct.get(p.product_id)||[]),barcode:p.barcode||'',
       ...(showPurchasePrice?{purchasePrice:Number(p.purchase_price||0)}:{}),
-      sellingPrice:Number(p.selling_price||0),stock:availability.get(String(p.product_id))?.sellable??Number(p.current_stock||0),totalStock:Number(p.current_stock||0),
+      sellingPrice:Number(p.selling_price||0),stock:p.product_type==='Bundle'?(availableSets.get(p.product_id)||0):(availability.get(String(p.product_id))?.sellable??Number(p.current_stock||0)),totalStock:Number(p.current_stock||0),
       pendingTracking:availability.get(String(p.product_id))?.pending??0,expiredStock:availability.get(String(p.product_id))?.expired??0,minimumStock:Number(p.minimum_stock||0),
       trackSerial:!!p.track_serial,trackExpiry:!!p.track_expiry,trackWarranty:!!p.track_warranty,warrantyPeriodValue:Number(p.warranty_period_value||0),warrantyPeriodUnit:p.warranty_period_unit||'Months'
     })),
@@ -111,6 +121,7 @@ async function resolveCustomerForSale(db:SherDatabase,input:PosSaleInput,dueAmou
 
 export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db))) return error('Start your cash session first (POS page → Start Day) before recording any transaction.');
+  if(Array.isArray(input.items) && await hasBundleProducts(db,input.items)) return completeBundleSaleRoute(db,input,user);
   const customerName=cleanText(input.customerName), customerPhone=cleanText(input.customerPhone); if(!customerName||!customerPhone) return error('Customer name and phone are required for every sale.');
   if(!input.items?.length) return error('Cart is empty.');
   const date=cleanText(input.date)||todayDate(); if(date>todayDate())return error('Sale date cannot be in the future.');if(date<todayDate()&&!cleanText(input.backdatedReason))return error('Backdated sale reason is required.');
@@ -170,7 +181,7 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
 }
 
 export async function getSalesByPhoneRoute(db:SherDatabase,phone:string):Promise<Response>{const r=await db.prepare(`SELECT invoice_id,sale_date,grand_total,payment_status FROM sales WHERE customer_phone=? AND is_deleted=0 ORDER BY sale_date DESC,created_at DESC LIMIT 50`).bind(phone).all<any>();return json({ok:true,sales:(r.results||[]).map((s:any)=>({invoiceId:s.invoice_id,date:s.sale_date,grandTotal:Number(s.grand_total||0),paymentStatus:s.payment_status}))});}
-export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Response>{const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);const ir=await db.prepare(`SELECT si.product_id,si.product_name,si.quantity,si.unit_price,si.line_total,si.unit_breakdown_json,COALESCE(p.unit,'') unit FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? ORDER BY si.id`).bind(id).all<any>();return json({ok:true,invoice:{invoiceId:s.invoice_id,date:s.sale_date,customerName:s.customer_name,customerPhone:s.customer_phone,customerFatherName:s.customer_father_name||'',customerAddress:s.customer_address,subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentStatus:s.payment_status,paymentMethod:s.payment_method,items:(ir.results||[]).map((i:any)=>({productId:i.product_id,productName:i.product_name,quantity:Number(i.quantity),unit:i.unit||'',unitPrice:Number(i.unit_price),unitBreakdown:JSON.parse(i.unit_breakdown_json||'[]'),lineTotal:Number(i.line_total)}))}});}
+export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Response>{const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);const ir=await db.prepare(`SELECT si.product_id,si.product_name,si.quantity,si.unit_price,si.line_total,si.unit_breakdown_json,si.sold_product_type,COALESCE(p.unit,'') unit FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? ORDER BY si.id`).bind(id).all<any>();return json({ok:true,invoice:{invoiceId:s.invoice_id,date:s.sale_date,customerName:s.customer_name,customerPhone:s.customer_phone,customerFatherName:s.customer_father_name||'',customerAddress:s.customer_address,subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentStatus:s.payment_status,paymentMethod:s.payment_method,items:(ir.results||[]).map((i:any)=>({productId:i.product_id,productName:i.product_name,quantity:Number(i.quantity),unit:i.unit||'',unitPrice:Number(i.unit_price),unitBreakdown:JSON.parse(i.unit_breakdown_json||'[]'),soldProductType:i.sold_product_type||'Standard',lineTotal:Number(i.line_total)}))}});}
 
 export async function getSalesManagementRoute(db:SherDatabase):Promise<Response>{
   const [sr,rr,ri,br,open]=await Promise.all([
@@ -202,6 +213,7 @@ export async function getSaleDetailRoute(db:SherDatabase,id:string):Promise<Resp
 
 export async function getSaleUpdateDataRoute(db:SherDatabase,id:string):Promise<Response>{
   const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0 LIMIT 1`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);
+  if(await hasBundleSaleItem(db,id))return error('Bundle invoices cannot be edited until the full component reversal-and-repost workflow is verified. Duplicate or return the complete bundle instead.');
   const hasReturn=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(hasReturn)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');
   const open=await getOpenCashSession(db);if(!open||String(s.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited. Please use Sales Return to make corrections.');
   const [items,vendors]=await Promise.all([db.prepare(`SELECT product_id,product_name,quantity,unit_price,unit_breakdown_json FROM sale_items WHERE invoice_id=? ORDER BY id`).bind(id).all<any>(),db.prepare(`SELECT product_id,vendor_id,vendor_name,quantity,unit_cost FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>()]);
@@ -210,10 +222,10 @@ export async function getSaleUpdateDataRoute(db:SherDatabase,id:string):Promise<
 }
 
 async function restoreSaleLotsPlan(db:SherDatabase,invoiceId:string,only?:Map<string,number>){
-  const rows=await db.prepare(`SELECT sil.id,sil.product_id,sil.lot_id,sil.quantity,sl.original_quantity,sl.remaining_quantity,sl.source_type FROM sale_item_lots sil JOIN stock_lots sl ON sl.lot_id=sil.lot_id WHERE sil.invoice_id=? ORDER BY sil.id DESC`).bind(invoiceId).all<any>();
+  const rows=await db.prepare(`SELECT sil.id,sil.product_id,sil.source_sale_product_id,sil.lot_id,sil.quantity,sl.original_quantity,sl.remaining_quantity,sl.source_type FROM sale_item_lots sil JOIN stock_lots sl ON sl.lot_id=sil.lot_id WHERE sil.invoice_id=? ORDER BY sil.id DESC`).bind(invoiceId).all<any>();
   const balances=new Map<string,{productId:string,lotId:string,current:number,original:number,sourceType:string,restore:number}>();
   const remainingNeed=only?new Map(only):null;
-  for(const r of rows.results||[]){const maxNeed=remainingNeed?Number(remainingNeed.get(r.product_id)||0):Number(r.quantity||0);if(maxNeed<=0)continue;const take=Math.min(Number(r.quantity||0),maxNeed);if(take<=0)continue;const key=r.lot_id;let x=balances.get(key);if(!x)x={productId:r.product_id,lotId:r.lot_id,current:Number(r.remaining_quantity||0),original:Number(r.original_quantity||0),sourceType:r.source_type||'',restore:0};x.restore+=take;balances.set(key,x);if(remainingNeed)remainingNeed.set(r.product_id,maxNeed-take);}
+  for(const r of rows.results||[]){if(only && r.source_sale_product_id && r.source_sale_product_id!==r.product_id) continue; const maxNeed=remainingNeed?Number(remainingNeed.get(r.product_id)||0):Number(r.quantity||0);if(maxNeed<=0)continue;const take=Math.min(Number(r.quantity||0),maxNeed);if(take<=0)continue;const key=r.lot_id;let x=balances.get(key);if(!x)x={productId:r.product_id,lotId:r.lot_id,current:Number(r.remaining_quantity||0),original:Number(r.original_quantity||0),sourceType:r.source_type||'',restore:0};x.restore+=take;balances.set(key,x);if(remainingNeed)remainingNeed.set(r.product_id,maxNeed-take);}
   return balances;
 }
 
@@ -233,7 +245,7 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
   const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();
   if(!s)return error('Invoice not found.',404);
   const [items,ret,vend]=await Promise.all([
-    db.prepare(`SELECT product_id,product_name,SUM(quantity) sold_qty,MAX(unit_price) unit_price FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>(),
+    db.prepare(`SELECT product_id,product_name,MAX(sold_product_type) AS sold_product_type,SUM(quantity) sold_qty,MAX(unit_price) unit_price FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>(),
     db.prepare(`SELECT product_id,SUM(return_quantity) qty FROM sales_return_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>(),
     db.prepare(`SELECT product_id,SUM(quantity) qty FROM vendor_sourcing WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>()
   ]);
@@ -258,6 +270,7 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
 export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start your cash session first before recording a Sales Return.');
   const invoiceId=cleanText(input.invoiceId),refundMethod=cleanText(input.refundMethod),reason=cleanText(input.reason);
+  if(await hasBundleRequest(db,invoiceId,input)) return completeBundleReturnRoute(db,input,user);
   if(!invoiceId)return error('No invoice selected.');
   if(refundMethod!=='Cash'&&refundMethod!=='Store Credit')return error('Choose a refund method.');
   const returnDate=/^\d{4}-\d{2}-\d{2}$/.test(cleanText(input.date))?cleanText(input.date):todayDate(),backdated=returnDate<todayDate(),backdatedReason=cleanText(input.backdatedReason);
@@ -344,6 +357,7 @@ export async function getSalesReturnDetailRoute(db:SherDatabase,returnId:string)
   }});
 }
 export async function deleteSaleRoute(db:SherDatabase,id:string,reason:string,user:AuthUser):Promise<Response>{
+  if(await hasBundleSaleItem(db,id))return deleteBundleInvoiceRoute(db,id,reason,user);
   if(!reason)return error('Enter a reason for deleting this invoice.');if(!(await getOpenCashSession(db)))return error('Start your cash session first before deleting a sales invoice.');const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be deleted. Use Sales Return so serial and expiry history remains intact.');const hasReturn=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(hasReturn)return error('This invoice has a Sales Return against it. Delete the return first, then delete the invoice.');
   const vendorRows=await db.prepare(`SELECT * FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>();const vendorQty=new Map<string,number>();for(const v of vendorRows.results||[])vendorQty.set(v.product_id,(vendorQty.get(v.product_id)||0)+Number(v.quantity||0));const items=await db.prepare(`SELECT product_id,product_name,SUM(quantity) qty FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>();const ownNeed=new Map<string,number>();for(const i of items.results||[])ownNeed.set(i.product_id,Math.max(0,Number(i.qty||0)-Number(vendorQty.get(i.product_id)||0)));const restore=await restoreSaleLotsPlan(db,id,ownNeed),stmts:SqlPreparedStatement[]=[];
   for(const i of items.results||[]){const own=Math.max(0,Number(i.qty||0)-Number(vendorQty.get(i.product_id)||0));if(own<=0)continue;const p=await db.prepare(`SELECT current_stock FROM products WHERE product_id=?`).bind(i.product_id).first<any>(),newStock=Number(p?.current_stock||0)+own;stmts.push(db.prepare(`UPDATE products SET current_stock=?,updated_at=datetime('now') WHERE product_id=?`).bind(newStock,i.product_id));stmts.push(db.prepare(`INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?, 'Sale Deleted',?,0,?,?,NULL)`).bind(`SM-${crypto.randomUUID().slice(0,10).toUpperCase()}`,i.product_id,own,newStock,`Invoice ${id} deleted`));}
@@ -354,6 +368,7 @@ export async function deleteSaleRoute(db:SherDatabase,id:string,reason:string,us
 }
 
 export async function updateSaleRoute(db:SherDatabase,id:string,input:any,user:AuthUser):Promise<Response>{
+  if(await hasBundleSaleItem(db,id))return error('This bundle invoice must not be edited until component reversal and repost are implemented. Use a full-set return or delete if eligible.');
   const reason=cleanText(input.reason);if(!reason)return error('Enter a reason for this update.');if(!(await getOpenCashSession(db)))return error('Start your cash session first.');const old=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!old)return error('Invoice not found.',404);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be edited. Use Sales Return and create a corrected sale.');const ret=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(ret)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');const open=await getOpenCashSession(db);if(!open||String(old.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited.');
   const customerName=cleanText(input.customerName),customerPhone=cleanText(input.customerPhone);if(!customerName||!customerPhone)return error('Customer name and phone are required for every sale.');if(!Array.isArray(input.items)||!input.items.length)return error('Cart is empty.');
   const oldVendor=await db.prepare(`SELECT * FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>(),oldItems=await db.prepare(`SELECT product_id,SUM(quantity) qty FROM sale_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>();const oldVendorQty=new Map<string,number>();for(const v of oldVendor.results||[])oldVendorQty.set(v.product_id,(oldVendorQty.get(v.product_id)||0)+Number(v.quantity||0));const oldOwn=new Map<string,number>();for(const i of oldItems.results||[])oldOwn.set(i.product_id,Math.max(0,Number(i.qty||0)-Number(oldVendorQty.get(i.product_id)||0)));const restored=await restoreSaleLotsPlan(db,id,oldOwn);

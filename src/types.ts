@@ -396,6 +396,7 @@ export interface BankAccount {
 }
 
 export interface PosProduct {
+  productType?: 'Standard' | 'Bundle';
   conversions?: { unit:string; smallerUnit:string; count:number; factor:number }[];
   id: string;
   name: string;
@@ -445,6 +446,7 @@ export interface CashSessionSummary {
 }
 
 export interface PosCartLine {
+  productType?: 'Standard' | 'Bundle';
   unitBreakdown?: { unit:string; count:number }[];
   conversions?: { unit:string; smallerUnit:string; count:number; factor:number }[];
   purchasePrice?: number;

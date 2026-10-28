@@ -18,10 +18,10 @@ async function checkedRecipe(db:SherDatabase, bundleId:string, input:BundleReque
     const id=str(c.productId),qty=Number(c.quantityPerSet);
     if(!id||seen.has(id)||id===bundleId) throw Error('Bundle components must be distinct physical products; nested bundles are not allowed.');
     if(!Number.isSafeInteger(qty)||qty<1||qty>100000) throw Error('Component quantity must be 1–100,000 whole base units.');
-    const row=await db.prepare(`SELECT product_id,product_name,unit,current_stock,status,is_deleted,product_type,track_serial,track_expiry
+    const row=await db.prepare(`SELECT product_id,product_name,unit,current_stock,status,is_deleted,product_type,track_serial,track_expiry,track_warranty
       FROM products WHERE product_id=?`).bind(id).first<any>();
     if(!row||row.is_deleted||row.status!=='Active'||row.product_type!=='Standard') throw Error(`Component ${id} must be an active Standard product.`);
-    if(row.track_serial||row.track_expiry) throw Error(`Component ${row.product_name} has serial/expiry tracking. Bundle sales of tracked components need a dedicated allocation flow.`);
+    if(row.track_serial||row.track_expiry||row.track_warranty) throw Error(`Component ${row.product_name} has serial/expiry/warranty tracking. Bundle sales of tracked components need a dedicated allocation flow.`);
     seen.add(id);
     out.push({productId:id,name:row.product_name,quantityPerSet:qty,unit:row.unit,currentStock:Number(row.current_stock||0)});
   }

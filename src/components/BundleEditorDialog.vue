@@ -8,7 +8,7 @@ const emit=defineEmits<{ close:[]; saved:[] }>();
 const loading=ref(!!props.productId),saving=ref(false),error=ref(''),revision=ref(0);
 const search=ref(''),searchOpen=ref(false);
 const form=reactive<BundleForm>({productName:'',brand:'',category:'',barcode:'',sellingPrice:0,components:[]});
-const selectable=computed(()=>props.products.filter(p=>p.productType!=='Bundle'&&p.status==='Active'&&!p.trackSerial&&!p.trackExpiry&&!form.components.some(c=>c.productId===p.productId)&&[p.productName,p.brand,p.productId,p.barcode].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())).slice(0,12));
+const selectable=computed(()=>props.products.filter(p=>p.productType!=='Bundle'&&p.status==='Active'&&!p.trackSerial&&!p.trackExpiry&&!p.trackWarranty&&!form.components.some(c=>c.productId===p.productId)&&[p.productName,p.brand,p.productId,p.barcode].join(' ').toLowerCase().includes(search.value.trim().toLowerCase())).slice(0,12));
 const componentProducts=computed(()=>new Map(props.products.map(p=>[p.productId,p])));
 const available=computed(()=>{
   if(!form.components.length)return 0;
@@ -48,7 +48,7 @@ async function save(){
         <button class="modal-close" type="button" @click="emit('close')">✕</button>
       </div>
       <div class="modal-body" v-if="!loading">
-        <p class="bn-hint">Bundle definition only. POS posting stays disabled until its FIFO and return workflows are completed and tested.</p>
+        <p class="bn-hint">Bundle definition only. Each sold set deducts the listed components using FIFO. Return complete sets only; historical recipes remain unchanged.</p>
         <div class="form-grid">
           <label class="full">Bundle Name * <span class="bn-hint">— প্যাকেজের নাম</span><input v-model.trim="form.productName" placeholder="e.g. Tubewell Set" /></label>
           <label>Category * <input v-model.trim="form.category" placeholder="e.g. Plumbing" /></label>

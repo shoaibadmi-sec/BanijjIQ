@@ -394,6 +394,20 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
 
 
 
+async function bundleReturnedCostByInvoice(db:SherDatabase, ids:string[]):Promise<Map<string,number>>{
+  const costs=new Map<string,number>();
+  if(!ids.length)return costs;
+  const ph=ids.map(()=>'?').join(',');
+  const rows=await db.prepare(`SELECT r.invoice_id AS invoiceId,r.bundle_id AS bundleId,
+    SUM(r.quantity*COALESCE((SELECT sil.unit_cost FROM sale_item_lots sil
+      WHERE sil.invoice_id=r.invoice_id AND sil.source_sale_product_id=r.bundle_id
+        AND sil.product_id=r.component_id AND sil.lot_id=r.lot_id ORDER BY sil.id LIMIT 1),0)) AS cost
+    FROM sale_return_bundle_lots r WHERE r.invoice_id IN (${ph})
+    GROUP BY r.invoice_id,r.bundle_id`).bind(...ids).all<any>();
+  for(const v of rows.results||[])costs.set(String(v.invoiceId)+'\u0000'+String(v.bundleId),Number(v.cost||0));
+  return costs;
+}
+
 async function computeDashboardProfit(db:SherDatabase, from:string, to:string):Promise<DashboardProfitResult>{
   const salesR=await db.prepare(`SELECT invoice_id,subtotal,grand_total,discount FROM sales WHERE COALESCE(is_deleted,0)=0 AND status<>'Deleted' AND sale_date BETWEEN ? AND ?`).bind(from,to).all<any>();
   const sales=salesR.results||[];
@@ -408,27 +422,31 @@ async function computeDashboardProfit(db:SherDatabase, from:string, to:string):P
   for(const s of sales){const sub=Number(s.subtotal||0),grand=Number(s.grand_total||0);factor.set(cleanText(s.invoice_id),sub>0?grand/sub:1);}
   const placeholders=ids.map(()=>'?').join(',');
   const [itemsR,returnsR,lotsR,expR]=await Promise.all([
-    db.prepare(`SELECT invoice_id,product_id,product_name,quantity,line_total FROM sale_items WHERE invoice_id IN (${placeholders})`).bind(...ids).all<any>(),
+    db.prepare(`SELECT invoice_id,product_id,product_name,sold_product_type,quantity,line_total FROM sale_items WHERE invoice_id IN (${placeholders})`).bind(...ids).all<any>(),
     db.prepare(`SELECT invoice_id,product_id,product_name,return_quantity,line_total FROM sales_return_items WHERE invoice_id IN (${placeholders})`).bind(...ids).all<any>(),
-    db.prepare(`SELECT invoice_id,product_id,quantity,unit_cost FROM sale_item_lots WHERE invoice_id IN (${placeholders})`).bind(...ids).all<any>(),
+    db.prepare(`SELECT invoice_id,product_id,source_sale_product_id,quantity,unit_cost FROM sale_item_lots WHERE invoice_id IN (${placeholders})`).bind(...ids).all<any>(),
     db.prepare(`SELECT category_name,COUNT(*) entries,COALESCE(SUM(amount),0) amount FROM expenses WHERE COALESCE(is_deleted,0)=0 AND status<>'Cancelled' AND expense_date BETWEEN ? AND ? GROUP BY category_name ORDER BY amount DESC`).bind(from,to).all<any>()
   ]);
+  const bundleCostReturns=await bundleReturnedCostByInvoice(db,ids);
+  const soldBundles=new Set((itemsR.results||[]).filter((x:any)=>x.sold_product_type==='Bundle')
+    .map((x:any)=>cleanText(x.invoice_id)+'\u0000'+cleanText(x.product_id)));
   const buckets=new Map<string,{name:string;qtySold:number;qtyReturned:number;revenue:number;cost:number;profit:number}>();
   const bucket=(pid:string,name='')=>{let b=buckets.get(pid);if(!b){b={name:name||pid,qtySold:0,qtyReturned:0,revenue:0,cost:0,profit:0};buckets.set(pid,b);}else if(name&&b.name===pid)b.name=name;return b;};
   for(const i of itemsR.results||[]){const id=cleanText(i.invoice_id),pid=cleanText(i.product_id),b=bucket(pid,cleanText(i.product_name));b.qtySold+=Number(i.quantity||0);b.revenue+=Number(i.line_total||0)*(factor.get(id)||1);}
   const returnedQty=new Map<string,number>();
-  for(const r of returnsR.results||[]){const id=cleanText(r.invoice_id),pid=cleanText(r.product_id),b=bucket(pid,cleanText(r.product_name)),q=Number(r.return_quantity||0);b.qtyReturned+=q;b.revenue-=Number(r.line_total||0)*(factor.get(id)||1);const k=`${id}\u0000${pid}`;returnedQty.set(k,(returnedQty.get(k)||0)+q);}
+  for(const r of returnsR.results||[]){const id=cleanText(r.invoice_id),pid=cleanText(r.product_id),b=bucket(pid,cleanText(r.product_name)),q=Number(r.return_quantity||0);b.qtyReturned+=q;b.revenue-=Number(r.line_total||0);const k=`${id}\u0000${pid}`;returnedQty.set(k,(returnedQty.get(k)||0)+q);}
   const lotAgg=new Map<string,{invoiceId:string;productId:string;qty:number;cost:number}>();
   const invoicesWithLots=new Set<string>();
-  for(const l of lotsR.results||[]){const id=cleanText(l.invoice_id),pid=cleanText(l.product_id),k=`${id}\u0000${pid}`;invoicesWithLots.add(id);const a=lotAgg.get(k)||{invoiceId:id,productId:pid,qty:0,cost:0};const q=Number(l.quantity||0);a.qty+=q;a.cost+=q*Number(l.unit_cost||0);lotAgg.set(k,a);}
+  for(const l of lotsR.results||[]){const id=cleanText(l.invoice_id),pid=cleanText(l.source_sale_product_id)||cleanText(l.product_id),k=`${id}\u0000${pid}`;invoicesWithLots.add(id);const a=lotAgg.get(k)||{invoiceId:id,productId:pid,qty:0,cost:0};const q=Number(l.quantity||0);a.qty+=q;a.cost+=q*Number(l.unit_cost||0);lotAgg.set(k,a);}
   let cogs=0;
-  for(const [k,a] of lotAgg){const returned=Math.min(a.qty,returnedQty.get(k)||0),netQty=Math.max(0,a.qty-returned),netCost=a.qty>0?a.cost*(netQty/a.qty):0;cogs+=netCost;bucket(a.productId).cost+=netCost;}
+  for(const [k,a] of lotAgg){const returned=Math.min(a.qty,returnedQty.get(k)||0),netQty=Math.max(0,a.qty-returned),
+    netCost=soldBundles.has(k)?Math.max(0,a.cost-(bundleCostReturns.get(k)||0)):(a.qty>0?a.cost*(netQty/a.qty):0);cogs+=netCost;bucket(a.productId).cost+=netCost;}
   for(const b of buckets.values())b.profit=b.revenue-b.cost;
   const byProduct=[...buckets.values()].map(b=>({name:b.name,qtySold:b.qtySold,revenue:b.revenue,profit:b.profit})).sort((a,b)=>b.profit-a.profit);
   const expenseByCategory=(expR.results||[]).map((e:any)=>({label:cleanText(e.category_name)||'Uncategorized',entries:Number(e.entries||0),amount:Number(e.amount||0)}));
   const expenses=expenseByCategory.reduce((n,e)=>n+e.amount,0);
   const grossRevenue=sales.reduce((n:any,s:any)=>n+Number(s.grand_total||0),0);
-  const returnedRevenue=(returnsR.results||[]).reduce((n:number,r:any)=>n+Number(r.line_total||0)*(factor.get(cleanText(r.invoice_id))||1),0);
+  const returnedRevenue=(returnsR.results||[]).reduce((n:number,r:any)=>n+Number(r.line_total||0),0);
   const netRevenue=grossRevenue-returnedRevenue,grossProfit=netRevenue-cogs;
   return {totals:{netProfit:grossProfit-expenses,grossProfit,cogs,expenses,grossMarginPercent:netRevenue>0?(grossProfit/netRevenue)*100:0},coverage:{invoicesInRange:sales.length,invoicesMissingLotData:sales.filter((s:any)=>!invoicesWithLots.has(cleanText(s.invoice_id))).length},byProduct,expenseByCategory};
 }
@@ -530,13 +548,16 @@ async function computeReportsProfit(db:SherDatabase,range:ReportRange):Promise<a
   const sr=await db.prepare(`SELECT invoice_id,sale_date,subtotal,grand_total,discount FROM sales WHERE COALESCE(is_deleted,0)=0 AND status<>'Deleted' AND sale_date BETWEEN ? AND ?`).bind(range.from,range.to).all<any>();const sales=sr.results||[];const ids=sales.map((x:any)=>cleanText(x.invoice_id));
   const expR=await db.prepare(`SELECT COALESCE(NULLIF(category_name,''),'Uncategorized') label,COUNT(*) entries,COALESCE(SUM(amount),0) amount FROM expenses WHERE COALESCE(is_deleted,0)=0 AND status<>'Cancelled' AND expense_date BETWEEN ? AND ? GROUP BY COALESCE(NULLIF(category_name,''),'Uncategorized') ORDER BY amount DESC`).bind(range.from,range.to).all<any>();const expenseByCategory=(expR.results||[]).map((x:any)=>({label:cleanText(x.label),entries:Number(x.entries||0),amount:Number(x.amount||0)})),expenses=expenseByCategory.reduce((n:number,x:any)=>n+x.amount,0);
   if(!ids.length)return{range,totals:{invoices:0,grossSales:0,discount:0,returned:0,netRevenue:0,cogs:0,grossProfit:0,grossMarginPercent:0,expenses,netProfit:-expenses,netMarginPercent:0},coverage:{invoicesInRange:0,invoicesWithLotData:0,invoicesMissingLotData:0,missingSample:[]},byProduct:[],topProducts:[],lossMakers:[],expenseByCategory};
-  const ph=ids.map(()=>'?').join(','),[itemsR,returnsR,lotsR]=await Promise.all([db.prepare(`SELECT invoice_id,product_id,product_name,quantity,line_total FROM sale_items WHERE invoice_id IN (${ph})`).bind(...ids).all<any>(),db.prepare(`SELECT invoice_id,product_id,product_name,return_quantity,line_total FROM sales_return_items WHERE invoice_id IN (${ph})`).bind(...ids).all<any>(),db.prepare(`SELECT invoice_id,product_id,quantity,unit_cost FROM sale_item_lots WHERE invoice_id IN (${ph})`).bind(...ids).all<any>()]);
+  const ph=ids.map(()=>'?').join(','),[itemsR,returnsR,lotsR]=await Promise.all([db.prepare(`SELECT invoice_id,product_id,product_name,sold_product_type,quantity,line_total FROM sale_items WHERE invoice_id IN (${ph})`).bind(...ids).all<any>(),db.prepare(`SELECT invoice_id,product_id,product_name,return_quantity,line_total FROM sales_return_items WHERE invoice_id IN (${ph})`).bind(...ids).all<any>(),db.prepare(`SELECT invoice_id,product_id,source_sale_product_id,quantity,unit_cost FROM sale_item_lots WHERE invoice_id IN (${ph})`).bind(...ids).all<any>()]);
   const factor=new Map<string,number>();let grossSales=0,discount=0;for(const s of sales){const sub=Number(s.subtotal||0),grand=Number(s.grand_total||0);factor.set(cleanText(s.invoice_id),sub>0?grand/sub:1);grossSales+=grand;discount+=Number(s.discount||0);}
+  const bundleCostReturns=await bundleReturnedCostByInvoice(db,ids);
+  const soldBundles=new Set((itemsR.results||[]).filter((x:any)=>x.sold_product_type==='Bundle')
+    .map((x:any)=>cleanText(x.invoice_id)+'\0'+cleanText(x.product_id)));
   const buckets=new Map<string,any>();const bucket=(id:string,name='')=>{let b=buckets.get(id);if(!b){b={productId:id,label:name||id,qtySold:0,qtyReturned:0,revenue:0,cost:0,profit:0};buckets.set(id,b);}else if(name&&b.label===id)b.label=name;return b;};
   for(const i of itemsR.results||[]){const b=bucket(cleanText(i.product_id),cleanText(i.product_name));b.qtySold+=Number(i.quantity||0);b.revenue+=Number(i.line_total||0)*(factor.get(cleanText(i.invoice_id))||1);}
-  let returned=0;const returnedQty=new Map<string,number>();for(const r of returnsR.results||[]){const id=cleanText(r.invoice_id),pid=cleanText(r.product_id),scaled=Number(r.line_total||0)*(factor.get(id)||1),b=bucket(pid,cleanText(r.product_name));b.qtyReturned+=Number(r.return_quantity||0);b.revenue-=scaled;returned+=scaled;const k=`${id}\0${pid}`;returnedQty.set(k,(returnedQty.get(k)||0)+Number(r.return_quantity||0));}
-  const lotAgg=new Map<string,{invoiceId:string;productId:string;qty:number;cost:number}>(),withLots=new Set<string>();for(const l of lotsR.results||[]){const id=cleanText(l.invoice_id),pid=cleanText(l.product_id),k=`${id}\0${pid}`,q=Number(l.quantity||0);withLots.add(id);const x=lotAgg.get(k)||{invoiceId:id,productId:pid,qty:0,cost:0};x.qty+=q;x.cost+=q*Number(l.unit_cost||0);lotAgg.set(k,x);}
-  let cogs=0;for(const [k,x] of lotAgg){const ret=Math.min(x.qty,returnedQty.get(k)||0),netQty=Math.max(0,x.qty-ret),cost=x.qty>0?x.cost*(netQty/x.qty):0;cogs+=cost;bucket(x.productId).cost+=cost;}
+  let returned=0;const returnedQty=new Map<string,number>();for(const r of returnsR.results||[]){const id=cleanText(r.invoice_id),pid=cleanText(r.product_id),scaled=Number(r.line_total||0),b=bucket(pid,cleanText(r.product_name));b.qtyReturned+=Number(r.return_quantity||0);b.revenue-=scaled;returned+=scaled;const k=`${id}\0${pid}`;returnedQty.set(k,(returnedQty.get(k)||0)+Number(r.return_quantity||0));}
+  const lotAgg=new Map<string,{invoiceId:string;productId:string;qty:number;cost:number}>(),withLots=new Set<string>();for(const l of lotsR.results||[]){const id=cleanText(l.invoice_id),pid=cleanText(l.source_sale_product_id)||cleanText(l.product_id),k=`${id}\0${pid}`,q=Number(l.quantity||0);withLots.add(id);const x=lotAgg.get(k)||{invoiceId:id,productId:pid,qty:0,cost:0};x.qty+=q;x.cost+=q*Number(l.unit_cost||0);lotAgg.set(k,x);}
+  let cogs=0;for(const [k,x] of lotAgg){const ret=Math.min(x.qty,returnedQty.get(k)||0),netQty=Math.max(0,x.qty-ret),cost=soldBundles.has(k)?Math.max(0,x.cost-(bundleCostReturns.get(k)||0)):(x.qty>0?x.cost*(netQty/x.qty):0);cogs+=cost;bucket(x.productId).cost+=cost;}
   for(const b of buckets.values())b.profit=b.revenue-b.cost;const byProduct=[...buckets.values()].sort((a,b)=>b.profit-a.profit),netRevenue=grossSales-returned,grossProfit=netRevenue-cogs,missing=sales.filter((x:any)=>!withLots.has(cleanText(x.invoice_id)));
   return{range,totals:{invoices:sales.length,grossSales,discount,returned,netRevenue,cogs,grossProfit,grossMarginPercent:netRevenue>0?grossProfit/netRevenue*100:0,expenses,netProfit:grossProfit-expenses,netMarginPercent:netRevenue>0?(grossProfit-expenses)/netRevenue*100:0},coverage:{invoicesInRange:sales.length,invoicesWithLotData:sales.length-missing.length,invoicesMissingLotData:missing.length,missingSample:missing.slice(0,10).map((s:any)=>({invoiceId:cleanText(s.invoice_id),date:cleanText(s.sale_date),grandTotal:Number(s.grand_total||0)}))},byProduct,topProducts:byProduct.slice(0,15),lossMakers:byProduct.filter((p:any)=>p.profit<0).slice(0,10),expenseByCategory};
 }

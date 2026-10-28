@@ -12,13 +12,17 @@ const user={userId:'USR-1',fullName:'Test Admin',phone:'',role:'admin',status:'A
 function dbFixture() {
   const db=new SqliteDatabase(':memory:');
   const result=runMigrations(db.native,resolve('migrations'));
-  assert.equal(result.applied.length,29);
+  assert.equal(result.applied.length,30);
   db.native.prepare('INSERT INTO app_users (user_id,full_name,phone,password_hash,password_salt) VALUES (?,?,?,?,?)')
     .run(user.userId,user.fullName,'01700001111','hash','salt');
   const p=db.native.prepare('INSERT INTO products (product_id,product_name,category,unit,current_stock,purchase_price,selling_price,status) VALUES (?,?,?,?,?,?,?,?)');
   p.run('P-1','Pipe','Plumbing','Pcs',30,100,150,'Active');
   p.run('P-2','Elbow','Plumbing','Pcs',15,5,10,'Active');
   p.run('P-3','Motor','Plumbing','Pcs',4,2000,3000,'Active');
+  const lot=db.native.prepare("INSERT INTO stock_lots (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost) VALUES (?,?,'PURCHASE','PO-TEST',?,?,?)");
+  lot.run('LOT-P1','P-1',30,30,100);
+  lot.run('LOT-P2','P-2',15,15,5);
+  lot.run('LOT-P3','P-3',4,4,2000);
   db.native.prepare("INSERT INTO cash_sessions (session_id,opened_by,status,opening_cash) VALUES (?,?, 'Open',0)").run('CS-1',user.userId);
   return db;
 }
@@ -50,12 +54,15 @@ test('virtual bundle creation stores a versioned recipe, leaves all physical sto
     assert.equal(bundle.availableSets,1);
     assert.equal(bundle.stockValue,0);
     const pos=await (await getPosBootstrapRoute(db,user)).json() as any;
-    assert.equal(pos.products.some((p:any)=>p.id===id),false,'unreleased bundle must not enter POS');
+    assert.equal(pos.products.some((p:any)=>p.id===id),true,'ready bundle is sold as one kit, with component stock deducted');
     const sale=await completeSaleRoute(db,{
       customerName:'Test Customer',customerPhone:'01700002222',paymentType:'Cash',items:[{productId:id,name:'Tubewell Set',qty:1,unitPrice:15000}]
     },user);
-    assert.equal(sale.status,400,'direct API sale must not treat virtual bundle as physical');
-    assert.equal((db.native.prepare('SELECT count(*) AS n FROM sales').get() as any).n,0);
+    assert.equal(sale.status,200,'bundle sale must deduct physical components while preserving one invoice line');
+    assert.equal((db.native.prepare('SELECT count(*) AS n FROM sales').get() as any).n,1);
+    assert.deepEqual(['P-1','P-2','P-3'].map(id=>(db.native.prepare('SELECT current_stock AS n FROM products WHERE product_id=?').get(id) as any).n),[25,5,3]);
+    assert.equal((db.native.prepare('SELECT current_stock AS n FROM products WHERE product_id=?').get(id) as any).n,0);
+    assert.equal((db.native.prepare('SELECT count(*) AS n FROM sale_items').get() as any).n,1);
     assert.equal((await updateProduct(db,id,{productName:'Changed',category:'Plumbing',unit:'Set'})).status,400);
     assert.equal((await adjustStockByDelta(db,id,12,'bad')).status,400);
     assert.equal((await getProductUnitConfig(db,id)).status,404);
