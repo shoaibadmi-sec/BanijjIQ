@@ -228,6 +228,7 @@ try{
       // Explicit keyboard focus contract, then add a regular non-tracked item.
       await page.keyboard.press('F2');
       assert.ok(await page.locator('input:focus').count()>=1,'F2 should focus the product picker');
+      await page.keyboard.press('Escape'); // Close open source-authentic combobox before tapping quick item.
       const quick=page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first();
       await quick.click();
       await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
