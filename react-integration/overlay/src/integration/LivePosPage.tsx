@@ -458,8 +458,8 @@ export function LivePosPage() {
         </aside>
       </div>
     </>}
-    <SerialPickerDialog
-      product={serialProduct as Product}
+    {serialProduct && <SerialPickerDialog
+      product={serialProduct}
       open={!!serialLine&&!!serialProduct}
       onOpenChange={open=>{if(!open)setSerialId(null);}}
       eligible={availableSerials}
@@ -468,7 +468,7 @@ export function LivePosPage() {
       maxCount={serialLine?.qty||0}
       blocked={noSerials}
       onSave={serials=>{if(serialId)setLines(old=>old.map(l=>l.product.id===serialId?{...l,serialNumbers:serials}:l));}}
-    />
+    />}
     <LiveStockShortageDialog open={!!shortageLine} onOpenChange={open=>{if(!open)setShortageId(null);}}
       name={shortageLine?.product.name||''} qty={shortageLine?.qty||0} stock={shortageLine?.product.stock||0}
       vendors={bootstrap?.vendors||[]} onApply={applyShortage}/>
