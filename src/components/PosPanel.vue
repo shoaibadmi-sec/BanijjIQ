@@ -27,8 +27,11 @@ const error = ref('');
 const search = ref('');
 const selectedCategory = ref('All');
 // SherERP catalogue view: the cashier can switch between compact tiles and rows.
-const catalogueView = ref<'grid' | 'list'>('grid');
+// HisabIQ V2 replaces the tile catalogue with a cart-integrated picker.
 const highlightedProductIndex = ref(0);
+const pickerOpen = ref(false);
+const posSearchRef = ref<HTMLInputElement | null>(null);
+const paidInputRef = ref<HTMLInputElement | null>(null);
 const products = ref<PosProduct[]>([]);
 const customers = ref<PosCustomer[]>([]);
 const vendors = ref<PosVendor[]>([]);
@@ -90,6 +93,7 @@ const categories = computed(() => {
 });
 
 const productSearchIndex = computed(() => createProductSearchIndex(products.value));
+const quickProducts = computed(() => products.value.filter(p => p.stock > 0).slice(0, 8));
 const filteredProducts = computed(() => {
   const category = selectedCategory.value;
   const exactBarcode = findExactBarcodeMatch(productSearchIndex.value, search.value);
@@ -102,7 +106,8 @@ const filteredProducts = computed(() => {
   return searchProductIndex(eligible, search.value).map((result) => result.product);
 });
 
-watch(filteredProducts, (rows) => {
+const visibleProducts = computed(() => filteredProducts.value.slice(0, 12));
+watch(visibleProducts, (rows) => {
   if (!rows.length) highlightedProductIndex.value = -1;
   else highlightedProductIndex.value = Math.min(Math.max(highlightedProductIndex.value, 0), rows.length - 1);
 });
@@ -235,21 +240,41 @@ function addProduct(p:PosProduct){
     trackSerial:!!p.trackSerial,trackExpiry:!!p.trackExpiry,trackWarranty:!!p.trackWarranty,serialNumbers:[]
   });
 }
-function clearProductSearch(){ search.value=''; highlightedProductIndex.value=0; }
+function clearProductSearch(){ search.value=''; highlightedProductIndex.value=0; pickerOpen.value=false; }
+function focusProductSearch(){ nextTick(() => { posSearchRef.value?.focus(); pickerOpen.value = true; }); }
+function focusAmountPaid(){ nextTick(() => paidInputRef.value?.focus()); }
+function chooseProduct(p:PosProduct){
+  addProduct(p);
+  search.value = '';
+  pickerOpen.value = false;
+  nextTick(() => {
+    const rows = document.querySelectorAll<HTMLInputElement>('.hisabiq-pos .hi-pos-qty');
+    const index = cart.value.findIndex(line => line.productId === p.id);
+    const qty = index >= 0 ? rows.item(index) : null;
+    if (qty) { qty.focus(); qty.select(); } else focusProductSearch();
+  });
+}
+function onPosShortcut(e:KeyboardEvent){
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if(e.key==='F2'){ e.preventDefault(); focusProductSearch(); }
+  if(e.key==='F8'){ e.preventDefault(); focusAmountPaid(); }
+}
+
 function onSearchKeydown(e:KeyboardEvent){
-  const rows=filteredProducts.value;
+  const rows=visibleProducts.value;
+  pickerOpen.value = true;
   if(e.key==='ArrowDown'){
     if(!rows.length)return; e.preventDefault(); highlightedProductIndex.value=(highlightedProductIndex.value+1+rows.length)%rows.length; return;
   }
   if(e.key==='ArrowUp'){
     if(!rows.length)return; e.preventDefault(); highlightedProductIndex.value=(highlightedProductIndex.value-1+rows.length)%rows.length; return;
   }
-  if(e.key==='Escape'){ clearProductSearch(); return; }
+  if(e.key==='Escape'){ e.preventDefault(); clearProductSearch(); return; }
   if(e.key!=='Enter')return;
   if(!search.value.trim())return;
   const exact=findExactBarcodeMatch(productSearchIndex.value,search.value);
   const pick=exact || rows[Math.max(0,highlightedProductIndex.value)] || (rows.length===1?rows[0]:undefined);
-  if(pick){ e.preventDefault(); addProduct(pick); if(exact) clearProductSearch(); }
+  if(pick){ e.preventDefault(); chooseProduct(pick); }
 }
 function removeLine(i:number){ cart.value.splice(i,1); }
 function setQty(l:PosCartLine,q:number){
@@ -427,193 +452,240 @@ async function loadRequestedInvoice(req:PosLoadRequest|null|undefined){
 watch(()=>props.loadRequest?.nonce,()=>{void loadRequestedInvoice(props.loadRequest);});
 defineExpose({ refresh: load });
 
-onMounted(async()=>{await load();if(props.loadRequest)await loadRequestedInvoice(props.loadRequest);});
-onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonResetTimer)clearTimeout(completeSaleButtonResetTimer);});
+onMounted(async()=>{window.addEventListener('keydown',onPosShortcut);await load();if(props.loadRequest)await loadRequestedInvoice(props.loadRequest);});
+onBeforeUnmount(()=>{window.removeEventListener('keydown',onPosShortcut);if(costTimer)clearTimeout(costTimer);if(completeSaleButtonResetTimer)clearTimeout(completeSaleButtonResetTimer);});
 </script>
 
 <template>
-  <section class="gas-pos">
-    <div v-if="!activeSession" class="card start-session-card">
+  <section class="gas-pos hisabiq-pos" aria-label="Point of sale">
+    <header class="hi-pos-heading">
+      <div class="hi-pos-heading-title">
+        <h2>POS — New Sale</h2>
+        <span class="hi-pos-bn">নতুন বিক্রি</span>
+      </div>
+      <div class="hi-pos-heading-actions">
+        <span class="hi-pos-shortcuts"><kbd>F2</kbd> Search <kbd>Enter</kbd> Next <kbd>F8</kbd> Paid</span>
+        <div class="hi-pos-print">
+          <input v-model.trim="reprintId" type="text" aria-label="Invoice number to reprint" placeholder="Invoice ID" @keydown.enter="reprint">
+          <button type="button" class="btn" @click="reprint">Find &amp; Print</button>
+        </div>
+      </div>
+    </header>
+
+    <div v-if="!activeSession" class="card start-session-card hi-pos-session-start">
       <div class="session-copy">
-        <h3>Start your cash session <span class="bn-hint">— ক্যাশ ড্রয়ারে টাকা রাখুন</span></h3>
-        <p>Enter how much cash you're putting in the drawer to start the day. You won't be able to take cash payments until a session is open.</p>
+        <h3>Start your cash session <span class="hi-pos-bn">ক্যাশ সেশন চালু করুন</span></h3>
+        <p>Record your opening cash before receiving a cash payment.</p>
       </div>
-      <label>Opening Cash <span class="bn-hint">— শুরুর টাকা</span><input v-model.number="openingCash" type="number" min="0" step="0.01"></label>
-      <label>Note <span class="bn-hint">— নোট</span><input v-model="openingNote" placeholder="Optional"></label>
-      <button class="btn btn-primary btn-lg" @click="startDay">Start Day</button>
+      <label>Opening cash <span class="hi-pos-bn">শুরুর টাকা</span><input v-model.number="openingCash" type="number" min="0" step="0.01"></label>
+      <label>Note <span class="hi-pos-bn">নোট</span><input v-model="openingNote" placeholder="Optional"></label>
+      <button type="button" class="btn btn-primary" @click="startDay">Start Day</button>
+    </div>
+    <div v-else class="hi-pos-session-bar" role="status">
+      <span>Cash session <strong>Open</strong></span>
+      <span>Opening <strong>{{money(summary?.openingCash||0)}}</strong></span>
+      <span>Cash in <strong>{{money(summary?.cashIn||0)}}</strong></span>
+      <span>Cash out <strong>{{money(summary?.cashOut||0)}}</strong></span>
+      <span>Expected <strong>{{money(summary?.expectedCash||0)}}</strong></span>
+      <button type="button" class="btn" @click="closeCounted=summary?.expectedCash||0;showClose=true">Close Day</button>
+    </div>
+    <div v-if="error" class="alert danger" role="alert">{{error}}</div>
+    <div v-if="updateInvoiceId" class="hi-pos-update-banner" role="status">
+      <span>Updating invoice <strong>{{updateInvoiceId}}</strong></span>
+      <span class="hi-pos-bn">চালান পরিবর্তন</span>
+      <button type="button" class="btn" @click="newSale">Cancel Update</button>
     </div>
 
-    <div v-else class="session-banner">
-      <div>Opened <span class="bn-hint">শুরু</span> <strong>{{sessionTime(summary?.openedAt)}}</strong></div>
-      <div>Opening <span class="bn-hint">শুরুর টাকা</span> <strong>{{money(summary?.openingCash||0)}}</strong></div>
-      <div>Cash In <span class="bn-hint">জমা</span> <strong>{{money(summary?.cashIn||0)}}</strong></div>
-      <div>Cash Out <span class="bn-hint">খরচ</span> <strong>{{money(summary?.cashOut||0)}}</strong></div>
-      <div>Expected in Drawer <span class="bn-hint">ড্রয়ারে থাকার কথা</span> <strong>{{money(summary?.expectedCash||0)}}</strong></div>
-      <div class="toolbar-spacer"></div>
-      <button class="btn" @click="closeCounted=summary?.expectedCash||0;showClose=true">Close Day</button>
-    </div>
+    <div class="hi-pos-columns">
+      <div class="hi-pos-main">
+        <div class="hi-pos-cart-frame" data-cart-kind="sale">
+          <div class="hi-pos-cart-header">
+            <div>
+              <h3>Products <span class="hi-pos-bn">পণ্যের তালিকা</span></h3>
+              <span class="hi-pos-secondary">{{cart.length}} product{{cart.length===1?'':'s'}} · {{formatQty(cartCount)}} units</span>
+            </div>
+            <button type="button" class="hi-pos-clear" :disabled="!cart.length" @click="cart=[];focusProductSearch()">Clear cart</button>
+          </div>
+          <div class="hi-pos-cart-scroll">
+            <div class="hi-pos-row hi-pos-column-head" aria-hidden="true">
+              <span>#</span><span>Product <span class="hi-pos-bn">পণ্য</span></span>
+              <span>Qty <span class="hi-pos-bn">পরিমাণ</span></span>
+              <span>Price <span class="hi-pos-bn">দাম</span></span>
+              <span>Total <span class="hi-pos-bn">মোট</span></span><span></span>
+            </div>
+            <div v-if="!cart.length" class="hi-pos-empty">
+              <strong>No products added yet</strong>
+              <span>Search for a product below to start a sale.</span>
+              <span class="hi-pos-bn">বিক্রি শুরু করতে পণ্য খুঁজুন</span>
+            </div>
+            <template v-for="(l,i) in cart" :key="l.productId">
+              <div class="hi-pos-row hi-pos-cart-line">
+                <span class="hi-pos-index">{{i+1}}</span>
+                <div class="hi-pos-item">
+                  <span class="hi-pos-thumb" aria-hidden="true">{{l.name.slice(0,2).toUpperCase()}}</span>
+                  <div class="hi-pos-item-text">
+                    <strong :title="l.name">{{l.name}}</strong>
+                    <span class="hi-pos-secondary">{{l.unit||'Pcs'}} · {{formatQty(l.stock)}} available</span>
+                    <button v-if="hasCost(l.productId)" type="button" class="c-cost hi-pos-cost"
+                      :class="{'is-revealed':revealedCostProductId===l.productId}"
+                      :aria-label="revealedCostProductId===l.productId?'Hide purchase price':'Show purchase price'"
+                      @click.stop="revealCost(l.productId)">
+                      {{revealedCostProductId===l.productId?money(productCostById[l.productId]):'◉ Cost'}}
+                    </button>
+                  </div>
+                </div>
+                <input class="hi-pos-qty" :value="l.qty" type="number" min="1" step="1"
+                  :aria-label="'Quantity for '+l.name"
+                  @input="setQty(l,Number(($event.target as HTMLInputElement).value))"
+                  @keydown.enter.prevent="focusProductSearch">
+                <div class="hi-pos-price-cell">
+                  <span aria-hidden="true">৳</span>
+                  <input v-model.number="l.unitPrice" type="number" min="0" step="0.01" :aria-label="'Unit price for '+l.name">
+                </div>
+                <strong class="hi-pos-line-total">{{money(l.qty*l.unitPrice)}}</strong>
+                <button type="button" class="hi-pos-remove" :aria-label="'Remove '+l.name" @click="removeLine(i)">×</button>
+              </div>
+              <div v-if="l.trackSerial||l.trackExpiry" class="hi-pos-tracking">
+                <div><strong>{{l.trackSerial?'Serial / IMEI':'Expiry tracked'}}</strong>
+                  <span v-if="l.trackSerial">{{(l.serialNumbers||[]).length}} / {{Math.max(1,Math.round(Number(l.qty||1)))}} selected</span>
+                  <span v-else>Nearest valid expiry stock will be used automatically.</span>
+                </div>
+                <button v-if="l.trackSerial" type="button" class="btn btn-sm" @click="openSerialPicker(i)">Select serials</button>
+              </div>
+              <div v-if="lineShortage(l)>0" class="hi-pos-shortage" role="status">
+                <template v-if="l.trackSerial||l.trackExpiry">
+                  <strong>Only {{formatQty(l.stock)}} tracked item(s) ready</strong>
+                  <span>Complete serial / expiry tracking before selling.</span>
+                </template>
+                <template v-else>
+                  <div><strong>Stock short by {{formatQty(lineShortage(l))}}</strong><span>{{formatQty(l.stock)}} own stock available</span></div>
+                  <div class="shortage-actions">
+                    <button type="button" class="btn btn-sm" :class="{active:l.fulfillmentMode==='own'}" @click="useOwnStock(l)">Own Stock</button>
+                    <button type="button" class="btn btn-sm" :class="{active:l.fulfillmentMode==='vendor'}" @click="useVendor(l)">Vendor</button>
+                    <button type="button" class="btn btn-sm" :class="{active:l.fulfillmentMode==='negative'}" @click="useNegative(l)">Negative</button>
+                  </div>
+                  <div v-if="l.fulfillmentMode==='vendor'" class="vendor-source">
+                    <select v-model="l.vendorId" aria-label="Source vendor">
+                      <option value="">Select vendor...</option>
+                      <option v-for="v in vendors" :key="v.id" :value="v.id">{{v.name}}</option>
+                    </select>
+                    <input v-model.number="l.vendorUnitCost" type="number" min="0" step="0.01" aria-label="Vendor unit cost" placeholder="Cost">
+                    <button type="button" class="btn btn-sm" @click="showVendors=true">Manage</button>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
 
-    <div v-if="error" class="alert danger">{{error}}</div>
-    <div v-if="updateInvoiceId" class="session-banner update-banner">
-      <div>Updating invoice <span class="bn-hint">রশিদ পরিবর্তন হচ্ছে</span> <strong class="mono">{{updateInvoiceId}}</strong></div>
-      <div class="toolbar-spacer"></div>
-      <button class="btn" @click="newSale">Cancel Update</button>
-    </div>
-
-    <div class="pos-search-bar">
-        <label for="pos-product-search" class="pos-search-label">Search Products <span class="bn-hint">— পণ্য খুঁজুন</span></label>
-        <div class="pos-search-wrap">
-          <span class="pos-search-icon" aria-hidden="true">⌕</span>
-          <input id="pos-product-search" v-model="search" class="search-input pos-search" type="search" autocomplete="off" placeholder="Name, brand, barcode, category or unit..." @keydown="onSearchKeydown">
-          <button v-if="search" type="button" class="pos-search-clear" aria-label="Clear product search" title="Clear search" @click="clearProductSearch">×</button>
-        </div>
-
-    </div>
-
-    <div class="pos-layout">
-      <div class="card product-card-panel">
-        <div class="pos-catalogue-tools">
-        <div v-if="categories.length" class="category-filter" aria-label="Product categories">
-          <button type="button" class="category-chip" :class="{active:selectedCategory==='All'}" @click="selectedCategory='All'">All</button>
-          <button v-for="category in categories" :key="category" type="button" class="category-chip" :class="{active:selectedCategory===category}" @click="selectedCategory=category">{{category}}</button>
-        </div>
-
-          <div class="pos-view-toggle" role="group" aria-label="Product catalogue view">
-            <button type="button" :class="{ active: catalogueView === 'grid' }" :aria-pressed="catalogueView === 'grid'" @click="catalogueView = 'grid'">Grid</button>
-            <button type="button" :class="{ active: catalogueView === 'list' }" :aria-pressed="catalogueView === 'list'" @click="catalogueView = 'list'">List</button>
+          <div class="hi-pos-add-row">
+            <span class="hi-pos-add-symbol" aria-hidden="true">+</span>
+            <div class="hi-pos-search-wrap">
+              <label class="hi-pos-add-label" for="pos-product-search">Add product <span class="hi-pos-bn">পণ্য যোগ করুন</span></label>
+              <div class="hi-pos-combobox">
+                <span aria-hidden="true" class="hi-pos-combobox-icon">⌕</span>
+                <input ref="posSearchRef" id="pos-product-search" v-model="search" type="search" role="combobox"
+                  autocomplete="off" aria-autocomplete="list" aria-controls="hi-pos-results"
+                  :aria-expanded="pickerOpen" :aria-activedescendant="pickerOpen&&visibleProducts.length&&highlightedProductIndex>=0?'hi-pos-option-'+highlightedProductIndex:undefined"
+                  placeholder="Search name, brand, barcode or unit…"
+                  @focus="pickerOpen=true" @blur="pickerOpen=false" @keydown="onSearchKeydown">
+                <button v-if="search" class="hi-pos-search-clear" type="button" aria-label="Clear search" @pointerdown.prevent="clearProductSearch();focusProductSearch()">×</button>
+                <kbd>F2</kbd>
+              </div>
+              <div v-if="pickerOpen" id="hi-pos-results" class="hi-pos-results" role="listbox" aria-label="Matching products">
+                <button v-for="(p,index) in visibleProducts" :key="p.id"
+                  :id="'hi-pos-option-'+index" type="button" role="option"
+                  :aria-selected="index===highlightedProductIndex"
+                  :class="{active:index===highlightedProductIndex}"
+                  @mouseenter="highlightedProductIndex=index" @pointerdown.prevent="chooseProduct(p)">
+                  <span class="hi-pos-result-thumb" aria-hidden="true">{{p.name.slice(0,2).toUpperCase()}}</span>
+                  <span class="hi-pos-result-main"><strong>{{p.name}}</strong><small>{{p.brand||p.category||'Product'}} · {{p.unit||'Pcs'}}</small></span>
+                  <span class="hi-pos-result-value"><strong>{{money(p.sellingPrice)}}</strong>
+                    <small :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} in stock</small></span>
+                </button>
+                <div v-if="!visibleProducts.length" class="hi-pos-result-empty">No matching products · কোনো পণ্য পাওয়া যায়নি</div>
+                <div v-if="filteredProducts.length>visibleProducts.length" class="hi-pos-result-more">Showing first 12 results · keep typing to narrow</div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div v-if="loading" class="empty-state">Loading products...</div>
-        <div v-else class="product-grid" :class="{ 'is-list': catalogueView === 'list' }">
-          <button v-for="(p,index) in filteredProducts" :key="p.id" type="button" class="product-tile" :class="{'is-highlighted':index===highlightedProductIndex}" @mouseenter="highlightedProductIndex=index" @click="addProduct(p)">
-            <span class="p-image" aria-hidden="true">{{p.name.slice(0, 2).toUpperCase()}}</span>
-            <span class="p-name">{{p.name}}</span>
-            <span class="p-price">{{money(p.sellingPrice)}}</span>
-            <span class="p-stock" :class="{danger:p.stock<=0}">{{formatQty(p.stock)}} {{p.unit}} in stock</span>
-          </button>
-        </div>
-        <div v-if="!loading&&!filteredProducts.length" class="empty-state">No products found.</div>
-
-        <div class="reprint-row">
-          <input v-model.trim="reprintId" type="text" placeholder="Invoice ID to reprint" @keydown.enter="reprint">
-          <button class="btn" @click="reprint">Find & Print</button>
-        </div>
+        <section class="hi-pos-quick" aria-labelledby="hi-pos-quick-heading">
+          <div class="hi-pos-quick-title">
+            <h3 id="hi-pos-quick-heading">Quick items <span class="hi-pos-bn">দ্রুত যোগ</span></h3>
+            <span>Tap to add · touch friendly</span>
+          </div>
+          <div class="hi-pos-quick-grid">
+            <button v-for="p in quickProducts" :key="p.id" type="button" @click="chooseProduct(p)">
+              <span class="hi-pos-quick-thumb" aria-hidden="true">{{p.name.slice(0,2).toUpperCase()}}</span>
+              <span class="hi-pos-quick-text"><strong>{{p.name}}</strong><small>{{money(p.sellingPrice)}} / {{p.unit||'Pcs'}}</small></span>
+              <span class="hi-pos-quick-plus" aria-hidden="true">+</span>
+            </button>
+          </div>
+        </section>
       </div>
 
-      <div class="card checkout-card">
-        <label>Customer Name * <span class="bn-hint">— কাস্টমারের নাম</span></label>
-        <input v-model="sale.customerName" type="text" list="posCustomerList" placeholder="Search or type a new name" @change="chooseCustomerByName">
-        <datalist id="posCustomerList"><option v-for="c in customers" :key="c.id" :value="c.name">{{c.phone}}</option></datalist>
-
-        <div class="field-gap"></div>
-        <label>Phone * <span class="bn-hint">— ফোন নম্বর</span></label>
-        <input v-model="sale.customerPhone" type="text" list="posCustomerPhoneList" placeholder="Required for every sale" @change="chooseCustomer">
-        <datalist id="posCustomerPhoneList"><option v-for="c in customers" :key="c.id" :value="c.phone">{{c.name}}</option></datalist>
-
-        <div v-if="selectedCustomer" class="totals-row due-old">
-          <span>Outstanding Due <span class="bn-hint">— আগের বাকি</span></span>
-          <strong class="mono">{{money(selectedCustomer.currentDue)}}</strong>
-        </div>
-
-        <div class="customer-actions">
-          <button type="button" class="btn btn-sm" @click="customerMore=!customerMore">{{customerMore?'−':'+'}} Father Name / Address</button>
-          <button type="button" class="btn btn-sm" @click="openHistory">Sales History for this Phone</button>
-        </div>
-
-        <div v-if="customerMore" class="customer-more">
-          <label>Father Name <span class="bn-hint">— বাবার নাম</span><input v-model="sale.customerFatherName" type="text" placeholder="Optional"></label>
-          <label>Address <span class="bn-hint">— ঠিকানা</span><input v-model="sale.customerAddress" type="text" placeholder="Optional"></label>
-        </div>
-
-        <h3 class="cart-title">Cart <span class="bn-hint">— বিক্রির তালিকা</span></h3>
-        <div class="cart-list">
-          <div v-if="!cart.length" class="empty-state cart-empty">Cart is empty — click a product to add it.</div>
-
-          <template v-for="(l,i) in cart" :key="l.productId">
-            <div class="cart-row">
-              <div class="c-name">
-                <strong>{{l.name}}</strong>
-                <div class="cart-meta">
-                  {{l.unit||''}}
-                  <button
-                    v-if="hasCost(l.productId)"
-                    type="button"
-                    class="c-cost"
-                    :class="{'is-revealed':revealedCostProductId===l.productId}"
-                    :aria-label="revealedCostProductId===l.productId?'Hide purchase price':'Show purchase price'"
-                    @click.stop="revealCost(l.productId)"
-                  >{{revealedCostProductId===l.productId?money(productCostById[l.productId]):'▪'}}</button>
-                </div>
-              </div>
-              <input class="cart-qty" :value="l.qty" type="number" min="1" step="1" aria-label="Quantity" @input="setQty(l,Number(($event.target as HTMLInputElement).value))">
-              <input class="cart-price" v-model.number="l.unitPrice" type="number" min="0" step="0.01" aria-label="Unit price">
-              <div class="c-line-total">{{money(l.qty*l.unitPrice)}}</div>
-              <button class="cart-remove" type="button" title="Remove" @click="removeLine(i)">×</button>
-            </div>
-
-            <div v-if="l.trackSerial || l.trackExpiry" class="cart-tracking-row">
-              <div>
-                <strong>{{l.trackSerial?'Serial / IMEI required':'Expiry tracked'}}</strong>
-                <span v-if="l.trackSerial" class="bn-hint">{{(l.serialNumbers||[]).length}} / {{Math.max(1,Math.round(Number(l.qty||1)))}} selected</span>
-                <span v-else class="bn-hint">Nearest valid expiry stock will be used automatically.</span>
-              </div>
-              <button v-if="l.trackSerial" type="button" class="btn btn-sm" @click="openSerialPicker(i)">Select Serial / IMEI</button>
-            </div>
-
-            <div v-if="lineShortage(l)>0" class="shortage-row">
-              <template v-if="l.trackSerial || l.trackExpiry">
-                <div class="shortage-head"><strong>Only {{formatQty(l.stock)}} tracked item(s) ready</strong><span>{{formatQty(lineShortage(l))}} item(s) still need valid Serial / Expiry tracking or stock.</span></div>
-                <div class="tracked-shortage-note">Tracked products cannot use Vendor Sourcing or Negative Stock. Complete tracking before selling.</div>
-              </template>
-              <template v-else>
-                <div class="shortage-head"><strong>Stock short by {{formatQty(lineShortage(l))}}</strong><span>{{formatQty(l.stock)}} own stock available</span></div>
-                <div class="shortage-actions">
-                  <button class="btn btn-sm" :class="{active:l.fulfillmentMode==='own'}" @click="useOwnStock(l)">Own Stock</button>
-                  <button class="btn btn-sm" :class="{active:l.fulfillmentMode==='vendor'}" @click="useVendor(l)">Vendor Sourcing</button>
-                  <button class="btn btn-sm" :class="{active:l.fulfillmentMode==='negative'}" @click="useNegative(l)">Negative Stock</button>
-                </div>
-                <div v-if="l.fulfillmentMode==='vendor'" class="vendor-source">
-                  <select v-model="l.vendorId"><option value="">Select vendor...</option><option v-for="v in vendors" :key="v.id" :value="v.id">{{v.name}}</option></select>
-                  <input v-model.number="l.vendorUnitCost" type="number" min="0" step="0.01" placeholder="Vendor cost">
-                  <button class="btn btn-sm" @click="showVendors=true">Manage</button>
-                </div>
-              </template>
-            </div>
-          </template>
-        </div>
-
-        <div class="totals-row"><span>Subtotal <span class="bn-hint">— মোট টাকা</span></span><strong class="mono">{{money(subtotal)}}</strong></div>
-        <div class="totals-row"><span>Discount <span class="bn-hint">— ডিসকাউন্ট</span></span><input v-model.number="sale.discount" class="total-input" type="number" min="0" step="0.01"></div>
-        <div class="totals-row grand"><span>Grand Total <span class="bn-hint">— সর্বমোট টাকা</span></span><strong class="mono">{{money(grandTotal)}}</strong></div>
-
-        <label class="received-label">Amount Received <span class="bn-hint">— কত টাকা পেলেন</span></label>
-        <input v-model.number="sale.amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank for a full due sale">
-
-        <div v-if="changeDue>0" class="totals-row change"><span>Change Due <span class="bn-hint">— ফেরত দেওয়ার টাকা</span></span><strong>{{money(changeDue)}}</strong></div>
-        <div v-if="dueAmount>0" class="totals-row due"><span>Due Amount <span class="bn-hint">— বাকি থাকলো</span></span><strong>{{money(dueAmount)}}</strong></div>
-
-        <div class="payment-row">
-          <div class="payment-method-field">
-            <label>Payment Method <span class="bn-hint">— কীভাবে টাকা নিলেন</span></label>
-            <select :value="sale.paymentMethod" @change="selectPaymentMethod(($event.target as HTMLSelectElement).value as 'Cash'|'Bank'|'Mobile Banking')">
-              <option value="Cash">Cash</option>
-              <option value="Bank">Bank</option>
-              <option value="Mobile Banking">Mobile Banking</option>
-            </select>
+      <aside class="hi-pos-checkout" aria-label="Sale checkout">
+        <div class="hi-pos-checkout-section">
+          <div class="hi-pos-checkout-heading">
+            <div><strong>Sale checkout</strong><span class="hi-pos-bn">বিক্রির টাকা নিন</span></div>
+            <button type="button" class="hi-pos-clear" @click="newSale">New sale</button>
           </div>
-
-          <div v-if="paymentNeedsAccount" class="bank-account-field">
-            <label>{{sale.paymentMethod==='Mobile Banking'?'Mobile Banking Account *':'Bank Account *'}} <span class="bn-hint">— ব্যাংক/মোবাইল ব্যাংকিং হিসাব</span></label>
-            <select v-model="sale.bankAccountId">
-              <option value="">Select account...</option>
-              <option v-for="b in filteredBankAccounts" :key="b.id" :value="b.id">{{b.name}}</option>
-            </select>
-            <small v-if="!filteredBankAccounts.length">No active {{sale.paymentMethod==='Mobile Banking'?'mobile banking':'bank'}} account found.</small>
+          <div class="hi-pos-customer-grid">
+            <label>Customer name <span class="hi-pos-bn">নাম</span>
+              <input v-model="sale.customerName" type="text" list="posCustomerList" placeholder="Search or enter name" @change="chooseCustomerByName">
+            </label>
+            <datalist id="posCustomerList"><option v-for="c in customers" :key="c.id" :value="c.name">{{c.phone}}</option></datalist>
+            <label>Phone <span class="hi-pos-bn">ফোন</span>
+              <input v-model="sale.customerPhone" type="tel" list="posCustomerPhoneList" placeholder="Required" @change="chooseCustomer">
+            </label>
+            <datalist id="posCustomerPhoneList"><option v-for="c in customers" :key="c.id" :value="c.phone">{{c.name}}</option></datalist>
+          </div>
+          <div v-if="selectedCustomer" class="hi-pos-previous-due">
+            <span>Outstanding due <span class="hi-pos-bn">আগের বাকি</span></span>
+            <strong>{{money(selectedCustomer.currentDue)}}</strong>
+          </div>
+          <div class="hi-pos-customer-actions">
+            <button type="button" @click="customerMore=!customerMore">{{customerMore?'−':'+'}} More customer details</button>
+            <button type="button" @click="openHistory">Sales history</button>
+          </div>
+          <div v-if="customerMore" class="hi-pos-customer-grid hi-pos-details">
+            <label>Father name <span class="hi-pos-bn">বাবার নাম</span><input v-model="sale.customerFatherName" type="text" placeholder="Optional"></label>
+            <label>Address <span class="hi-pos-bn">ঠিকানা</span><input v-model="sale.customerAddress" type="text" placeholder="Optional"></label>
           </div>
         </div>
-
-        <div class="field-error" v-if="error">{{error}}</div>
+        <div class="hi-pos-checkout-section hi-pos-totals">
+          <div><span>Subtotal <span class="hi-pos-bn">মোট টাকা</span></span><strong>{{money(subtotal)}}</strong></div>
+          <label class="hi-pos-discount"><span>Discount <span class="hi-pos-bn">ছাড়</span></span>
+            <input v-model.number="sale.discount" type="number" min="0" step="0.01" aria-label="Discount amount">
+          </label>
+        </div>
+        <div class="hi-pos-payable" data-pos-payable>
+          <span>Total payable <span class="hi-pos-bn">সর্বমোট টাকা</span></span>
+          <strong>৳{{money(grandTotal)}}</strong>
+        </div>
+        <div class="hi-pos-checkout-section hi-pos-payment">
+          <label>Amount received <span class="hi-pos-bn">কত টাকা পেলেন</span>
+            <input ref="paidInputRef" v-model.number="sale.amountReceived" type="number" min="0" step="0.01" placeholder="Leave blank for full due" aria-label="Amount received">
+          </label>
+          <div class="hi-pos-payment-row">
+            <label>Payment method <span class="hi-pos-bn">টাকা নিলেন</span>
+              <select :value="sale.paymentMethod" @change="selectPaymentMethod(($event.target as HTMLSelectElement).value as 'Cash'|'Bank'|'Mobile Banking')">
+                <option value="Cash">Cash</option><option value="Bank">Bank</option><option value="Mobile Banking">Mobile Banking</option>
+              </select>
+            </label>
+            <label v-if="paymentNeedsAccount">Account <span class="hi-pos-bn">হিসাব</span>
+              <select v-model="sale.bankAccountId">
+                <option value="">Select account...</option>
+                <option v-for="b in filteredBankAccounts" :key="b.id" :value="b.id">{{b.name}}</option>
+              </select>
+              <small v-if="!filteredBankAccounts.length" class="hi-pos-warning">No active account available</small>
+            </label>
+          </div>
+          <div v-if="dueAmount>0" class="hi-pos-balance hi-pos-balance-due"><span>Due <span class="hi-pos-bn">বাকি</span></span><strong>{{money(dueAmount)}}</strong></div>
+          <div v-if="changeDue>0" class="hi-pos-balance hi-pos-balance-change"><span>Change <span class="hi-pos-bn">ফেরত</span></span><strong>{{money(changeDue)}}</strong></div>
+          <div v-if="error" class="field-error" role="alert">{{error}}</div>
+        </div>
+        <div class="hi-pos-complete-wrap">
         <button
           class="btn btn-primary btn-lg complete-btn"
           :class="{
@@ -635,7 +707,8 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
             </span>
           </Transition>
         </button>
-      </div>
+        </div>
+      </aside>
     </div>
 
     <div v-if="serialPickerLineIndex!==null" class="modal-overlay" @click.self="closeSerialPicker"><div class="modal modal-lg serial-picker-modal">
@@ -818,4 +891,172 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
  .pos-catalogue-tools .category-filter{max-width:calc(100% - 110px)}
 }
 @media print{.pos-search-bar,.pos-view-toggle{display:none!important}}
+
+/* POS V2: source interface shuvodelux-commits/hisabiq_ui (Pos/CartTable/CheckoutPanel).
+   Local Ink/Teal/Mint palette, independent of the SherERP-wide shell.
+   Transaction math, API requests, validations and invoice printing remain unchanged. */
+.gas-pos.hisabiq-pos{
+  --hiq-ink:#0b1a2c;--hiq-ink-700:#22364f;--hiq-muted:#5a6b80;--hiq-faint:#8a9bb0;
+  --hiq-canvas:#f5f7fa;--hiq-card:#fff;--hiq-line:#e3e8ee;--hiq-teal:#0d7c74;
+  --hiq-teal-dark:#0a625c;--hiq-teal-light:#eaf6f4;--hiq-mint:#3dd6b5;
+  --hiq-red:#b92e25;--hiq-red-bg:#fcebea;--hiq-green:#116f35;--hiq-green-bg:#e8f5ec;
+  --hiq-warn:#974407;--hiq-warn-bg:#fdf3e3;
+  --hiq-radius:10px;--hiq-shadow:0 1px 3px rgb(11 26 44 / 6%);
+  display:flex;flex-direction:column;gap:14px;font-family:'Geist','Hind Siliguri',system-ui,sans-serif;
+  color:var(--hiq-ink);font-size:13px;min-width:0;
+}
+.hisabiq-pos .hi-pos-bn{font-family:'Hind Siliguri',system-ui,sans-serif;font-size:11px;font-weight:400;color:var(--hiq-muted)}
+.hisabiq-pos input:not([type=checkbox]),.hisabiq-pos select{
+  color:var(--hiq-ink);background:var(--hiq-card);border:1px solid #d5dde6;
+  border-radius:7px;min-width:0;height:36px;padding:6px 9px;font:400 13px/1.4 'Geist',system-ui,sans-serif;
+}
+.hisabiq-pos input:focus-visible,.hisabiq-pos select:focus-visible{
+  outline:2px solid var(--hiq-teal);outline-offset:1px;border-color:var(--hiq-teal);
+}
+.hisabiq-pos .btn{min-height:36px;border-color:var(--hiq-line);border-radius:8px;box-shadow:none}
+.hisabiq-pos .btn-primary,.hisabiq-pos .complete-btn{background:var(--hiq-teal);border-color:var(--hiq-teal);color:#fff}
+.hisabiq-pos .btn-primary:hover,.hisabiq-pos .complete-btn:hover:not(:disabled){background:var(--hiq-teal-dark);border-color:var(--hiq-teal-dark)}
+.hisabiq-pos .hi-pos-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.hisabiq-pos .hi-pos-heading-title{display:flex;align-items:baseline;gap:8px}
+.hisabiq-pos .hi-pos-heading-title h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.02em}
+.hisabiq-pos .hi-pos-heading-title .hi-pos-bn{font-size:13px}
+.hisabiq-pos .hi-pos-heading-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.hisabiq-pos .hi-pos-shortcuts{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--hiq-muted);white-space:nowrap}
+.hisabiq-pos kbd{font-size:10px;line-height:1.4;font-weight:400;padding:1px 5px;border:1px solid #d5dde6;border-radius:4px;background:var(--hiq-canvas);color:var(--hiq-ink-700)}
+.hisabiq-pos .hi-pos-print{display:flex;gap:6px;align-items:center}
+.hisabiq-pos .hi-pos-print input{width:150px}
+.hisabiq-pos .hi-pos-session-start{display:grid;grid-template-columns:minmax(0,1fr) 160px 180px auto;align-items:end;gap:10px;border:1px solid var(--hiq-line);border-radius:10px;background:#fff;box-shadow:var(--hiq-shadow);padding:14px}
+.hisabiq-pos .hi-pos-session-start label{display:grid;gap:5px;color:var(--hiq-ink-700);font-weight:600;font-size:12px}
+.hisabiq-pos .hi-pos-session-start .session-copy h3{font-size:14px;color:var(--hiq-ink)}
+.hisabiq-pos .hi-pos-session-start .session-copy p{font-size:12px;color:var(--hiq-muted)}
+.hisabiq-pos .hi-pos-session-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 15px;padding:8px 12px;border:1px solid #b6dec6;border-radius:8px;background:var(--hiq-green-bg);color:var(--hiq-ink-700);font-size:12px}
+.hisabiq-pos .hi-pos-session-bar>span:first-child strong{color:var(--hiq-green)}
+.hisabiq-pos .hi-pos-session-bar .btn{margin-left:auto}
+.hisabiq-pos .hi-pos-update-banner{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--hiq-warn-bg);border:1px solid #f2dec5;border-radius:8px}
+.hisabiq-pos .hi-pos-update-banner .btn{margin-left:auto}
+.hisabiq-pos .hi-pos-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(310px,370px);align-items:start;gap:16px;max-width:1440px;width:100%;margin:0 auto}
+.hisabiq-pos .hi-pos-main{min-width:0;display:flex;flex-direction:column;gap:16px}
+.hisabiq-pos .hi-pos-cart-frame,.hisabiq-pos .hi-pos-checkout{background:var(--hiq-card);border:1px solid var(--hiq-line);border-radius:12px;box-shadow:var(--hiq-shadow);min-width:0}
+.hisabiq-pos .hi-pos-cart-frame{overflow:visible}
+.hisabiq-pos .hi-pos-cart-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--hiq-line)}
+.hisabiq-pos .hi-pos-cart-header h3{font-size:14px;font-weight:600;margin:0}
+.hisabiq-pos .hi-pos-secondary{display:block;color:var(--hiq-muted);font-size:11px;line-height:1.5}
+.hisabiq-pos .hi-pos-clear{padding:5px 8px;border:0;border-radius:7px;color:var(--hiq-muted);background:transparent;cursor:pointer;font:500 12px/1.3 inherit}
+.hisabiq-pos .hi-pos-clear:hover:not(:disabled){color:var(--hiq-red);background:var(--hiq-red-bg)}
+.hisabiq-pos .hi-pos-clear:disabled{opacity:.4;cursor:not-allowed}
+.hisabiq-pos .hi-pos-cart-scroll{overflow-x:auto;overscroll-behavior-inline:contain}
+.hisabiq-pos .hi-pos-row{display:grid;grid-template-columns:32px minmax(175px,1fr) 88px 118px 108px 28px;align-items:center;gap:8px;min-width:730px;padding:8px 12px}
+.hisabiq-pos .hi-pos-column-head{background:var(--hiq-canvas);border-bottom:1px solid var(--hiq-line);color:var(--hiq-faint);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.hisabiq-pos .hi-pos-column-head .hi-pos-bn{display:block;font-size:10px;line-height:1.2;text-transform:none;letter-spacing:0}
+.hisabiq-pos .hi-pos-cart-line{min-height:57px;border-bottom:1px solid var(--hiq-line)}
+.hisabiq-pos .hi-pos-index{text-align:right;color:var(--hiq-faint);font-size:12px}
+.hisabiq-pos .hi-pos-item{min-width:0;display:flex;align-items:center;gap:8px}
+.hisabiq-pos .hi-pos-thumb,.hisabiq-pos .hi-pos-result-thumb,.hisabiq-pos .hi-pos-quick-thumb{display:grid;place-items:center;width:34px;height:34px;flex-shrink:0;border-radius:8px;background:var(--hiq-canvas);color:var(--hiq-muted);font-weight:600;font-size:12px}
+.hisabiq-pos .hi-pos-item-text{display:flex;flex-direction:column;align-items:flex-start;min-width:0;gap:0}
+.hisabiq-pos .hi-pos-item-text strong{font-size:13px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hisabiq-pos .hi-pos-cost{font-family:inherit;font-size:10px;color:var(--hiq-faint);opacity:1;margin:0;padding:1px 2px}
+.hisabiq-pos .hi-pos-cost.is-revealed{color:#fff;background:var(--hiq-ink);opacity:1}
+.hisabiq-pos .hi-pos-row .hi-pos-qty{width:100%;height:36px;text-align:center}
+.hisabiq-pos .hi-pos-price-cell{display:flex;align-items:center;position:relative}
+.hisabiq-pos .hi-pos-price-cell span{position:absolute;left:9px;font-size:12px;color:var(--hiq-faint);pointer-events:none}
+.hisabiq-pos .hi-pos-price-cell input{width:100%;padding-left:24px;text-align:right}
+.hisabiq-pos .hi-pos-line-total{text-align:right;font-weight:600;font-size:13px}
+.hisabiq-pos .hi-pos-remove{width:28px;height:32px;border:0;border-radius:6px;background:transparent;color:var(--hiq-faint);font-size:20px;cursor:pointer}
+.hisabiq-pos .hi-pos-remove:hover{background:var(--hiq-red-bg);color:var(--hiq-red)}
+.hisabiq-pos .hi-pos-empty{display:flex;flex-direction:column;align-items:center;gap:4px;padding:28px 12px;text-align:center;color:var(--hiq-muted);font-size:12px}
+.hisabiq-pos .hi-pos-empty strong{color:var(--hiq-ink);font-weight:600;font-size:13px}
+.hisabiq-pos .hi-pos-tracking,.hisabiq-pos .hi-pos-shortage{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:9px 14px;border-bottom:1px solid var(--hiq-line);font-size:12px}
+.hisabiq-pos .hi-pos-tracking{background:var(--hiq-canvas)}
+.hisabiq-pos .hi-pos-tracking>div{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.hisabiq-pos .hi-pos-shortage{display:grid;background:var(--hiq-red-bg);color:var(--hiq-red)}
+.hisabiq-pos .hi-pos-shortage>div:first-child{display:flex;justify-content:space-between;flex-wrap:wrap;gap:7px}
+.hisabiq-pos .shortage-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.hisabiq-pos .shortage-actions .btn{background:#fff;color:var(--hiq-ink-700);border:1px solid #d5dde6}
+.hisabiq-pos .shortage-actions .btn.active{background:var(--hiq-teal);border-color:var(--hiq-teal);color:#fff}
+.hisabiq-pos .vendor-source{display:grid;grid-template-columns:minmax(0,1fr) 100px auto;gap:6px;margin-top:4px}
+.hisabiq-pos .hi-pos-add-row{display:flex;gap:12px;align-items:flex-start;padding:12px;border-top:1px solid var(--hiq-line);background:#fff;border-radius:0 0 12px 12px}
+.hisabiq-pos .hi-pos-add-symbol{display:grid;place-items:center;flex:none;width:28px;height:32px;color:var(--hiq-teal);font-size:20px;font-weight:600}
+.hisabiq-pos .hi-pos-search-wrap{flex:1;min-width:0;position:relative}
+.hisabiq-pos .hi-pos-add-label{display:block;margin-bottom:5px;color:var(--hiq-ink-700);font-size:12px;font-weight:600}
+.hisabiq-pos .hi-pos-combobox{display:flex;align-items:center;position:relative}
+.hisabiq-pos .hi-pos-combobox input{display:block;width:100%;height:36px;padding-left:34px;padding-right:65px;border:1px dashed #3db8ac;border-radius:8px;background:#f5fbfa}
+.hisabiq-pos .hi-pos-combobox input:focus{background:#fff;border-style:solid}
+.hisabiq-pos .hi-pos-combobox-icon{position:absolute;left:11px;color:var(--hiq-teal);font-size:20px;pointer-events:none}
+.hisabiq-pos .hi-pos-combobox kbd{position:absolute;right:9px}
+.hisabiq-pos .hi-pos-search-clear{position:absolute;right:43px;width:22px;height:22px;display:grid;place-items:center;border:0;border-radius:5px;background:#e3e8ee;color:var(--hiq-muted);font-size:17px;cursor:pointer}
+.hisabiq-pos .hi-pos-results{position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:35;max-height:min(340px,52vh);overflow-y:auto;border:1px solid var(--hiq-line);border-radius:10px;background:#fff;box-shadow:0 12px 36px rgb(11 26 44 / 16%);padding:5px}
+.hisabiq-pos .hi-pos-results button{display:flex;align-items:center;gap:10px;width:100%;padding:6px 8px;border:0;border-radius:7px;background:#fff;text-align:left;cursor:pointer}
+.hisabiq-pos .hi-pos-results button:hover,.hisabiq-pos .hi-pos-results button.active{background:var(--hiq-teal-light)}
+.hisabiq-pos .hi-pos-result-main{display:flex;flex-direction:column;flex:1;min-width:0}
+.hisabiq-pos .hi-pos-result-main strong{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hisabiq-pos .hi-pos-result-main small{font-size:11px;color:var(--hiq-muted)}
+.hisabiq-pos .hi-pos-result-value{display:flex;flex-direction:column;align-items:flex-end;white-space:nowrap}
+.hisabiq-pos .hi-pos-result-value strong{font-size:13px;font-weight:600}
+.hisabiq-pos .hi-pos-result-value small{font-size:11px;color:var(--hiq-green)}
+.hisabiq-pos .hi-pos-result-value small.danger{color:var(--hiq-red)}
+.hisabiq-pos .hi-pos-result-more,.hisabiq-pos .hi-pos-result-empty{padding:12px;color:var(--hiq-muted);font-size:11px;text-align:center}
+.hisabiq-pos .hi-pos-quick-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.hisabiq-pos .hi-pos-quick-title h3{font-size:13px;font-weight:600;margin:0}
+.hisabiq-pos .hi-pos-quick-title>span{font-size:11px;color:var(--hiq-muted)}
+.hisabiq-pos .hi-pos-quick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.hisabiq-pos .hi-pos-quick-grid>button{display:flex;align-items:center;gap:8px;min-width:0;padding:9px;border:1px solid var(--hiq-line);border-radius:10px;background:#fff;box-shadow:var(--hiq-shadow);text-align:left;cursor:pointer}
+.hisabiq-pos .hi-pos-quick-grid>button:hover{background:var(--hiq-teal-light);border-color:#b3e3dc}
+.hisabiq-pos .hi-pos-quick-text{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.hisabiq-pos .hi-pos-quick-text strong{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hisabiq-pos .hi-pos-quick-text small{font-size:11px;color:var(--hiq-muted)}
+.hisabiq-pos .hi-pos-quick-plus{font-size:16px;color:var(--hiq-teal)}
+.hisabiq-pos .hi-pos-checkout{display:flex;flex-direction:column;position:sticky;top:12px}
+.hisabiq-pos .hi-pos-checkout-section{padding:14px;border-bottom:1px solid var(--hiq-line);display:flex;flex-direction:column;gap:11px}
+.hisabiq-pos .hi-pos-checkout-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hisabiq-pos .hi-pos-checkout-heading>div{display:flex;flex-direction:column;gap:2px}
+.hisabiq-pos .hi-pos-checkout-heading strong{font-size:14px;font-weight:600}
+.hisabiq-pos .hi-pos-customer-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.hisabiq-pos .hi-pos-customer-grid label,.hisabiq-pos .hi-pos-payment label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--hiq-ink-700);min-width:0}
+.hisabiq-pos .hi-pos-customer-grid input,.hisabiq-pos .hi-pos-payment input,.hisabiq-pos .hi-pos-payment select{width:100%}
+.hisabiq-pos .hi-pos-previous-due{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px;background:var(--hiq-red-bg);border-radius:7px;color:var(--hiq-red);font-size:12px}
+.hisabiq-pos .hi-pos-previous-due strong{white-space:nowrap}
+.hisabiq-pos .hi-pos-customer-actions{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.hisabiq-pos .hi-pos-customer-actions button{background:transparent;border:0;color:var(--hiq-teal);font-size:11px;font-weight:600;cursor:pointer;padding:5px}
+.hisabiq-pos .hi-pos-customer-actions button:hover{text-decoration:underline}
+.hisabiq-pos .hi-pos-details{border-top:1px solid var(--hiq-line);padding-top:10px}
+.hisabiq-pos .hi-pos-totals>div,.hisabiq-pos .hi-pos-discount{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px}
+.hisabiq-pos .hi-pos-totals strong{font-weight:600}
+.hisabiq-pos .hi-pos-discount input{width:95px;text-align:right}
+.hisabiq-pos .hi-pos-payable{margin:0 14px;padding:13px 14px;border:1px solid #b3e3dc;border-radius:10px;background:#eaf6f4;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px;color:var(--hiq-ink)}
+.hisabiq-pos .hi-pos-payable>span{font-size:13px;color:var(--hiq-ink-700)}
+.hisabiq-pos .hi-pos-payable strong{font-size:28px;font-weight:600;letter-spacing:-.025em;line-height:1.1;margin-left:auto}
+.hisabiq-pos .hi-pos-payment{gap:11px}
+.hisabiq-pos .hi-pos-payment-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.hisabiq-pos .hi-pos-warning{font-size:10px;color:var(--hiq-red)}
+.hisabiq-pos .hi-pos-balance{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-radius:7px;font-size:12px}
+.hisabiq-pos .hi-pos-balance-due{background:var(--hiq-red-bg);color:var(--hiq-red)}
+.hisabiq-pos .hi-pos-balance-change{background:var(--hiq-green-bg);color:var(--hiq-green)}
+.hisabiq-pos .hi-pos-complete-wrap{padding:13px 14px 14px}
+.hisabiq-pos .hi-pos-complete-wrap .complete-btn{margin:0;width:100%;min-height:48px;font-size:14px;font-weight:600;border-radius:9px}
+@media(max-width:1180px){
+ .hisabiq-pos .hi-pos-columns{grid-template-columns:minmax(0,1fr)}
+ .hisabiq-pos .hi-pos-checkout{position:static}
+ .hisabiq-pos .hi-pos-quick-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+@media(max-width:760px){
+ .hisabiq-pos .hi-pos-shortcuts{display:none}
+ .hisabiq-pos .hi-pos-heading-actions{width:100%;justify-content:flex-end}
+ .hisabiq-pos .hi-pos-session-start{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .hisabiq-pos .hi-pos-session-start .session-copy{grid-column:1/-1}
+ .hisabiq-pos .hi-pos-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:460px){
+ .hisabiq-pos .hi-pos-print input{width:135px}
+ .hisabiq-pos .hi-pos-session-start{grid-template-columns:minmax(0,1fr)}
+ .hisabiq-pos .hi-pos-session-start .session-copy{grid-column:auto}
+ .hisabiq-pos .hi-pos-customer-grid{grid-template-columns:1fr 1fr}
+ .hisabiq-pos .hi-pos-payment-row{grid-template-columns:1fr}
+ .hisabiq-pos .hi-pos-checkout-section{padding:12px}
+ .hisabiq-pos .hi-pos-payable{margin:0 12px}
+ .hisabiq-pos .hi-pos-payable strong{font-size:24px}
+ .hisabiq-pos .hi-pos-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media print{
+ .hisabiq-pos .hi-pos-heading,.hisabiq-pos .hi-pos-columns,.hisabiq-pos .hi-pos-session-start,.hisabiq-pos .hi-pos-session-bar{display:none!important}
+}
 </style>
