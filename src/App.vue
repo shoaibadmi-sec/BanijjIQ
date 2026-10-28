@@ -1760,19 +1760,45 @@ onBeforeUnmount(() => {
 
           <template v-if="productSubtab === 'products'">
             <div class="toolbar product-filterbar">
-              <input class="search-input" v-model="search" type="text" placeholder="Smart search: name, brand, category, barcode or unit..." />
+              <div class="product-search-field">
+                <span class="product-search-icon" aria-hidden="true">⌕</span>
+                <input class="search-input" v-model="search" type="search" aria-label="Search products" placeholder="Search name, brand, category, barcode or unit..." />
+                <button v-if="search" class="product-search-clear" type="button" aria-label="Clear product search" @click="search = ''">×</button>
+              </div>
               <select v-model="categoryFilter" aria-label="Filter by category"><option value="">All categories</option><option v-for="c in categoryNames" :key="c" :value="c">{{ c }}</option></select>
               <select v-model="brandFilter" aria-label="Filter by brand"><option value="">All brands</option><option v-for="b in brandNames" :key="b" :value="b">{{ b }}</option></select>
               <select v-model="stockFilter" aria-label="Filter by stock"><option value="">All stock</option><option value="in">In stock</option><option value="low">Low stock</option><option value="out">Out of stock</option><option value="negative">Negative stock</option></select>
               <select v-model="statusFilter" aria-label="Filter by status"><option value="">All status</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select>
               <select v-model="productSort" aria-label="Sort products"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="brand-asc">Brand A–Z</option><option value="brand-desc">Brand Z–A</option><option value="category-asc">Category A–Z</option><option value="category-desc">Category Z–A</option><option value="status-asc">Status A–Z</option><option value="status-desc">Status Z–A</option><option value="stock-desc">Stock Qty: High → Low</option><option value="stock-asc">Stock Qty: Low → High</option><option value="value-desc">Stock Value: High → Low</option><option value="value-asc">Stock Value: Low → High</option><option value="purchase-desc">Purchase Price: High → Low</option><option value="purchase-asc">Purchase Price: Low → High</option><option value="selling-desc">Selling Price: High → Low</option><option value="selling-asc">Selling Price: Low → High</option></select>
-              <div class="toolbar-spacer"></div><button class="btn btn-primary" @click="openAddProduct">+ Add Product</button>
+              <div class="toolbar-spacer"></div>
+              <span class="product-result-count" aria-live="polite">{{ filteredProducts.length }} products</span>
+              <button class="btn btn-primary" @click="openAddProduct">+ Add Product</button>
             </div>
-            <div class="card" style="padding:0;">
-              <div class="table-scroll"><table class="responsive-table product-table"><thead><tr><SortableHeader table-id="products" column="productName">Product</SortableHeader><SortableHeader table-id="products" column="brand">Brand</SortableHeader><SortableHeader table-id="products" column="category">Category</SortableHeader><SortableHeader table-id="products" column="purchasePrice" type="number" class="num">Purchase Price</SortableHeader><SortableHeader table-id="products" column="sellingPrice" type="number" class="num">Selling Price</SortableHeader><SortableHeader table-id="products" column="currentStock" type="number" class="num">Stock Qty</SortableHeader><SortableHeader table-id="products" column="stockValue" type="number" class="num">Stock Value</SortableHeader><SortableHeader table-id="products" column="status">Status</SortableHeader><th></th></tr></thead><tbody>
+            <div class="card product-list-card">
+              <div class="table-scroll products-desktop-table"><table class="responsive-table product-table"><thead><tr><SortableHeader table-id="products" column="productName">Product</SortableHeader><SortableHeader table-id="products" column="brand">Brand</SortableHeader><SortableHeader table-id="products" column="category">Category</SortableHeader><SortableHeader table-id="products" column="purchasePrice" type="number" class="num">Purchase Price</SortableHeader><SortableHeader table-id="products" column="sellingPrice" type="number" class="num">Selling Price</SortableHeader><SortableHeader table-id="products" column="currentStock" type="number" class="num">Stock Qty</SortableHeader><SortableHeader table-id="products" column="stockValue" type="number" class="num">Stock Value</SortableHeader><SortableHeader table-id="products" column="status">Status</SortableHeader><th></th></tr></thead><tbody>
                 <tr v-if="loading"><td colspan="9">Loading products...</td></tr>
                 <tr v-for="product in filteredProducts" :key="product.productId"><td data-label="Product" class="primary-cell"><strong>{{ product.displayName || product.productName }}</strong><br><span class="bn-hint mono">{{ product.productId }}</span></td><td data-label="Brand">{{ product.brand || '-' }}</td><td data-label="Category">{{ product.category || '-' }}</td><td data-label="Purchase" class="num mono">{{ formatMoney(product.purchasePrice) }}</td><td data-label="Selling" class="num mono">{{ formatMoney(product.sellingPrice) }}</td><td data-label="Stock" class="num mono" :class="{ dangerText: Number(product.currentStock) === 0, warningText: Number(product.currentStock) > 0 && Number(product.currentStock) <= Number(product.minimumStock) }">{{ formatQty(product.currentStock) }}</td><td data-label="Stock Value" class="num mono">{{ formatMoney(product.stockValue) }}</td><td data-label="Status"><span class="badge" :class="product.status === 'Active' ? 'badge-success' : 'badge-danger'">{{ product.status }}</span></td><td data-label="Actions" class="row-actions action-cell"><button class="btn btn-sm action-trigger" @click="openProductActions($event, product)">Actions</button></td></tr>
-              </tbody></table></div><div class="empty-state" v-if="!loading && filteredProducts.length === 0">No products yet. Click "Add Product".</div>
+              </tbody></table></div>
+              <div class="products-mobile-list" v-if="!loading && filteredProducts.length > 0" role="list" aria-label="Products">
+                <div v-for="product in filteredProducts" :key="product.productId" class="products-mobile-item" role="listitem" :class="{ 'is-inactive': product.status !== 'Active' }">
+                  <div class="products-mobile-primary">
+                    <strong class="products-mobile-name">{{ product.displayName || product.productName }}</strong>
+                    <span class="products-mobile-meta">{{ product.brand || 'No brand' }} · {{ product.category || 'Uncategorised' }}</span>
+                    <span class="products-mobile-code">{{ product.productId }}</span>
+                  </div>
+                  <div class="products-mobile-prices">
+                    <strong>{{ formatMoney(product.sellingPrice) }}</strong>
+                    <span class="products-mobile-price-label">Selling price</span>
+                  </div>
+                  <div class="products-mobile-footer">
+                    <span class="products-mobile-stock" :class="{ 'stock-empty': Number(product.currentStock) <= 0, 'stock-low': Number(product.currentStock) > 0 && Number(product.currentStock) <= Number(product.minimumStock) }">Stock: {{ formatQty(product.currentStock) }}</span>
+                    <span class="badge" :class="product.status === 'Active' ? 'badge-success' : 'badge-danger'">{{ product.status }}</span>
+                    <button type="button" class="products-mobile-action" :aria-label="'Actions for ' + (product.displayName || product.productName)" @click="openProductActions($event, product)">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="loading" class="products-mobile-loading" role="status">Loading products...</div>
+              <div class="empty-state" v-if="!loading && filteredProducts.length === 0">No products yet. Click "Add Product".</div>
             </div>
           </template>
 

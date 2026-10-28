@@ -5,6 +5,7 @@ import './ui-motion.css';
 import './design/sher-tokens.css';
 import './design/sher-components.css';
 import './design/sher-compat.css';
+import './design/sher-module-views.css';
 import { installGlobalNumberInputBehavior } from './utils/numberInputBehavior';
 import SortableHeader from './components/SortableHeader.vue';
 import { sortRows } from './utils/tableSorting';
