@@ -25,7 +25,7 @@ test('POS keyboard product picker and live checkout bindings exist', () => {
     'role="listbox"',
     'aria-autocomplete="list"',
     '@keydown="onSearchKeydown"',
-    '@mousedown.prevent="chooseProduct(p)"',
+    '@pointerdown.prevent="chooseProduct(p)"',
     'highlightedProductIndex',
     "if(e.key==='F2')",
     "if(e.key==='F8')",

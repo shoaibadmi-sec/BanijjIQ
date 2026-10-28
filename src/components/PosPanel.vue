@@ -588,7 +588,7 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',onPosShortcut);if(cost
                   :aria-expanded="pickerOpen" :aria-activedescendant="pickerOpen&&visibleProducts.length&&highlightedProductIndex>=0?'hi-pos-option-'+highlightedProductIndex:undefined"
                   placeholder="Search name, brand, barcode or unit…"
                   @focus="pickerOpen=true" @blur="pickerOpen=false" @keydown="onSearchKeydown">
-                <button v-if="search" class="hi-pos-search-clear" type="button" aria-label="Clear search" @mousedown.prevent="clearProductSearch();focusProductSearch()">×</button>
+                <button v-if="search" class="hi-pos-search-clear" type="button" aria-label="Clear search" @pointerdown.prevent="clearProductSearch();focusProductSearch()">×</button>
                 <kbd>F2</kbd>
               </div>
               <div v-if="pickerOpen" id="hi-pos-results" class="hi-pos-results" role="listbox" aria-label="Matching products">
@@ -596,7 +596,7 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',onPosShortcut);if(cost
                   :id="'hi-pos-option-'+index" type="button" role="option"
                   :aria-selected="index===highlightedProductIndex"
                   :class="{active:index===highlightedProductIndex}"
-                  @mouseenter="highlightedProductIndex=index" @mousedown.prevent="chooseProduct(p)">
+                  @mouseenter="highlightedProductIndex=index" @pointerdown.prevent="chooseProduct(p)">
                   <span class="hi-pos-result-thumb" aria-hidden="true">{{p.name.slice(0,2).toUpperCase()}}</span>
                   <span class="hi-pos-result-main"><strong>{{p.name}}</strong><small>{{p.brand||p.category||'Product'}} · {{p.unit||'Pcs'}}</small></span>
                   <span class="hi-pos-result-value"><strong>{{money(p.sellingPrice)}}</strong>
@@ -922,7 +922,7 @@ onBeforeUnmount(()=>{window.removeEventListener('keydown',onPosShortcut);if(cost
 .hisabiq-pos .hi-pos-heading-title .hi-pos-bn{font-size:13px}
 .hisabiq-pos .hi-pos-heading-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .hisabiq-pos .hi-pos-shortcuts{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--hiq-muted);white-space:nowrap}
-.hisabiq-pos kbd{font:400 10px/1.4 inherit;padding:1px 5px;border:1px solid #d5dde6;border-radius:4px;background:var(--hiq-canvas);color:var(--hiq-ink-700)}
+.hisabiq-pos kbd{font-size:10px;line-height:1.4;font-weight:400;padding:1px 5px;border:1px solid #d5dde6;border-radius:4px;background:var(--hiq-canvas);color:var(--hiq-ink-700)}
 .hisabiq-pos .hi-pos-print{display:flex;gap:6px;align-items:center}
 .hisabiq-pos .hi-pos-print input{width:150px}
 .hisabiq-pos .hi-pos-session-start{display:grid;grid-template-columns:minmax(0,1fr) 160px 180px auto;align-items:end;gap:10px;border:1px solid var(--hiq-line);border-radius:10px;background:#fff;box-shadow:var(--hiq-shadow);padding:14px}
