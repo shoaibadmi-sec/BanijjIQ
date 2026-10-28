@@ -1,0 +1,30 @@
+# Dependencies and build artifacts
+node_modules/
+dist/
+dist-server/
+.wrangler/
+*.tsbuildinfo
+*.log
+
+# Live credentials and private runtime configuration
+.env
+.env.*
+!.env.example
+wrangler.jsonc
+
+# Real business data, backups and downloaded patches
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+backup*.sql
+*.backup
+RefactoreZIP/
+Download/
+*.zip
+*.pdf
+
+# Editor and machine-specific files
+.DS_Store
+.idea/
+.vscode/

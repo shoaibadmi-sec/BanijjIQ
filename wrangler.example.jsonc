@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "banijjiq",
+  "main": "server/runtime/cloudflare.ts",
+  "compatibility_date": "2026-08-22",
+
+  "assets": {
+  "directory": "./dist",
+  "binding": "ASSETS",
+  "not_found_handling": "single-page-application"
+},
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "banijjiq-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

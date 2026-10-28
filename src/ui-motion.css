@@ -1,0 +1,243 @@
+/* SherERP global module entrance animation fix.
+   This file extends the existing shared motion layer so every module root
+   receives the same subtle "rise in" animation as Purchase. */
+
+/* Every active module is rendered as a direct child of AppShell's .content slot.
+   v-if mounts a fresh root when the user changes modules, which naturally
+   replays this animation without adding per-module JavaScript.
+
+   IMPORTANT: do not use animation-fill-mode: forwards/both here. A retained
+   transform (even translateY(0)) creates a containing block for descendant
+   position:fixed overlays, which can make modal tops inaccessible after the
+   content area has scrolled. Let transform return to its normal `none` state
+   when the entrance animation finishes. */
+.content > * {
+  animation: shererp-module-enter 180ms cubic-bezier(.2,.75,.25,1);
+}
+
+/* Keep Purchase's internal tab motion for New / Planner / Invoice / Return. */
+.legacy-purchase .tab-panel,
+.tab-panel,
+.module-tab-panel,
+.workspace-panel {
+  animation: shererp-module-enter 180ms cubic-bezier(.2,.75,.25,1);
+}
+
+@keyframes shererp-module-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Maintain clean tab strips without visible scrollbars. */
+.legacy-purchase .tabs,
+.legacy-tabs,
+.mobile-module-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.legacy-purchase .tabs::-webkit-scrollbar,
+.legacy-tabs::-webkit-scrollbar,
+.mobile-module-tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Accessibility. */
+@media (prefers-reduced-motion: reduce) {
+  .content > *,
+  .legacy-purchase .tab-panel,
+  .tab-panel,
+  .module-tab-panel,
+  .workspace-panel {
+    animation: none !important;
+  }
+}
+
+
+/* Desktop shell full-width fix.
+   The sidebar is fixed on desktop, so make the main column explicitly occupy
+   the remaining viewport width instead of relying on flex sizing. */
+@media (min-width: 861px) {
+  #app {
+    width: 100%;
+    max-width: none;
+  }
+
+  .main {
+    width: calc(100vw - var(--sidebar-current-width));
+    max-width: none;
+    min-width: 0;
+    flex: 0 0 calc(100vw - var(--sidebar-current-width));
+  }
+
+  .content {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* Module roots should use the available desktop canvas. Individual forms,
+     modals and intentionally compact controls can still keep their own width. */
+  .content > * {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+}
+
+
+/* Business-grouped sidebar navigation.
+   Keeps the existing module keys/routes and only changes presentation/order. */
+.shell-nav-groups {
+  padding: 10px 8px 14px;
+  scrollbar-width: thin;
+}
+
+.shell-nav-group {
+  margin: 0 0 14px;
+}
+
+.shell-nav-group:last-child {
+  margin-bottom: 0;
+}
+
+.shell-nav-group-label {
+  padding: 5px 10px 6px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: .075em;
+  color: var(--color-text-muted);
+  opacity: .72;
+  user-select: none;
+}
+
+.shell-nav-group .nav-item {
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 2px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.shell-nav-group .nav-item.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.shell-nav-icon {
+  width: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.shell-nav-group .nav-item-text {
+  min-width: 0;
+  flex: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .shell-nav-group .nav-item:not(.active):hover {
+    background: rgba(100, 116, 139, .08);
+    color: var(--color-text);
+  }
+}
+
+/* On smaller devices the same grouped hierarchy remains readable inside
+   the slide-out sidebar. */
+@media (max-width: 860px) {
+  .shell-nav-group {
+    margin-bottom: 12px;
+  }
+
+  .shell-nav-group-label {
+    padding-left: 12px;
+  }
+}
+
+/* Compact desktop sidebar: user-toggleable and automatic for narrow desktop/split-screen widths. */
+.sidebar.compact .shell-nav-groups { padding-inline: 7px; }
+.sidebar.compact .shell-nav-group { margin-bottom: 8px; }
+.sidebar.compact .shell-nav-group-label {
+  height: 1px;
+  margin: 7px 5px;
+  padding: 0;
+  overflow: hidden;
+  color: transparent;
+  background: var(--color-border);
+  opacity: .85;
+}
+.sidebar.compact .shell-nav-group:first-child .shell-nav-group-label { display: none; }
+.sidebar.compact .shell-nav-group .nav-item {
+  min-height: 44px;
+  padding: 8px;
+  justify-content: center;
+  gap: 0;
+}
+.sidebar.compact .shell-nav-icon {
+  width: 28px;
+  flex-basis: 28px;
+  font-size: 17px;
+}
+.sidebar.compact .nav-item-text { display: none; }
+@media (max-width: 860px) {
+  .sidebar.compact { width: var(--sidebar-width); }
+  .sidebar.compact .shop-name, .sidebar.compact .sidebar-footer { display: block; }
+  .sidebar.compact .shell-nav-group-label { height: auto; margin: 0; padding: 5px 12px 6px; overflow: visible; color: var(--color-text-muted); background: transparent; }
+  .sidebar.compact .shell-nav-group .nav-item { justify-content: flex-start; gap: 10px; padding: 10px 12px; }
+  .sidebar.compact .nav-item-text { display: flex; }
+}
+
+/* Sidebar collapse control: always available on desktop and on an open mobile drawer. */
+.sidebar-header { position: relative; }
+.sidebar-collapse-toggle {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border, #d8e0ea);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-muted, #64748b);
+  font: inherit;
+  font-size: 21px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
+}
+.sidebar-collapse-toggle:hover {
+  color: var(--color-primary, #2563eb);
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 35%, var(--color-border, #d8e0ea));
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 7%, var(--color-surface, #fff));
+}
+.sidebar-collapse-toggle:active { transform: scale(.96); }
+.sidebar.compact .sidebar-collapse-toggle {
+  position: absolute;
+  right: -13px;
+  top: 17px;
+  z-index: 3;
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+  border-radius: 999px;
+  background: var(--color-surface, #fff);
+}
+@media (max-width: 860px) {
+  .sidebar.compact .sidebar-collapse-toggle { position: static; width: 30px; height: 30px; border-radius: 8px; }
+}
