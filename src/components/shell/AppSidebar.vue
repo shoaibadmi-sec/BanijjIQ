@@ -8,7 +8,10 @@ const props = defineProps<{
   open: boolean;
   compact?: boolean;
   footerText?: string;
+  footerHint?: string;
 }>();
+
+const initials = computed(() => (props.footerText || 'SE').trim().split(/\s+/).filter(Boolean).map(part => part.charAt(0)).slice(0, 2).join('').toUpperCase() || 'SE');
 
 const emit = defineEmits<{
   select: [key: string];
@@ -65,46 +68,22 @@ const visibleGroups = computed(() => {
 <template>
   <aside class="sidebar" :class="{ open, compact }">
     <div class="sidebar-header">
-      <div class="logo-mark">SE</div>
-      <div class="shop-name">SherERP<br><span class="bn-hint">ব্যবসা ব্যবস্থাপনা</span></div>
-      <button
-        type="button"
-        class="sidebar-collapse-toggle"
-        :aria-label="compact ? 'Expand sidebar' : 'Collapse sidebar'"
-        :title="compact ? 'Expand sidebar' : 'Collapse sidebar'"
-        @click="emit('toggle')"
-      >{{ compact ? '›' : '‹' }}</button>
+      <div class="logo-mark" aria-hidden="true">S</div>
+      <div class="shop-name">SHER<strong>ERP</strong><span class="bn-hint">Bangladesh's Smart ERP</span></div>
+      <button type="button" class="sidebar-collapse-toggle" :aria-label="open ? 'Close navigation' : (compact ? 'Expand sidebar' : 'Collapse sidebar')" :title="open ? 'Close navigation' : (compact ? 'Expand sidebar' : 'Collapse sidebar')" @click="emit('toggle')">{{ open ? '×' : (compact ? '›' : '‹') }}</button>
     </div>
-
     <nav class="nav-list shell-nav-groups" aria-label="Main navigation">
-      <section
-        v-for="group in visibleGroups"
-        :key="group.key"
-        class="shell-nav-group"
-        :aria-label="group.label"
-      >
+      <section v-for="group in visibleGroups" :key="group.key" class="shell-nav-group" :aria-label="group.label">
         <div class="shell-nav-group-label">{{ group.label }}</div>
-
-        <button
-          v-for="item in group.items"
-          :key="item.key"
-          type="button"
-          class="nav-item shell-nav-button"
-          :class="{ active: activeKey === item.key }"
-          :aria-current="activeKey === item.key ? 'page' : undefined"
-          :aria-label="compact ? `${item.label} — ${item.hint}` : undefined"
-          :title="compact ? `${item.label} — ${item.hint}` : undefined"
-          @click="emit('select', item.key)"
-        >
+        <button v-for="item in group.items" :key="item.key" type="button" class="nav-item shell-nav-button" :class="{ active: activeKey === item.key }" :aria-current="activeKey === item.key ? 'page' : undefined" :aria-label="compact ? item.label + ' — ' + item.hint : undefined" :title="compact ? item.label + ' — ' + item.hint : undefined" @click="emit('select', item.key)">
           <span class="shell-nav-icon" aria-hidden="true">{{ item.icon }}</span>
-          <span class="nav-item-text">
-            {{ item.label }}
-            <span class="bn-hint">{{ item.hint }}</span>
-          </span>
+          <span class="nav-item-text">{{ item.label }}<span class="bn-hint">{{ item.hint }}</span></span>
         </button>
       </section>
     </nav>
-
-    <div class="sidebar-footer">{{ footerText || 'SherERP' }}</div>
+    <div class="sidebar-footer"><div class="sidebar-business">
+      <span class="sidebar-business-icon" aria-hidden="true">{{ initials }}</span>
+      <span class="sidebar-business-copy"><strong>{{ footerText || 'SherERP' }}</strong><span>{{ footerHint || 'Workspace' }}</span></span>
+    </div></div>
   </aside>
 </template>

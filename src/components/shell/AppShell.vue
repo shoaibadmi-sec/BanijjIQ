@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppSidebar from './AppSidebar.vue';
+import AppBottomNav from './AppBottomNav.vue';
 import AppTopBar from './AppTopBar.vue';
 import GlobalHorizontalScroll from './GlobalHorizontalScroll.vue';
 import type { ShellNavItem } from './types';
@@ -64,7 +65,8 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
     :active-key="props.activeModule"
     :open="props.sidebarOpen"
     :compact="sidebarCompact"
-    footer-text="Cloudflare D1 Product Module"
+    :footer-text="props.userName"
+    :footer-hint="props.userRole"
     @select="selectModule"
     @toggle="toggleNavigation"
   />
@@ -93,4 +95,5 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize));
 
     <GlobalHorizontalScroll />
   </main>
+  <AppBottomNav :items="props.navItems" :active-key="props.activeModule" @select="selectModule" @more="emit('update:sidebarOpen', true)" />
 </template>
