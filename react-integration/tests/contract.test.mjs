@@ -18,7 +18,8 @@ test('real backend authentication and read-only bootstrap use existing BanijjIQ 
   assert.ok(gate.includes('Products and basic POS use the real API'));
   const products=read('overlay/src/integration/LiveProductsPage.tsx');
   assert.ok(products.includes('getBootstrap()'));
-  assert.ok(products.includes('Read only'));
+  assert.ok(products.includes('LiveProductEditor'));
+  assert.ok(products.includes('canUseModule(user,\'products\',\'edit\')'));
 });
 
 test('main HisabIQ Products and POS routes are replaced, demos remain explicitly separate', () => {
@@ -48,4 +49,17 @@ test('ambiguous network failures do not encourage duplicate sale posting', () =>
   assert.ok(pos.includes('setOutcomeUnknown(true)'));
   assert.ok(pos.includes('Check recent invoices for this phone'));
   assert.ok(pos.includes('I checked Sales and confirmed this invoice was not posted'));
+});
+
+test('live product editor uses safe catalog route and avoids stock mutation', () => {
+  const api=read('overlay/src/integration/banijjApi.ts');
+  const editor=read('overlay/src/integration/LiveProductEditor.tsx');
+  assert.ok(api.includes("'/api/products/' + encodeURIComponent(productId) + '/catalog'"));
+  assert.ok(api.includes("'/api/products'"));
+  assert.ok(editor.includes('AddProductDialog'));
+  assert.ok(editor.includes('Stock and lot changes'));
+  assert.ok(editor.includes('expectedUpdatedAt:product.updatedAt'));
+  assert.ok(editor.includes('createBasicProduct(payload)'));
+  assert.ok(editor.includes('updateProductCatalog(product.productId'));
+  assert.ok(editor.includes('pending.current=true'));
 });

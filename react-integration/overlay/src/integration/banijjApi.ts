@@ -16,6 +16,12 @@ export interface BackendProduct {
   unit: string;
   barcode: string;
   sellingPrice: number;
+  purchasePrice: number;
+  minimumStock: number;
+  trackSerial: boolean | number;
+  trackExpiry: boolean | number;
+  trackWarranty: boolean | number;
+  updatedAt: string;
   currentStock: number;
   sellableStock?: number;
   status: string;
@@ -101,3 +107,20 @@ export const postSale = (payload: PosSalePayload) =>
 export const getSalesByPhone = (phone: string) =>
   request<{ ok: true; sales: Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }> }>(
     '/api/pos/sales-by-phone?phone=' + encodeURIComponent(phone));
+
+/** Product creation uses the existing BanijjIQ API and creates the opening FIFO lot when needed. */
+export interface BasicProductInput {
+  productName: string; brand: string; category: string; unit: string; barcode: string;
+  purchasePrice: number; sellingPrice: number; minimumStock: number; currentStock: number;
+  status: 'Active' | 'Inactive'; trackSerial: false; trackExpiry: false; trackWarranty: false;
+  warrantyPeriodValue: 0; warrantyPeriodUnit: 'Months';
+}
+export type ProductCatalogEdit = Pick<BasicProductInput,
+  'productName' | 'brand' | 'category' | 'barcode' | 'purchasePrice' | 'sellingPrice' | 'minimumStock'
+> & { expectedUpdatedAt: string };
+export const createBasicProduct = (payload: BasicProductInput) =>
+  request<{ ok: true; productId: string }>('/api/products', { method: 'POST', body: JSON.stringify(payload) });
+export const updateProductCatalog = (productId: string, payload: ProductCatalogEdit) =>
+  request<{ ok: true; productId: string }>('/api/products/' + encodeURIComponent(productId) + '/catalog', {
+    method: 'PUT', body: JSON.stringify(payload)
+  });

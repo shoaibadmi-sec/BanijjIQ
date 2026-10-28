@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Search, X } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
@@ -8,6 +8,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/Table';
 import { canUseModule, useBackendSession } from './BackendGate';
 import { getBootstrap, type BackendProduct } from './banijjApi';
+import { LiveProductEditor } from './LiveProductEditor';
 
 type StockFilter = 'all' | 'low' | 'out';
 const qty = (n: number) => Number(n || 0).toLocaleString('en-BD');
@@ -16,6 +17,10 @@ const price = (n: number) => '৳' + Number(n || 0).toLocaleString('en-BD', { ma
 export function LiveProductsPage() {
   const user = useBackendSession();
   const permitted = canUseModule(user, 'products');
+  const canAdd = canUseModule(user,'products','add');
+  const canEdit = canUseModule(user,'products','edit');
+  const [editing,setEditing] = useState<BackendProduct | null | undefined>(undefined);
+  const [notice,setNotice] = useState('');
   const [products, setProducts] = useState<BackendProduct[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -51,17 +56,20 @@ export function LiveProductsPage() {
         .some(v => String(v || '').toLocaleLowerCase().includes(term));
     });
   }, [products, category, stockFilter, query]);
+  if (editing !== undefined) return <LiveProductEditor key={editing?.productId || 'new'} product={editing} onCancel={()=>setEditing(undefined)} onDone={savedId=>{setEditing(undefined);setReload(v=>v+1);setNotice('Product saved to BanijjIQ · '+savedId);}} />;
   if (!permitted) return <section className="rounded-xl border border-danger bg-danger-bg p-4 text-sm text-danger" role="alert">
     You do not have permission to view products. · পণ্য দেখার অনুমতি নেই
   </section>;
   return <section className="mx-auto max-w-[1440px] space-y-4" data-live-products>
     <PageHeader title="Products" titleBn="পণ্য" description="Real stock and selling prices from BanijjIQ."
       actions={<div className="flex items-center gap-2">
-        <StatusBadge tone="teal">Live · Read only</StatusBadge>
+        <StatusBadge tone="teal">Live · Catalog editing</StatusBadge>
+        {canAdd && <Button size="sm" onClick={() => setEditing(null)}><Plus className="size-3.5"/> Add Product</Button>}
         <Button variant="outline" size="sm" onClick={() => setReload(n => n + 1)} disabled={loading}>
           <RefreshCw className="size-3.5" /> Refresh
         </Button>
       </div>} />
+    {notice && <p className="rounded-lg bg-success-bg p-2 text-sm text-success" role="status">{notice}</p>}
     <div className="grid grid-cols-3 gap-2">
       {([
         { key: 'all' as StockFilter, title: 'Products', bn: 'মোট পণ্য', count: active.length },
@@ -97,7 +105,7 @@ export function LiveProductsPage() {
           Barcode
         </label>
       </div>
-      <p className="text-xs text-ink-500">{visible.length} records · No edits, sales or stock changes are made from this screen.</p>
+      <p className="text-xs text-ink-500">{visible.length} records · Catalog edits are supported for basic products. Stock and lot changes are not.</p>
       {error && <p className="rounded-md bg-danger-bg p-3 text-sm text-danger" role="alert">{error}</p>}
       {loading && <p className="p-5 text-center text-sm text-ink-500" role="status">Loading live products…</p>}
       {!loading && !error && <div className="overflow-x-auto">
@@ -105,7 +113,7 @@ export function LiveProductsPage() {
           <TableHeader><TableRow>
             <TableHead>Product · পণ্য</TableHead><TableHead>Category</TableHead><TableHead>Unit</TableHead>
             <TableHead className="text-right">Stock</TableHead><TableHead className="text-right">Selling</TableHead>
-            <TableHead className="text-right">Status</TableHead>
+            <TableHead className="text-right">Status</TableHead><TableHead className="text-right">Actions</TableHead>
           </TableRow></TableHeader>
           <TableBody>{visible.map(p => {
             const stock = Number(p.sellableStock ?? p.currentStock);
@@ -123,12 +131,19 @@ export function LiveProductsPage() {
               <TableCell className="text-right"><StatusBadge tone={p.status === 'Inactive' ? 'neutral' : stock <= 0 ? 'danger' : isLow ? 'warning' : 'success'}>
                 {p.status === 'Inactive' ? 'Inactive' : stock <= 0 ? 'Out' : isLow ? 'Low' : 'In stock'}
               </StatusBadge></TableCell>
+              <TableCell className="text-right">
+                {canEdit && !p.trackSerial && !p.trackExpiry && !p.trackWarranty ?
+                  <Button variant="outline" size="sm" onClick={()=>setEditing(p)} aria-label={'Edit '+p.productName}>
+                    <Pencil className="size-3.5"/> Edit
+                  </Button>:
+                  <span className="text-[11px] text-ink-400">Advanced / restricted</span>}
+              </TableCell>
             </TableRow>;
           })}</TableBody>
         </Table>
         {!visible.length && <p className="p-5 text-center text-sm text-ink-500">No products found · কোনো পণ্য পাওয়া যায়নি</p>}
       </div>}
     </div>
-    <p className="text-xs text-ink-500">Product creation, edits, stock adjustments and lot operations will be enabled after their backend forms and validations are integrated.</p>
+    <p className="text-xs text-ink-500">Basic product creation and catalog edits are live. Stock adjustments, serial/expiry, warranty, multi-unit products and lot operations remain in the existing Vue ERP.</p>
   </section>;
 }
