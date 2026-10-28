@@ -848,3 +848,27 @@ export function completeBatchSalesReturn(payload: {
 }): Promise<{ok:true;batchId:string;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>;totalReturnAmount:number}> {
   return request('/api/sales-returns/batch',{method:'POST',body:JSON.stringify(payload)});
 }
+
+
+export interface BundleComponent { productId:string; name?:string; quantityPerSet:number; unit?:string; currentStock?:number }
+export interface BundleDefinition {
+  productId:string;productName:string;brand:string;category:string;barcode:string;
+  sellingPrice:number;status:'Active'|'Inactive';revision:number;availableSets:number;stockUnit:'Set';
+  components:BundleComponent[];
+}
+export type BundleForm={productName:string;brand:string;category:string;barcode:string;sellingPrice:number;expectedRevision?:number;components:BundleComponent[]};
+export async function listBundles(): Promise<{ok:true;bundles:BundleDefinition[]}> {
+  return request('/api/bundles');
+}
+export async function getBundle(id:string): Promise<{ok:true;bundle:BundleDefinition}> {
+  return request(`/api/bundles/${encodeURIComponent(id)}`);
+}
+export async function createBundle(payload:BundleForm):Promise<{ok:true;productId:string;revision:number}> {
+  return request('/api/bundles',{method:'POST',body:JSON.stringify(payload)});
+}
+export async function updateBundle(id:string,payload:BundleForm):Promise<{ok:true;productId:string;revision:number;recipeChanged:boolean}> {
+  return request(`/api/bundles/${encodeURIComponent(id)}`,{method:'PUT',body:JSON.stringify(payload)});
+}
+export async function deactivateBundle(id:string):Promise<{ok:true}> {
+  return request(`/api/bundles/${encodeURIComponent(id)}`,{method:'DELETE'});
+}

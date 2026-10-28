@@ -146,7 +146,7 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     if (!productId) return error(`Line ${i + 1}: product is required.`);
     if (quantity <= 0) return error(`Line ${i + 1}: quantity must be greater than zero.`);
     if (unitPrice < 0) return error(`Line ${i + 1}: unit price must be a valid number.`);
-    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND status <> 'Inactive'`).bind(productId).first<ProductRow>();
+    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND product_type='Standard' AND status <> 'Inactive' AND product_type='Standard'`).bind(productId).first<ProductRow>();
     if (!product) return error(`Line ${i + 1}: product no longer exists.`);
     const already = stockByProduct.get(productId) ?? Number(product.current_stock || 0);
     stockByProduct.set(productId, Math.round((already + quantity) * 10000) / 10000);
@@ -342,7 +342,7 @@ async function normalizePurchaseLines(db: SherDatabase, items: PurchaseLineInput
     if (!productId) throw new Error(`Line ${i + 1}: product is required.`);
     if (quantity <= 0) throw new Error(`Line ${i + 1}: quantity must be greater than zero.`);
     if (unitPrice < 0) throw new Error(`Line ${i + 1}: unit price must be a valid number.`);
-    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
+    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND product_type='Standard'`).bind(productId).first<ProductRow>();
     if (!product) throw new Error(`Line ${i + 1}: product no longer exists.`);
     normalized.push({ product, qty: quantity, unitPrice, lineTotal: Math.round(quantity * unitPrice * 10000) / 10000, sellingPrice, tracking: item.tracking });
   }
@@ -382,7 +382,7 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
     const newQty = newItem?.qty ?? 0;
     const delta = Math.round((newQty - oldQty) * 10000) / 10000;
     if (delta === 0) continue;
-    const product = newItem?.product ?? await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
+    const product = newItem?.product ?? await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND product_type='Standard'`).bind(productId).first<ProductRow>();
     if (!product) return error('A product on this purchase no longer exists.');
     const newStock = Math.round((Number(product.current_stock || 0) + delta) * 10000) / 10000;
     if (delta < 0) {

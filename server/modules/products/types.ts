@@ -22,6 +22,7 @@ export type ProductInput = {
 };
 
 export type ProductRow = {
+  product_type?: 'Standard' | 'Bundle';
   product_id: string;
   product_name: string;
   brand: string;

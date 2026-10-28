@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { notifySuccess, notifyError } from './utils/notify';
+const BundleEditorDialog = defineAsyncComponent(() => import('./components/BundleEditorDialog.vue'));
 const ProductUnitConversionsDialog = defineAsyncComponent(() => import('./components/ProductUnitConversionsDialog.vue'));
 const PosPanel = defineAsyncComponent(() => import('./components/PosPanel.vue'));
 const SalesPanel = defineAsyncComponent(() => import('./components/SalesPanel.vue'));
@@ -192,6 +193,8 @@ const modal = ref<ModalName>('');
 const editingId = ref<string | null>(null);
 const stockProduct = ref<Product | null>(null);
 const conversionProduct = ref<Product | null>(null);
+const bundleEditorProductId = ref<string | null>(null);
+const showBundleEditor = ref(false);
 const lotsProduct = ref<Product | null>(null);
 const lots = ref<StockLot[]>([]);
 const manageMode = ref<ManageMode>('category');
@@ -1768,12 +1771,12 @@ onBeforeUnmount(() => {
               <select v-model="stockFilter" aria-label="Filter by stock"><option value="">All stock</option><option value="in">In stock</option><option value="low">Low stock</option><option value="out">Out of stock</option><option value="negative">Negative stock</option></select>
               <select v-model="statusFilter" aria-label="Filter by status"><option value="">All status</option><option value="Active">Active</option><option value="Inactive">Inactive</option></select>
               <select v-model="productSort" aria-label="Sort products"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="brand-asc">Brand A–Z</option><option value="brand-desc">Brand Z–A</option><option value="category-asc">Category A–Z</option><option value="category-desc">Category Z–A</option><option value="status-asc">Status A–Z</option><option value="status-desc">Status Z–A</option><option value="stock-desc">Stock Qty: High → Low</option><option value="stock-asc">Stock Qty: Low → High</option><option value="value-desc">Stock Value: High → Low</option><option value="value-asc">Stock Value: Low → High</option><option value="purchase-desc">Purchase Price: High → Low</option><option value="purchase-asc">Purchase Price: Low → High</option><option value="selling-desc">Selling Price: High → Low</option><option value="selling-asc">Selling Price: Low → High</option></select>
-              <div class="toolbar-spacer"></div><button class="btn btn-primary" @click="openAddProduct">+ Add Product</button>
+              <div class="toolbar-spacer"></div><button type="button" class="btn" @click="bundleEditorProductId=null;showBundleEditor=true">+ Add Bundle</button><button class="btn btn-primary" @click="openAddProduct">+ Add Product</button>
             </div>
             <div class="card" style="padding:0;">
               <div class="table-scroll"><table class="responsive-table product-table"><thead><tr><SortableHeader table-id="products" column="productName">Product</SortableHeader><SortableHeader table-id="products" column="brand">Brand</SortableHeader><SortableHeader table-id="products" column="category">Category</SortableHeader><SortableHeader table-id="products" column="purchasePrice" type="number" class="num">Purchase Price</SortableHeader><SortableHeader table-id="products" column="sellingPrice" type="number" class="num">Selling Price</SortableHeader><SortableHeader table-id="products" column="currentStock" type="number" class="num">Stock Qty</SortableHeader><SortableHeader table-id="products" column="stockValue" type="number" class="num">Stock Value</SortableHeader><SortableHeader table-id="products" column="status">Status</SortableHeader><th></th></tr></thead><tbody>
                 <tr v-if="loading"><td colspan="9">Loading products...</td></tr>
-                <tr v-for="product in filteredProducts" :key="product.productId"><td data-label="Product" class="primary-cell"><strong>{{ product.displayName || product.productName }}</strong><br><span class="bn-hint mono">{{ product.productId }}</span></td><td data-label="Brand">{{ product.brand || '-' }}</td><td data-label="Category">{{ product.category || '-' }}</td><td data-label="Purchase" class="num mono">{{ formatMoney(product.purchasePrice) }}</td><td data-label="Selling" class="num mono">{{ formatMoney(product.sellingPrice) }}</td><td data-label="Stock" class="num mono" :class="{ dangerText: Number(product.currentStock) === 0, warningText: Number(product.currentStock) > 0 && Number(product.currentStock) <= Number(product.minimumStock) }">{{ formatQty(product.currentStock) }}</td><td data-label="Stock Value" class="num mono">{{ formatMoney(product.stockValue) }}</td><td data-label="Status"><span class="badge" :class="product.status === 'Active' ? 'badge-success' : 'badge-danger'">{{ product.status }}</span></td><td data-label="Actions" class="row-actions action-cell"><button class="btn btn-sm action-trigger" @click="openProductActions($event, product)">Actions</button></td></tr>
+                <tr v-for="product in filteredProducts" :key="product.productId"><td data-label="Product" class="primary-cell"><strong>{{ product.displayName || product.productName }}</strong><span v-if="product.productType==='Bundle'" class="badge" style="margin-left:5px">Bundle · Setup</span><br><span class="bn-hint">{{ product.productId }}</span></td><td data-label="Brand">{{ product.brand || '-' }}</td><td data-label="Category">{{ product.category || '-' }}</td><td data-label="Purchase" class="num mono">{{ formatMoney(product.purchasePrice) }}</td><td data-label="Selling" class="num mono">{{ formatMoney(product.sellingPrice) }}</td><td data-label="Stock" class="num mono" :class="{ dangerText: Number(product.currentStock) === 0, warningText: Number(product.currentStock) > 0 && Number(product.currentStock) <= Number(product.minimumStock) }">{{ product.productType==='Bundle' ? formatQty(product.availableSets) + ' sets' : formatQty(product.currentStock) }}</td><td data-label="Stock Value" class="num mono">{{ formatMoney(product.stockValue) }}</td><td data-label="Status"><span class="badge" :class="product.status === 'Active' ? 'badge-success' : 'badge-danger'">{{ product.status }}</span></td><td data-label="Actions" class="row-actions action-cell"><button class="btn btn-sm action-trigger" @click="openProductActions($event, product)">Actions</button></td></tr>
               </tbody></table></div><div class="empty-state" v-if="!loading && filteredProducts.length === 0">No products yet. Click "Add Product".</div>
             </div>
           </template>
@@ -2162,13 +2165,14 @@ onBeforeUnmount(() => {
       @click.stop
     >
       <template v-if="actionMenu.type === 'product' && actionMenu.product">
-        <button @click="runAction(() => openEditProduct(actionMenu!.product!))">Edit</button>
-        <button @click="runAction(() => { conversionProduct = actionMenu!.product!; })">Multi-unit</button>
-        <button @click="runAction(() => openStock(actionMenu!.product!))">Stock</button>
-        <button @click="runAction(() => openLots(actionMenu!.product!))">Lots</button>
+        <button v-if="actionMenu.product.productType==='Bundle'" @click="runAction(() => { bundleEditorProductId=actionMenu!.product!.productId;showBundleEditor=true; })">Edit Bundle</button>
+        <button v-else @click="runAction(() => openEditProduct(actionMenu!.product!))">Edit</button>
+        <button v-if="actionMenu.product.productType!=='Bundle'" @click="runAction(() => { conversionProduct = actionMenu!.product!; })">Multi-unit</button>
+        <button v-if="actionMenu.product.productType!=='Bundle'" @click="runAction(() => openStock(actionMenu!.product!))">Stock</button>
+        <button v-if="actionMenu.product.productType!=='Bundle'" @click="runAction(() => openLots(actionMenu!.product!))">Lots</button>
         <button @click="runAction(() => toggleStatus(actionMenu!.product!))">{{ actionMenu.product.status === 'Active' ? 'Deactivate' : 'Activate' }}</button>
         <div class="action-dropdown-separator"></div>
-        <button class="danger" @click="runAction(() => removeProduct(actionMenu!.product!))">Delete</button>
+        <button v-if="actionMenu.product.productType!=='Bundle'" class="danger" @click="runAction(() => removeProduct(actionMenu!.product!))">Delete</button>
       </template>
       <template v-else-if="actionMenu.type === 'purchase' && actionMenu.purchase">
         <button @click="runAction(() => viewPurchase(actionMenu!.purchase!))">View</button>
@@ -2247,6 +2251,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <BundleEditorDialog v-if="showBundleEditor" :product-id="bundleEditorProductId||undefined" :products="products" @close="showBundleEditor=false;bundleEditorProductId=null" @saved="load" />
     <ProductUnitConversionsDialog v-if="conversionProduct" :product-id="conversionProduct.productId" :product-name="conversionProduct.productName" :base-unit="conversionProduct.unit" @close="conversionProduct=null" @saved="load" />
     <div class="modal-overlay" v-if="modal === 'product'">
       <div class="modal">

@@ -1,9 +1,9 @@
 name: Mohim ERP parity integration
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/mohim-combined-parity]
   push:
-    branches: [main]
+    branches: [main, feat/mohim-combined-parity]
 permissions:
   contents: read
 jobs:

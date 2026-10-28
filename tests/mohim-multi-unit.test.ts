@@ -29,7 +29,7 @@ test('D1-compatible unit rules and actual POS posting keep canonical stock and p
   const user = {userId:'usr-1',fullName:'Tester',phone:'',role:'Admin',status:'Active'};
   try {
     const migration = runMigrations(db.native,resolve('migrations'));
-    assert.equal(migration.applied.length,28);
+    assert.equal(migration.applied.length,29);
     assert.ok(migration.applied.includes('0028_product_unit_conversions.sql'));
 
     db.native.prepare('INSERT INTO app_users (user_id,full_name,phone,password_hash,password_salt) VALUES (?,?,?,?,?)')

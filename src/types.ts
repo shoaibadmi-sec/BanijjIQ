@@ -41,6 +41,9 @@ export interface LookupItem {
 }
 
 export interface Product {
+  productType?: 'Standard' | 'Bundle';
+  bundleRevision?: number;
+  availableSets?: number|null;
   productId: string;
   productName: string;
   displayName?: string;
