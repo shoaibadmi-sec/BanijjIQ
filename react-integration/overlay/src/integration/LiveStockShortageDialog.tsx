@@ -10,9 +10,10 @@ export type ShortageSelection =
   | {mode:'negative'}
   | {mode:'vendor';vendorId:string;vendorUnitCost:number};
 
-export function LiveStockShortageDialog({open,onOpenChange,name,qty,stock,vendors,onApply}:{
+export function LiveStockShortageDialog({open,onOpenChange,name,qty,stock,vendors,onApply,onVendorCreated}:{
   open:boolean;onOpenChange:(open:boolean)=>void;name:string;qty:number;stock:number;
-  vendors:PosVendor[];onApply:(selection:ShortageSelection,clampedQty:number)=>void
+  vendors:PosVendor[];onApply:(selection:ShortageSelection,clampedQty:number)=>void;
+  onVendorCreated:(vendor:PosVendor)=>void
 }) {
   const [choice,setChoice]=useState<'own'|'negative'|'vendor'>('own');
   const [vendorId,setVendorId]=useState('');
@@ -42,6 +43,7 @@ export function LiveStockShortageDialog({open,onOpenChange,name,qty,stock,vendor
     try{
       const result=await createPosVendor(newName.trim(),newPhone.trim());
       setVendorsLocal(existing=>[...existing,result.vendor]);
+      onVendorCreated(result.vendor);
       setVendorId(result.vendor.id);setNewName('');setNewPhone('');
     }catch(e){setError(e instanceof Error?e.message:'Could not save vendor');}
     finally{setAdding(false);}
