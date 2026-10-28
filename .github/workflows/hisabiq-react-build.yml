@@ -5,6 +5,7 @@ on:
       - '.gitmodules'
       - 'apps/hisabiq-web'
       - 'react-integration/**'
+      - 'server/modules/products/**'
       - 'scripts/prepare-hisabiq-react.mjs'
       - '.github/workflows/hisabiq-react-build.yml'
       - 'package.json'
@@ -28,6 +29,10 @@ jobs:
         run: |
           git submodule status
           node --test react-integration/tests/contract.test.mjs
+      - name: Typecheck BanijjIQ backend
+        run: |
+          npm ci
+          npm run backend:build
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
       - name: Verify source submodule stays clean

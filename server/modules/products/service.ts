@@ -61,7 +61,7 @@ async function nextProductId(db: SherDatabase): Promise<string> {
   return `PRD-${String(last + 1).padStart(6, '0')}`;
 }
 
-async function ensureLookup(db: SherDatabase, table: 'product_categories' | 'product_brands' | 'product_units', name: string): Promise<{ id: string; name: string }> {
+export async function ensureLookup(db: SherDatabase, table: 'product_categories' | 'product_brands' | 'product_units', name: string): Promise<{ id: string; name: string }> {
   const value = cleanText(name);
   if (!value) throw new Error('Name is required');
   const column = table === 'product_categories' ? 'category_name' : table === 'product_brands' ? 'brand_name' : 'unit_name';

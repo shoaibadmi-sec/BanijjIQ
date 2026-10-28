@@ -27,6 +27,7 @@ import {
 } from './tracking.service.js';
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
+import { updateProductCatalog } from './catalog.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
 function cleanText(value: unknown): string {
@@ -82,6 +83,9 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
 
   const supplierWarrantyResolveMatch = path.match(/^\/api\/product-tracking\/supplier-warranty\/([^/]+)\/resolve$/);
   if (supplierWarrantyResolveMatch && request.method === 'POST') return resolveSupplierWarrantyRmaRoute(db, decodeURIComponent(supplierWarrantyResolveMatch[1]), await readBody<any>(request), user);
+
+  const catalogMatch = path.match(/^\/api\/products\/([^/]+)\/catalog$/);
+  if (catalogMatch && request.method === 'PUT') return updateProductCatalog(db, decodeURIComponent(catalogMatch[1]), await readBody<any>(request));
 
   const productMatch = path.match(/^\/api\/products\/([^/]+)$/);
   if (productMatch && request.method === 'PUT') return updateProduct(db, decodeURIComponent(productMatch[1]), await readBody<ProductInput>(request));
