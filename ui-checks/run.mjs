@@ -126,7 +126,7 @@ async function inspectLayout(page,label){
   if(info.documentWidth>info.viewport+3)
     results.warnings.push(label+': document overflows by '+(info.documentWidth-info.viewport)+'px');
 }
-const server=spawn('npm',['run','preview','--','--host','127.0.0.1','--port','4173','--strictPort'],
+const server=spawn(process.execPath,[join(web,'node_modules/vite/bin/vite.js'),'preview','--host','127.0.0.1','--port','4173','--strictPort'],
  {cwd:web,stdio:['ignore','pipe','pipe'],env:{...process.env,NO_COLOR:'1'}});
 let serverLogs='';
 for(const stream of [server.stdout,server.stderr])stream.on('data',c=>serverLogs+=String(c).slice(-2000));
