@@ -31,12 +31,19 @@ copyDirectory(overlay, web);
 const appPath = join(web, 'src/App.tsx');
 let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
-const routeAnchor = '<Route path="dashboard" element={<Dashboard />} />';
-if (!app.includes(importAnchor) || !app.includes(routeAnchor)) {
-  throw new Error('HisabIQ upstream routing changed; review the API integration before rebuilding');
+const posAnchor = '<Route path="pos" element={<Pos />} />';
+const productsAnchor = '<Route path="products" element={<Products />} />';
+if (![importAnchor, posAnchor, productsAnchor].every(anchor => app.includes(anchor))) {
+  throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
-app = app.replace(importAnchor,
-  "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));\n"+importAnchor);
-app = app.replace(routeAnchor, routeAnchor+'\n          <Route path="live-products" element={<LiveProducts />} />');
+app = app.replace(importAnchor, [
+  "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
+  "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
+  importAnchor
+].join('\n'));
+app = app.replace(posAnchor,
+  '<Route path="pos" element={<LivePos />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
+app = app.replace(productsAnchor,
+  '<Route path="products" element={<LiveProducts />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + read-only Products.');
+console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + read-only Products and backend-posted basic POS.');

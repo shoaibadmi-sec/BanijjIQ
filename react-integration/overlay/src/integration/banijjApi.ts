@@ -5,6 +5,7 @@ export interface BackendUser {
   phone: string;
   role: string;
   allowedModules?: string[] | null;
+  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean }> | null;
 }
 export interface BackendProduct {
   productId: string;
@@ -50,3 +51,40 @@ export const logout = () =>
   request<{ ok: true }>('/api/auth/logout', { method: 'POST' });
 export const getBootstrap = () =>
   request<{ ok: true; products: BackendProduct[] }>('/api/bootstrap');
+
+export interface PosProduct {
+  id: string; name: string; productName: string; brand: string; category: string; unit: string;
+  barcode: string; sellingPrice: number; stock: number; minimumStock: number;
+  trackSerial: boolean; trackExpiry: boolean; trackWarranty: boolean;
+}
+export interface PosCustomer {
+  id: string; name: string; phone: string; fatherName: string; address: string; currentDue: number;
+}
+export interface PosBankAccount { id: string; name: string; accountType: string }
+export interface PosBootstrap {
+  ok: true; products: PosProduct[]; customers: PosCustomer[]; bankAccounts: PosBankAccount[];
+  activeSession: { sessionId: string; openedAt: string; openingCash: number } | null;
+}
+export interface PosSaleLine {
+  productId: string; name: string; qty: number; unitPrice: number;
+  fulfillmentMode: 'own';
+}
+export interface PosSalePayload {
+  customerId?: string; customerName: string; customerPhone: string; customerAddress?: string;
+  customerFatherName?: string; discount: number; paymentType: 'Cash' | 'Due' | 'Partial';
+  paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking'; bankAccountId?: string;
+  items: PosSaleLine[];
+}
+export interface PosInvoice {
+  invoiceId: string; date: string; customerName: string; customerPhone: string;
+  grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
+}
+export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');
+export const startCashSession = (openingCash: number) =>
+  request<{ ok: true; sessionId: string }>('/api/pos/cash-session/start', {
+    method: 'POST', body: JSON.stringify({ openingCash })
+  });
+export const postSale = (payload: PosSalePayload) =>
+  request<{ ok: true; invoice: PosInvoice }>('/api/pos/sales', {
+    method: 'POST', body: JSON.stringify(payload)
+  });

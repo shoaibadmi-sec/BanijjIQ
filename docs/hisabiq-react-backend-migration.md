@@ -35,3 +35,10 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 2. For unsupported preview-only features (multi-unit, installments, drafts, SMS, bundle posting, etc), implement and verify backend contracts or explicitly disable those workflows.
 3. Build dedicated preview database and deploy isolated Worker; test login, permission guards, POS totals and real posting, FIFO, refunds, customer due, printing, mobile and dark-mode.
 4. Compare route parity and get business acceptance before replacing existing live Vue assets. Do not delete the Vue frontend or merge the previous Vue redesign PRs until a tested cutover strategy is approved.
+
+## Phase 2 — 2026-10-28
+- Main `#/app/products` route now uses the real product read-only catalog with the approved HisabIQ shared Table/PageHeader styling. Demo product editor is not connected to production and is reachable only at `#/app/products-design-preview` for design comparison.
+- Main `#/app/pos` route now uses a real API-backed **single-unit** POS utilizing HisabIQ's original ProductCombobox and PageHeader, and BanijjIQ's POS bootstrap + /api/pos/sales transaction endpoint. Original demo POS is still visible at `#/app/pos-design-preview` for comparison and is clearly labeled as demo by the gate.
+- Cash session opening is an explicit user action. Real sale posting requires customer name/phone, existing active session, no stock shortage, no tracked serial/expiry, valid integer quantities, valid discounts and payment account where needed. Confirmation modal is mandatory; post only once pending; successful response shows the server invoice ID.
+- Not yet supported in the integrated POS: mixed units, negative/vendor fulfillment, tracked products, bundles, installment, split payments, invoice editing/printing, draft/templates. Such features remain unoffered, not silently approximated.
+- Both new routes use backend permission declarations; Hono continues enforcing permissions server-side.

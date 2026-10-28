@@ -1,7 +1,12 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { clearToken, getMe, login, logout, readToken, storeToken, type BackendUser } from './banijjApi';
 
 type GateState = 'loading' | 'signed-out' | 'signed-in';
+export const BackendSessionContext = createContext<BackendUser | null>(null);
+export const useBackendSession = () => useContext(BackendSessionContext);
+export const canUseModule = (user: BackendUser | null, module: string, action: 'view' | 'add' | 'edit' = 'view') =>
+  Boolean(user && (user.role === 'admin' || user.permissions?.[module]?.[action] === true));
+
 export function BackendGate({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<GateState>('loading');
   const [user, setUser] = useState<BackendUser | null>(null);
@@ -42,7 +47,7 @@ export function BackendGate({ children }: { children: ReactNode }) {
         <div><h1 className="text-xl font-semibold text-ink">Sign in · BanijjIQ</h1>
           <p className="mt-1 text-sm text-ink-500 font-bn">আপনার ব্যবসার হিসাবে প্রবেশ করুন</p></div>
         <p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-800">
-          HisabIQ React migration preview. Only the Live Products screen reads real business data; other screens still use demo data.
+          HisabIQ React migration preview. Products and basic POS are integrated with BanijjIQ APIs; remaining modules still use demo data.
         </p>
         <label className="block text-sm font-medium text-ink-700">Mobile number
           <input required autoComplete="username" inputMode="tel" value={phone} onChange={e=>setPhone(e.target.value)}
@@ -60,13 +65,13 @@ export function BackendGate({ children }: { children: ReactNode }) {
   }
   return <>
     <div role="status" className="relative z-[200] flex flex-wrap items-center justify-between gap-2 border-b border-warning bg-warning-bg px-3 py-2 text-xs text-warning">
-      <span><strong>Migration preview — not for live transactions.</strong> Demo POS, purchases, ledgers and reports do not post to BanijjIQ.</span>
+      <span><strong>Migration preview — not for live transactions.</strong> Only the Products and basic POS routes use real APIs; other modules are demos.</span>
       <span className="flex flex-wrap items-center gap-3">
         <a href="#/app/live-products" className="font-semibold underline">Open live products</a>
         <span className="text-ink-600">{user?.fullName}</span>
         <button type="button" onClick={signOut} className="font-semibold underline">Sign out</button>
       </span>
     </div>
-    {children}
+    <BackendSessionContext.Provider value={user}>{children}</BackendSessionContext.Provider>
   </>;
 }
