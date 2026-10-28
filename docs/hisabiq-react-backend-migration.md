@@ -61,3 +61,14 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 - The receipt uses server invoice items and the business branding supplied by BanijjIQ POS invoice settings; never the preview/demo shop name.
 - Print CSS supports a thermal receipt. Full A4 invoice layouts, image export, and advanced item details remain in Vue.
 - This change is draft-only: print layout still needs browser/printer verification before production use.
+
+## Phase 5 — SQL accounting regression and repeat-safe posting (October 28, 2026)
+
+- `migrations/0028_pos_sale_idempotency.sql` adds `pos_sale_requests` with a unique request ID and saved invoice ID. It does not modify historical invoices.
+- The React POS creates a unique `clientRequestId` per new sale; retries keep that key. Existing Vue callers can continue without the new optional field while being migrated.
+- On duplicate delivery with the same payload, `POST /api/pos/sales` reads and returns the original invoice instead of posting cash, inventory or dues again. Reuse with modified details returns HTTP 409.
+- Cash/due customer creation and contact updates now execute inside the same SQL batch as the invoice and lot movements. An injected SQL error must roll all of them back.
+- `tests/pos-accounting.integration.test.ts` migrates a disposable in-memory SQLite database using every real SQL migration and drives the existing `handleApiRequest` entrypoint: admin setup, product opening lot, second simulated purchased lot, cash session, cash sale and FIFO cost allocation, replay, partial payment and customer due, oversell/invalid-payment rejection, invoice readback, forced failure rollback.
+- The GitHub CI backend phase compiles the backend and executes the full-schema test alongside catalog regression; the browser phase still runs Playwright/axe with synthetic API responses.
+- **Not yet covered:** real Cloudflare D1 and production Worker transaction semantics, isolated end-to-end database browser tests, simultaneous requests under high concurrency, all returns, serial/expiry and multi-unit accounting. Do not merge/deploy until these are verified.
+
