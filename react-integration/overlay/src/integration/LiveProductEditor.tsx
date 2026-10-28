@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { AddProductDialog } from '../components/products/AddProductDialog';
 import type { Product } from '../types/erp';
-import { BackendRequestError, createBasicProduct, getBootstrap, updateProductCatalog,
+import { BackendRequestError, createBasicProduct, updateProductCatalog,
   type BackendProduct, type BasicProductInput } from './banijjApi';
 
 const finite = (n: number, name: string) => {
@@ -72,13 +72,7 @@ export function LiveProductEditor({ product, onDone, onCancel }:{
       let msg=err instanceof Error?err.message:'Could not save the product.';
       // If a network request failed, the server may already have committed the create/update.
       if(err instanceof BackendRequestError && (err.status===null || err.status>=500)){
-        try {
-          const fresh=await getBootstrap();
-          const possible=fresh.products.find(p=>p.productName.trim().toLowerCase()===payload.productName.toLowerCase() &&
-            (!product || p.productId===product.productId));
-          if(possible){onDone(possible.productId);return;}
-        }catch{/* Explicitly flag uncertainty when reconciliation is unavailable. */}
-        msg='Save result unknown. Check Products in the existing ERP before retrying. '+msg;
+        msg='Save result unknown. Verify the product record in the existing ERP before retrying. '+msg;
       }
       setMessage(msg);
     }).finally(()=>{pending.current=false;setSaving(false);});
