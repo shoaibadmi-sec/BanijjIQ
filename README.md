@@ -18,28 +18,36 @@ npm run dev
 
 The Node API defaults to port 8787, and Vite serves the frontend separately. See `server/README.md` for runtime details.
 
-## Cloudflare Worker, GitHub Builds, and D1
+## Existing Cloudflare Worker + GitHub development
 
-`wrangler.jsonc` is **checked into Git** so Cloudflare Workers Builds can deploy
-without interactive Hono framework detection. The Worker name `banijjinq`
-matches the name shown in the initial Cloudflare build logs.
-The Vue frontend and Hono backend share the same Worker; `/api/*`
-routes are handled before the single-page-app asset fallback.
+This repository is being connected to the **already deployed**
+Cloudflare Worker `shererp-new`, not a new `banijjinq` Worker.
+The production D1 binding is `DB` → `shererp-new-db`.
+The version-controlled `wrangler.jsonc` includes the UUID taken from
+the original local `SherERP-new` deployment configuration. Before rollout,
+**verify the database UUID in the live Cloudflare Worker bindings**.
 
-This initial configuration intentionally omits a D1 database ID. Wrangler 4
-can automatically provision the new `banijjiq-db` database on first deployment.
-**Never point this binding at an existing SherERP database.**
+The existing database may contain real users and transactions.
+Do not create a replacement D1 database, reset it, or run all migrations
+against it without a schema audit and a secure backup.
 
-Cloudflare Dashboard → Worker → Settings → Build:
+**Safe first GitHub rollout (Cloudflare → shererp-new → Settings → Builds):**
+
+- Connected repository: `shoaibadmi-sec/BanijjIQ`
 - Production branch: `main`
-- Root directory: `/`
 - Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
+- **First deployment command: `npx wrangler versions upload`**
+  (creates an inactive version for comparison, not an active deployment)
 
-The first deployment builds and publishes the application, but the API
-will need the D1 migrations before login and setup can function. See
-`CLOUDFLARE_NEW_DEPLOY.md` for the first-deployment database initialization,
-admin-secret setup, and production verification instructions.
+The application Worker entrypoint and frontend assets are built together.
+After reviewing the new version and checking D1 schema compatibility,
+you can explicitly promote it through Cloudflare Deployments.
+Only after production verification should you change the deploy command
+to `npx wrangler deploy` to enable automatic production updates.
+
+See `CLOUDFLARE_NEW_DEPLOY.md` for the detailed safe-adoption procedure.
+Do not delete `shererp-new` or `shererp-new-db`.
+The extra `banijjinq` Worker, if still present, is a separate installation.
 
 ## Data protection
 

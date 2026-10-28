@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "banijjinq",
+  "name": "shererp-new",
   "main": "server/runtime/cloudflare.ts",
   "compatibility_date": "2026-08-22",
   "assets": {
@@ -14,7 +14,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "banijjiq-db",
+      "database_name": "shererp-new-db",
+      "database_id": "a94f21eb-bbd1-4ee8-8817-60726b547615",
       "migrations_dir": "migrations"
     }
   ]
