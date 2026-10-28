@@ -6,10 +6,12 @@ import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
 import { ProductCombobox } from '../components/pos/ProductCombobox';
 import { StatusBadge } from '../components/StatusBadge';
+import { ReceiptPreview } from '../components/brand/ReceiptPreview';
+import './liveReceiptPrint.css';
 import type { Product } from '../types/erp';
 import { canUseModule, useBackendSession } from './BackendGate';
 import {
-  BackendRequestError, getPosBootstrap, getSalesByPhone, postSale, startCashSession,
+  BackendRequestError, getPosBootstrap, getPosInvoice, getSalesByPhone, postSale, startCashSession,
   type PosBootstrap, type PosProduct, type PosInvoice, type PosSalePayload
 } from './banijjApi';
 
@@ -40,6 +42,9 @@ export function LivePosPage() {
   const [openingCash, setOpeningCash] = useState('0');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [finished, setFinished] = useState<PosInvoice | null>(null);
+  const [receipt,setReceipt] = useState<PosInvoice | null>(null);
+  const [receiptOpen,setReceiptOpen] = useState(false);
+  const [receiptBusy,setReceiptBusy] = useState(false);
   const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [salesChecked, setSalesChecked] = useState(false);
   const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
@@ -134,7 +139,7 @@ export function LivePosPage() {
   const newSale = () => {
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
-    setFinished(null);setFeedback('');setError('');
+    setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
     setOutcomeUnknown(false);setSalesChecked(false);setRecentSales([]);
     requestAnimationFrame(() => productRef.current?.focus());
   };
@@ -181,6 +186,17 @@ export function LivePosPage() {
       }
       setReviewOpen(false);
     } finally { postingRef.current = false; setSaving(false); }
+  };
+  const openReceipt = async () => {
+    if (!finished?.invoiceId) return;
+    setReceiptBusy(true);setError('');
+    try {
+      const result=await getPosInvoice(finished.invoiceId);
+      if (!result.invoice?.items?.length) throw new Error('Saved invoice items could not be loaded.');
+      setReceipt(result.invoice);setReceiptOpen(true);
+    } catch(err) {
+      setError(err instanceof Error?err.message:'Could not retrieve saved invoice.');
+    } finally { setReceiptBusy(false); }
   };
   const checkRecentSales = async () => {
     setSalesChecked(false);
@@ -394,7 +410,7 @@ export function LivePosPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <Dialog open={!!finished} onOpenChange={open=>{if(!open && !saving)newSale();}}>
+    <Dialog open={!!finished && !receiptOpen} onOpenChange={open=>{if(!open && !saving && !receiptOpen)newSale();}}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success"/> Sale posted successfully</DialogTitle>
           <DialogDescription>BanijjIQ confirmed this invoice and posted the transaction.</DialogDescription></DialogHeader>
@@ -404,8 +420,44 @@ export function LivePosPage() {
           <p>Total <strong>{taka(finished?.grandTotal || 0)}</strong></p>
           <p>Due <strong>{taka(finished?.dueAmount || 0)}</strong></p>
         </div>
-        <p className="text-xs text-ink-500">Invoice printing and editing are not yet integrated in React. Use the existing Vue application for those workflows.</p>
-        <DialogFooter><Button onClick={newSale}>New Sale</Button></DialogFooter>
+        <p className="text-xs text-ink-500">Receipts are fetched from the saved invoice. A4 invoice layout and editing remain in the Vue ERP.</p>
+        <DialogFooter><Button variant="outline" disabled={receiptBusy} onClick={()=>void openReceipt()}>
+          {receiptBusy?'Loading receipt…':'View / Print receipt'}
+        </Button><Button onClick={newSale}>New Sale</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogHeader><DialogTitle>Saved invoice receipt · রশিদ</DialogTitle>
+          <DialogDescription>Read from BanijjIQ after posting · সত্যিকারের চালান</DialogDescription>
+        </DialogHeader>
+        {receipt && <div id="hisabiq-real-receipt">
+          <ReceiptPreview invoice={receipt.invoiceId} dateTime={receipt.date}
+            customer={receipt.customerName} customerPhone={receipt.customerPhone}
+            guardianName={receipt.customerFatherName} customerAddress={receipt.customerAddress}
+            lines={receipt.items.map(i=>({
+              name:i.productName,qty:String(i.quantity)+' '+(i.unit||'Pcs'),
+              price:i.unitPrice,total:i.lineTotal
+            }))}
+            subtotal={receipt.subtotal} discount={receipt.discount} rounding={0}
+            total={receipt.grandTotal} paid={receipt.paidAmount} due={receipt.dueAmount}
+            method={receipt.paymentMethod||'Cash'}
+            branding={{
+              name:bootstrap?.invoiceDesign?.settings?.['Shop Name'] ||
+                   bootstrap?.invoiceDesign?.settings?.['Shop Name Bangla'] || 'Business',
+              nameBn:bootstrap?.invoiceDesign?.settings?.['Shop Name Bangla'] || '',
+              address:bootstrap?.invoiceDesign?.settings?.['Address'] || '',
+              phone:[bootstrap?.invoiceDesign?.settings?.['Phone 1'],
+                     bootstrap?.invoiceDesign?.settings?.['Phone 2']].filter(Boolean).join(' / '),
+              logo:bootstrap?.invoiceDesign?.logoDataUri||'',
+              showLogo:Boolean(bootstrap?.invoiceDesign?.logoDataUri),
+              footer:bootstrap?.invoiceDesign?.settings?.['Invoice Footer']||''
+            }}
+          />
+        </div>}
+        <DialogFooter><Button variant="outline" onClick={()=>setReceiptOpen(false)}>Close</Button>
+          <Button disabled={!receipt} onClick={()=>window.print()}>Print receipt · প্রিন্ট</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   </section>;

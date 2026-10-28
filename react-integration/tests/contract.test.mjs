@@ -63,3 +63,11 @@ test('live product editor uses safe catalog route and avoids stock mutation', ()
   assert.ok(editor.includes('updateProductCatalog(product.productId'));
   assert.ok(editor.includes('pending.current=true'));
 });
+
+test('receipt is rendered from server invoice using original HisabIQ component',()=>{
+  const api=read('overlay/src/integration/banijjApi.ts');
+  const pos=read('overlay/src/integration/LivePosPage.tsx');
+  assert.ok(api.includes("'/api/pos/invoices/'+encodeURIComponent(id)"));
+  for(const marker of ['getPosInvoice(finished.invoiceId)','ReceiptPreview','receipt.items.map',
+    'invoiceDesign?.settings','window.print()']) assert.ok(pos.includes(marker),marker);
+});

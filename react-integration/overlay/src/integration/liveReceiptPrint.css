@@ -1,0 +1,11 @@
+/* Scoped thermal output from committed server invoice only. */
+@media print {
+  @page { size: auto; margin: 3mm; }
+  html,body { height:auto!important; overflow:visible!important; background:#fff!important; }
+  body * { visibility:hidden!important; }
+  #hisabiq-real-receipt,#hisabiq-real-receipt * { visibility:visible!important; }
+  #hisabiq-real-receipt { position:fixed!important; left:0!important; top:0!important;
+    z-index:999999!important; width:80mm!important; height:auto!important;
+    margin:0!important; padding:0!important; background:white!important; }
+  #hisabiq-real-receipt > div { box-shadow:none!important; outline:0!important; border:0!important; }
+}

@@ -55,3 +55,9 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 - Source form preview capabilities that backend cannot store (Bangla name, images, multiple units, serials, expiry, warranty, services/bundles) are rejected with an explicit UI message, not silently discarded.
 - On unknown save result, the editor checks the live product list before considering a retry.
 - Build CI now compiles the backend too. **This is not permission to deploy to production yet**: real database-level product creation/update tests remain outstanding.
+
+## Phase 4 — saved receipt preview
+- Basic POS now fetches the committed invoice from `GET /api/pos/invoices/:id` and renders the original HisabIQ `ReceiptPreview` component.
+- The receipt uses server invoice items and the business branding supplied by BanijjIQ POS invoice settings; never the preview/demo shop name.
+- Print CSS supports a thermal receipt. Full A4 invoice layouts, image export, and advanced item details remain in Vue.
+- This change is draft-only: print layout still needs browser/printer verification before production use.

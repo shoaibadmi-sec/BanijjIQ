@@ -79,6 +79,7 @@ export interface PosBankAccount { id: string; name: string; accountType: string 
 export interface PosBootstrap {
   ok: true; products: PosProduct[]; customers: PosCustomer[]; bankAccounts: PosBankAccount[];
   activeSession: { sessionId: string; openedAt: string; openingCash: number } | null;
+  invoiceDesign: { settings: Record<string,string>; logoDataUri: string };
 }
 export interface PosSaleLine {
   productId: string; name: string; qty: number; unitPrice: number;
@@ -92,6 +93,9 @@ export interface PosSalePayload {
 }
 export interface PosInvoice {
   invoiceId: string; date: string; customerName: string; customerPhone: string;
+  customerFatherName?: string; customerAddress?: string; subtotal: number; discount: number;
+  paymentMethod: string;
+  items: Array<{productId:string;productName:string;quantity:number;unit:string;unitPrice:number;lineTotal:number}>;
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
 }
 export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');
@@ -124,3 +128,6 @@ export const updateProductCatalog = (productId: string, payload: ProductCatalogE
   request<{ ok: true; productId: string }>('/api/products/' + encodeURIComponent(productId) + '/catalog', {
     method: 'PUT', body: JSON.stringify(payload)
   });
+
+export const getPosInvoice = (id:string) =>
+  request<{ ok:true; invoice:PosInvoice }>('/api/pos/invoices/'+encodeURIComponent(id));
