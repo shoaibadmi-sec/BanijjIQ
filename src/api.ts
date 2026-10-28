@@ -36,8 +36,12 @@ export async function getSetupStatus(): Promise<{ ok: true; setupRequired: boole
   return request('/api/setup/status');
 }
 
-export async function setupAdmin(payload: { fullName: string; phone: string; password: string }): Promise<{ ok: true; token: string; user: AuthUser }> {
-  return request('/api/setup/admin', { method: 'POST', body: JSON.stringify(payload) });
+export async function setupAdmin(payload: { fullName: string; phone: string; password: string }, setupSecret: string): Promise<{ ok: true; token: string; user: AuthUser }> {
+  return request('/api/setup/admin', {
+    method: 'POST',
+    headers: { 'x-setup-secret': setupSecret },
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function login(payload: { phone: string; password: string }): Promise<{ ok: true; token: string; user: AuthUser }> {

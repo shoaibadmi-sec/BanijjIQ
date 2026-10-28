@@ -65,7 +65,8 @@ its value in GitHub, Wrangler config, terminal history, or this chat.
 After schema initialization, create the first administrator through
 `POST /api/setup/admin`, sending a JSON body with `fullName`, `phone`,
 and `password`, and a matching `x-setup-secret` request header.
-The UI's initial setup form does not send the secret by itself.
+The initial admin setup form asks for the secret and sends it in the
+`x-setup-secret` header. It is not persisted to browser storage.
 
 Once the administrator exists, subsequent attempts are rejected; you can
 remove the temporary secret afterwards.

@@ -207,6 +207,7 @@ const authSaving = ref(false);
 const authError = ref('');
 const loginForm = reactive({ phone: '', password: '' });
 const setupForm = reactive({ fullName: 'Admin', phone: '', password: '' });
+const setupSecret = ref('');
 
 const todayIso = new Date().toISOString().slice(0, 10);
 const purchaseTab = ref<'new' | 'planner' | 'history' | 'return'>('new');
@@ -1621,7 +1622,8 @@ async function submitSetup(): Promise<void> {
       fullName: setupForm.fullName.trim() || 'Admin',
       phone: setupForm.phone.trim(),
       password: setupForm.password
-    });
+    }, setupSecret.value.trim());
+    setupSecret.value = '';
     setToken(result.token);
     authUser.value = result.user;
     ensureAllowedModule();
@@ -1712,8 +1714,11 @@ onBeforeUnmount(() => {
           <label>Phone Number *<br><span class="bn-hint" style="display:inline;">মোবাইল নম্বর</span></label>
           <input v-model.trim="setupForm.phone" type="text" placeholder="01XXXXXXXXX" />
           <label>Password *<br><span class="bn-hint" style="display:inline;">পাসওয়ার্ড</span></label>
-          <input v-model="setupForm.password" type="password" placeholder="Minimum 6 characters" @keyup.enter="submitSetup" />
-          <button class="btn btn-primary auth-submit" :disabled="authSaving" @click="submitSetup">{{ authSaving ? 'Creating...' : 'Create Admin' }}</button>
+          <input v-model="setupForm.password" type="password" placeholder="Minimum 6 characters" />
+          <label>Setup Secret *<br><span class="bn-hint" style="display:inline;">Cloudflare-এ সেট করা নিরাপত্তা কোড</span></label>
+          <input v-model="setupSecret" type="password" autocomplete="off" placeholder="Enter the SETUP_SECRET from Cloudflare" @keyup.enter="submitSetup" />
+          <p class="bn-hint">For first-time setup only. Enter the secret configured in your Cloudflare Worker settings; it is not saved in the browser.</p>
+          <button class="btn btn-primary auth-submit" :disabled="authSaving || !setupSecret.trim()" @click="submitSetup">{{ authSaving ? 'Creating...' : 'Create Admin' }}</button>
         </div>
 
         <div v-else class="auth-form">
