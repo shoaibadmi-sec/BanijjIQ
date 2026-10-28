@@ -60,13 +60,13 @@ export async function listProductUnitRules(db: SherDatabase, productId: string):
 }
 
 export async function getProductUnitConfig(db: SherDatabase, productId: string): Promise<Response> {
-  const product = await db.prepare('SELECT product_id,unit FROM products WHERE product_id=? AND is_deleted=0').bind(productId).first<{ product_id:string; unit:string }>();
+  const product = await db.prepare("SELECT product_id,unit FROM products WHERE product_id=? AND is_deleted=0 AND product_type='Standard'").bind(productId).first<{ product_id:string; unit:string }>();
   if (!product) return Response.json({ ok:false,error:'Product not found.' }, { status:404 });
   return Response.json({ ok:true,productId,baseUnit:product.unit,relations:await listProductUnitRules(db, productId) });
 }
 
 export async function saveProductUnitConfig(db: SherDatabase, productId: string, payload: { relations?: UnitRelation[] }): Promise<Response> {
-  const product = await db.prepare('SELECT product_id,unit FROM products WHERE product_id=? AND is_deleted=0').bind(productId).first<{ product_id:string; unit:string }>();
+  const product = await db.prepare("SELECT product_id,unit FROM products WHERE product_id=? AND is_deleted=0 AND product_type='Standard'").bind(productId).first<{ product_id:string; unit:string }>();
   if (!product) return Response.json({ ok:false,error:'Product not found.' }, { status:404 });
   let rules: UnitRule[];
   try { rules = normalizeUnitChain(product.unit, payload.relations || []); }

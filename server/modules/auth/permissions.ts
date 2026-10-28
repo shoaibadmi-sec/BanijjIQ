@@ -99,7 +99,7 @@ function permissionRouteInfo(path:string,method:string):{moduleKey:string;action
     [/^\/api\/daybook/,'daybook'],[/^\/api\/bank/,'bank'],[/^\/api\/expenses/,'expense'],[/^\/api\/expense-/,'expense'],
     [/^\/api\/customers/,'customers'],[/^\/api\/customer-payments/,'customers'],[/^\/api\/sales-returns/,'returns'],
     [/^\/api\/sales-management/,'sales'],[/^\/api\/vendors/,'vendors'],[/^\/api\/pos/,'pos'],[/^\/api\/purchases/,'purchase'],[/^\/api\/purchase-returns/,'purchase'],
-    [/^\/api\/suppliers/,'suppliers'],[/^\/api\/supplier-payments/,'suppliers'],[/^\/api\/product-tracking/,'products'],[/^\/api\/products/,'products'],[/^\/api\/categories/,'products'],
+    [/^\/api\/suppliers/,'suppliers'],[/^\/api\/supplier-payments/,'suppliers'],[/^\/api\/product-tracking/,'products'],[/^\/api\/bundles/,'products'],[/^\/api\/products/,'products'],[/^\/api\/categories/,'products'],
     [/^\/api\/brands/,'products'],[/^\/api\/units/,'products'],[/^\/api\/users/,'users'],[/^\/api\/roles/,'roles']
   ];
   const found=rules.find(([re])=>re.test(path)); if(!found)return null;

@@ -125,7 +125,7 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
              CASE WHEN TRIM(COALESCE(p.brand,'')) <> '' THEN TRIM(p.brand) || ' ' || p.product_name ELSE p.product_name END AS displayName, p.category, p.unit,
              COALESCE(p.barcode, '') AS barcode,
              p.purchase_price AS purchasePrice, p.selling_price AS sellingPrice,
-             p.current_stock AS currentStock, p.minimum_stock AS minimumStock,
+             p.current_stock AS currentStock, p.minimum_stock AS minimumStock, p.product_type AS productType, p.bundle_revision AS bundleRevision,
              p.track_serial AS trackSerial, p.track_expiry AS trackExpiry, p.track_warranty AS trackWarranty,
              p.warranty_period_value AS warrantyPeriodValue, p.warranty_period_unit AS warrantyPeriodUnit,
              ROUND(p.current_stock * p.purchase_price, 4) AS stockValue,
@@ -154,8 +154,18 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
     unitMap.get(row.productId)!.push(row);
   }
   const availability = await getAvailabilityMap(db);
+  const componentRows=await db.prepare(`SELECT bc.bundle_id AS bundleId,bc.quantity_per_set AS perSet,p.current_stock AS stock
+    FROM bundle_components bc JOIN products b ON b.product_id=bc.bundle_id AND b.bundle_revision=bc.revision
+    JOIN products p ON p.product_id=bc.component_id
+    WHERE b.product_type='Bundle' AND bc.is_active=1`).all<any>();
+  const availableByBundle=new Map<string,number>();
+  for(const row of componentRows.results||[]){
+    const count=Math.max(0,Math.floor(Math.max(0,Number(row.stock||0))/Number(row.perSet)));
+    availableByBundle.set(row.bundleId,Math.min(availableByBundle.get(row.bundleId)??Number.POSITIVE_INFINITY,count));
+  }
   const productRows = (products.results ?? []).map((p: any) => ({ ...p, conversions: unitMap.get(String(p.productId)) || [],
-    sellableStock: availability.get(String(p.productId))?.sellable ?? Number(p.currentStock || 0),
+    availableSets:p.productType==='Bundle'?(availableByBundle.get(String(p.productId))||0):null,
+    sellableStock:p.productType==='Bundle'?(availableByBundle.get(String(p.productId))||0):(availability.get(String(p.productId))?.sellable ?? Number(p.currentStock || 0)),
     pendingTracking: availability.get(String(p.productId))?.pending ?? 0,
     expiredStock: availability.get(String(p.productId))?.expired ?? 0
   }));
@@ -238,6 +248,7 @@ export async function createProduct(db: SherDatabase, input: ProductInput): Prom
 export async function updateProduct(db: SherDatabase, productId: string, input: ProductInput): Promise<Response> {
   const existing = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
   if (!existing) return error('Product not found', 404);
+  if(existing.product_type==='Bundle') return error('Use Bundle Editor to change a virtual bundle.');
 
   const productName = cleanText(input.productName);
   const brand = cleanText(input.brand);
@@ -326,6 +337,7 @@ export async function updateProduct(db: SherDatabase, productId: string, input: 
 export async function adjustStockByDelta(db: SherDatabase, productId: string, deltaValue: unknown, note: string): Promise<Response> {
   const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
   if (!product) return error('Product not found', 404);
+  if(product.product_type==='Bundle') return error('Virtual bundles have no stock or lots; use Bundle Editor.');
   const delta = Number(deltaValue);
   if (!Number.isFinite(delta) || delta === 0) return error('Adjustment must be a non-zero number');
   const newStock = qty(Number(product.current_stock) + delta);
@@ -345,12 +357,19 @@ export async function setProductStatus(db: SherDatabase, productId: string, stat
 export async function deleteProduct(db: SherDatabase, productId: string): Promise<Response> {
   const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
   if (!product) return error('Product not found', 404);
+  if(product.product_type==='Bundle') return error('Virtual bundles have no stock or lots; use Bundle Editor.');
+  const required=await db.prepare(`SELECT 1 FROM bundle_components bc JOIN products b ON b.product_id=bc.bundle_id
+    WHERE bc.component_id=? AND bc.revision=b.bundle_revision AND b.product_type='Bundle'
+    AND b.is_deleted=0 AND b.status='Active' LIMIT 1`).bind(productId).first();
+  if(required) return error('This product is required by an active bundle. Update the bundle first.');
   if (Number(product.current_stock) !== 0) return error('Product has stock. Set stock to 0 or deactivate instead.');
   await db.prepare(`UPDATE products SET is_deleted = 1, status = 'Inactive', updated_at = datetime('now') WHERE product_id = ?`).bind(productId).run();
   return json({ ok: true });
 }
 
 export async function getProductLots(db: SherDatabase, productId: string): Promise<Response> {
+  const product=await db.prepare('SELECT product_type FROM products WHERE product_id=?').bind(productId).first<{product_type:string}>();
+  if(product?.product_type==='Bundle') return error('Virtual bundles do not own physical lots.');
   const lots = await db.prepare(`
     SELECT lot_id AS lotId,
            source_ref AS purchaseId,

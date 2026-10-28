@@ -26,6 +26,7 @@ import {
   updateWarrantyRoute
 } from './tracking.service.js';
 import { getProductUnitConfig, saveProductUnitConfig } from './units.service.js';
+import { createBundle, listBundles, getBundle, updateBundle, deactivateBundle } from './bundles.service.js';
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
@@ -47,6 +48,12 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (path === '/api/product-tracking' && request.method === 'GET') return getProductTrackingOverviewRoute(db);
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'GET') return getSupplierWarrantyOverviewRoute(db);
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'POST') return createSupplierWarrantyRmaRoute(db, await readBody<any>(request), user);
+  if (path === '/api/bundles' && request.method === 'GET') return listBundles(db);
+  if (path === '/api/bundles' && request.method === 'POST') return createBundle(db, await readBody<any>(request), user);
+  const bundleMatch = path.match(/^\/api\/bundles\/([^/]+)$/);
+  if (bundleMatch && request.method === 'GET') return getBundle(db, decodeURIComponent(bundleMatch[1]));
+  if (bundleMatch && request.method === 'PUT') return updateBundle(db, decodeURIComponent(bundleMatch[1]), await readBody<any>(request), user);
+  if (bundleMatch && request.method === 'DELETE') return deactivateBundle(db, decodeURIComponent(bundleMatch[1]), user);
   if (path === '/api/products' && request.method === 'POST') return createProduct(db, await readBody<ProductInput>(request));
   if (path === '/api/categories' && request.method === 'GET') return listLookups(db, 'category');
   if (path === '/api/categories' && request.method === 'POST') return addLookup(db, 'category', await readBody<{ name?: string }>(request));
