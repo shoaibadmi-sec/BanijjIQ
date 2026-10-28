@@ -46,3 +46,12 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 ### Post-result ambiguity safeguards
 - If POST /api/pos/sales fails due to network transport or server 5xx, the UI treats the transaction result as **unknown**, not safely failed. It blocks retry, shows recent invoices for the entered phone through /api/pos/sales-by-phone, and requires explicit reconciliation before allowing another post.
 - A synchronous submission lock prevents rapid duplicate clicks. This is a client-side guard only; backend idempotency keys remain a recommended production enhancement before switching away from Vue.
+
+## Phase 3 — Product catalog write integration
+- Reuses the approved source `AddProductDialog` full-page form directly, with supported-feature validation before any API submission.
+- `POST /api/products` creates **basic stock products** and, when supplied, the opening FIFO stock lot.
+- `PUT /api/products/:id/catalog` updates name/brand/category/barcode/purchase/sell/minimum-stock metadata **without updating `current_stock`, `stock_lots`, tracking or FIFO**.
+- Catalog edit requires `expectedUpdatedAt` and rejects concurrent changes (HTTP 409). Permission middleware maps PUT to products.edit.
+- Source form preview capabilities that backend cannot store (Bangla name, images, multiple units, serials, expiry, warranty, services/bundles) are rejected with an explicit UI message, not silently discarded.
+- On unknown save result, the editor checks the live product list before considering a retry.
+- Build CI now compiles the backend too. **This is not permission to deploy to production yet**: real database-level product creation/update tests remain outstanding.

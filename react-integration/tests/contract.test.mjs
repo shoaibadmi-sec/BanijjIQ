@@ -57,7 +57,7 @@ test('live product editor uses safe catalog route and avoids stock mutation', ()
   assert.ok(api.includes("'/api/products/' + encodeURIComponent(productId) + '/catalog'"));
   assert.ok(api.includes("'/api/products'"));
   assert.ok(editor.includes('AddProductDialog'));
-  assert.ok(editor.includes('Stock and lot changes'));
+  assert.ok(editor.includes('Editing never adjusts current stock or FIFO lots'));
   assert.ok(editor.includes('expectedUpdatedAt:product.updatedAt'));
   assert.ok(editor.includes('createBasicProduct(payload)'));
   assert.ok(editor.includes('updateProductCatalog(product.productId'));
