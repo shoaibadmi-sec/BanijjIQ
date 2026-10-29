@@ -141,8 +141,8 @@ async function audit(page,label){
   results.accessibility.push({label,...report});
   // New screens should have no critical errors. Other detected issues are captured
   // as structured artifact findings instead of silently hidden or modifying the design.
-  const critical=report.violations.filter(x=>x.impact==='critical');
-  assert.equal(critical.length,0,label+' contains critical accessibility violations');
+  const serious=report.violations.filter(x=>['critical','serious'].includes(x.impact));
+  assert.equal(serious.length,0,label+' contains critical/serious accessibility violations: '+JSON.stringify(serious));
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
