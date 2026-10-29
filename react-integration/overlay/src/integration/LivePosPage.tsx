@@ -10,6 +10,8 @@ import { ReceiptPreview } from '../components/brand/ReceiptPreview';
 import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
 import { LiveStockShortageDialog, type ShortageSelection } from './LiveStockShortageDialog';
 import { LiveCheckoutPanel } from './LiveCheckoutPanel';
+import { LiveMultiUnitQuantity } from './LiveMultiUnitQuantity';
+import { quoteLiveUnits } from './posUnitMath';
 import { Link } from 'react-router-dom';
 import './liveReceiptPrint.css';
 import type { Product } from '../types/erp';
@@ -20,7 +22,14 @@ import {
 } from './banijjApi';
 
 type Line = { product: PosProduct; qty: number; price: number; serialNumbers: string[];
+  unitQuantities?: Record<string,number>;
   source: ShortageSelection };
+const mixedQuote=(line:Line)=>{
+  const profile=line.product.unitProfilePreview;
+  if(!line.unitQuantities||!profile)return null;
+  try{return quoteLiveUnits(profile,line.unitQuantities);}catch{return null;}
+};
+const lineTotal=(line:Line)=>line.unitQuantities ? (mixedQuote(line)?.total ?? 0) : line.qty*line.price;
 const noSerials: string[] = [];
 const taka = (n: number) => '৳' + Number(n || 0).toLocaleString('en-BD', { maximumFractionDigits: 2 });
 const supported = (p: PosProduct) => p.stock > 0 || (!p.trackSerial && !p.trackExpiry);
@@ -59,21 +68,19 @@ export function LivePosPage() {
   const [salesChecked, setSalesChecked] = useState(false);
   const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
   const postingRef = useRef(false);
-  // Closing the success dialog is permitted to reset the posted invoice once.
-  // Radix can deliver an onOpenChange(false) after the explicit New Sale click:
-  // such a stale close must not erase the next cart/customer/payment.
-  const postedDialogMayResetRef = useRef(false);
+  // A posted sale stays read-only until the user explicitly chooses New Sale.
+  // Outside-click/Escape dialogs must NEVER silently reset a subsequent cart.
   const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!canView) { setBusy(false); return; }
-    setBusy(true); setError('');
+    if(!silent)setBusy(true); setError('');
     try { const result = await getPosBootstrap(); setBootstrap(result); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not load the POS'); }
-    finally { setBusy(false); }
+    finally { if(!silent)setBusy(false); }
   }, [canView]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -96,7 +103,7 @@ export function LivePosPage() {
   const serialLine = lines.find(l=>l.product.id===serialId);
   const shortageLine = lines.find(l=>l.product.id===shortageId);
   const serialProduct=selectable.find(p=>p.id===serialId);
-  const subtotal = useMemo(() => lines.reduce((sum, l) => sum + l.qty * l.price, 0), [lines]);
+  const subtotal = useMemo(() => Math.round(lines.reduce((sum, l) => sum + lineTotal(l), 0) * 100)/100, [lines]);
   const rawDiscount = discount.trim() ? Number(discount) : 0;
   const discountAmount = discountMode === 'percent' ? Math.round(subtotal * rawDiscount) / 100 : rawDiscount;
   const paidAmount = paid.trim() ? Number(paid) : 0;
@@ -118,6 +125,11 @@ export function LivePosPage() {
     if (requiresAccount && !matchingAccounts.some(a => a.id === bankAccountId)) found.push('Select an active payment account.');
     for (const line of lines) {
       if (!Number.isSafeInteger(line.qty) || line.qty <= 0) found.push(line.product.name + ': enter a whole-number quantity.');
+      if(line.unitQuantities){
+        const quote=mixedQuote(line);
+        if(!line.product.unitProfilePreview?.postingEnabled)found.push(line.product.name+': mixed-unit posting is not available.');
+        if(!quote || quote.qty!==line.qty)found.push(line.product.name+': enter valid whole-number unit quantities.');
+      }
       if (!Number.isFinite(line.price) || line.price < 0) found.push(line.product.name + ': invalid selling price.');
       if (!supported(line.product)) found.push(line.product.name + ': no sellable tracked stock.');
       if (line.product.trackSerial && line.serialNumbers.length!==line.qty)
@@ -151,10 +163,16 @@ export function LivePosPage() {
         if ((found.product.trackSerial || found.product.trackExpiry) && found.qty>=found.product.stock) {
           setFeedback('Sellable tracked stock reached for '+record.name);return current;
         }
-        return current.map(l => l.product.id === record.id ?
-          { ...l, qty: l.qty + 1, serialNumbers: [], source: {mode:'own'} as ShortageSelection } : l);
+        return current.map(l => l.product.id === record.id ? {
+          ...l, qty: l.qty+1,
+          ...(l.unitQuantities?{unitQuantities:{...l.unitQuantities,
+            [l.product.unit]:(l.unitQuantities[l.product.unit]||0)+1}}:{}),
+          serialNumbers:[],source:{mode:'own'} as ShortageSelection
+        }:l);
       }
-      return [...current, { product: record, qty: 1, price: record.sellingPrice, serialNumbers: [], source:{mode:'own'} }];
+      return [...current, { product: record, qty: 1, price: record.sellingPrice,
+        ...(record.unitProfilePreview?{unitQuantities:{[record.unit]:1}}:{}),
+        serialNumbers: [], source:{mode:'own'} }];
     });
     requestAnimationFrame(() => {
       quantityRefs.current[record.id]?.focus();
@@ -166,6 +184,15 @@ export function LivePosPage() {
       { ...line, ...patch, ...(patch.qty!==undefined?{
         serialNumbers:[],source:{mode:'own'} as ShortageSelection
       }:{}) } : line));
+  const patchMixedUnit=(id:string,unit:string,quantity:number)=>{
+    setLines(old=>old.map(line=>{
+      if(line.product.id!==id || !line.unitQuantities || !line.product.unitProfilePreview)return line;
+      const quantities={...line.unitQuantities,[unit]:quantity};
+      let qty=0;
+      try{qty=quoteLiveUnits(line.product.unitProfilePreview,quantities).qty;}catch{}
+      return {...line,unitQuantities:quantities,qty,serialNumbers:[],source:{mode:'own'} as ShortageSelection};
+    }));
+  };
   const openSerialPicker = async (id:string) => {
     if(loadingTracking)return;
     setLoadingTracking(true);setError('');
@@ -179,7 +206,10 @@ export function LivePosPage() {
   const applyShortage = (selection:ShortageSelection,clampedQty:number) => {
     if(!shortageId)return;
     setLines(old=>old.flatMap(line=>line.product.id!==shortageId?[line]:
-      clampedQty>0?[{...line,qty:clampedQty,source:selection,serialNumbers:[]}]:[]));
+      clampedQty>0?[{...line,qty:clampedQty,source:selection,serialNumbers:[],
+        ...(line.unitQuantities&&selection.mode==='own'?
+          {unitQuantities:{[line.product.unit]:clampedQty}}:{})
+      }]:[]));
     setShortageId(null);
   };
   const selectCustomer = (value: string, field: 'name' | 'phone') => {
@@ -191,7 +221,6 @@ export function LivePosPage() {
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
   const newSale = () => {
-    postedDialogMayResetRef.current = false;
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
@@ -226,6 +255,8 @@ export function LivePosPage() {
       items: lines.map(l => ({
         productId: l.product.id, name: l.product.name, qty: l.qty,
         unitPrice: l.price, fulfillmentMode: l.source.mode,
+        ...(l.unitQuantities&&l.product.unitProfilePreview?
+          {unitQuantities:l.unitQuantities,unitProfileRevision:l.product.unitProfilePreview.revision}:{}),
         ...(l.product.trackSerial?{serialNumbers:l.serialNumbers}:{}),
         ...(l.source.mode==='vendor'?{vendorId:l.source.vendorId,vendorUnitCost:l.source.vendorUnitCost}:{})
       }))
@@ -233,10 +264,9 @@ export function LivePosPage() {
     setSaving(true);setError('');
     try {
       const result = await postSale(payload);
-      postedDialogMayResetRef.current = true;
       setFinished(result.invoice);
       setReviewOpen(false);
-      await load();
+      await load(true);
     } catch (err) {
       const unknown = !(err instanceof BackendRequestError) || err.status === null || err.status >= 500;
       if (unknown) {
@@ -275,7 +305,7 @@ export function LivePosPage() {
   </section>;
 
   return <section className="pos-screen mx-auto max-w-[1440px] space-y-4" data-live-pos>
-    <PageHeader title="POS" titleBn="বিক্রি" description="HisabIQ POS layout · Live single-unit sales through BanijjIQ API"
+    <PageHeader title="POS" titleBn="বিক্রি" description="Original HisabIQ POS cart · Live base-unit FIFO accounting through BanijjIQ API"
       actions={<div className="flex flex-wrap items-center gap-2">
         <span className="hidden items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-[11px] text-ink-500 lg:flex">
           <Keyboard className="size-3.5"/><kbd>F2</kbd> Search <kbd>F8</kbd> Paid
@@ -289,7 +319,7 @@ export function LivePosPage() {
         </Button>
       </div>} />
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
-      Real single-unit sales with serial/expiry and verified shortage sourcing. Multi-unit, bundles, installments, split payment, drafts and A4 invoice printing are not yet connected. Sales returns use the separate live returns page.
+      Mixed-unit sales calculate stock in the smallest unit and preserve price/conversion snapshots. Mixed-unit returns and invoice edits are not yet available; bundles, installments, split payments and drafts remain pending.
     </p>
     {error && <p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {feedback && <p role="status" className="rounded-lg bg-info-bg p-3 text-sm text-info">{feedback}</p>}
@@ -357,27 +387,42 @@ export function LivePosPage() {
                     </button>}
                 </div>
                 <div className="flex min-w-0 items-center justify-end gap-1">
-                  <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
-                    type="number" min="1" step="1" value={line.qty}
-                    aria-label={'Quantity for '+line.product.name}
-                    onChange={e => patchLine(line.product.id,{qty:Number(e.target.value)})}
-                    onKeyDown={e => { if(e.key === 'Enter'){e.preventDefault();productRef.current?.focus();} }}
-                    className="h-9 min-w-0 w-[106px] text-right" />
-                  <span className="w-[44px] shrink-0 truncate text-right text-[11px] text-ink-500" title={line.product.unit}>
-                    {line.product.unit}
-                  </span>
+                  {line.product.unitProfilePreview && line.unitQuantities
+                    ? <LiveMultiUnitQuantity profile={line.product.unitProfilePreview}
+                        quantities={line.unitQuantities} productName={line.product.name} disabled={saving}
+                        primaryRef={node=>{quantityRefs.current[line.product.id]=node;}}
+                        onChange={(unit,qty)=>patchMixedUnit(line.product.id,unit,qty)}
+                        onLastEnter={()=>productRef.current?.focus()}/>
+                    : <>
+                      <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
+                        type="number" min="1" step="1" value={line.qty}
+                        aria-label={'Quantity for '+line.product.name}
+                        onChange={e => patchLine(line.product.id,{qty:Number(e.target.value)})}
+                        onKeyDown={e => { if(e.key === 'Enter'){e.preventDefault();productRef.current?.focus();} }}
+                        className="h-9 min-w-0 w-[106px] text-right" />
+                      <span className="w-[44px] shrink-0 truncate text-right text-[11px] text-ink-500" title={line.product.unit}>
+                        {line.product.unit}
+                      </span>
+                    </>}
                 </div>
                 <span className="truncate text-xs text-ink-600" title={'Price per '+line.product.unit}>
-                  {line.product.unit}
+                  {line.unitQuantities?'Mixed':line.product.unit}
                 </span>
                 <div className="flex min-w-0 items-center gap-1">
-                  <span className="shrink-0 text-xs text-ink-500">৳</span>
-                  <Input type="number" min="0" step="0.01" value={line.price}
-                    aria-label={'Price for '+line.product.name}
-                    onChange={e => patchLine(line.product.id,{price:Number(e.target.value)})}
-                    className="h-9 min-w-0 w-full text-right"/>
+                  {line.unitQuantities&&line.product.unitProfilePreview
+                    ? <span data-mixed-unit-prices className="w-full truncate rounded-md bg-ink-50 px-2 py-2 text-right text-[11px] text-ink-600"
+                        title={line.product.unitProfilePreview.units.map(u=>u.symbol+': '+taka(u.sellingPrice)).join(' · ')}>
+                        Unit prices · একক দাম
+                      </span>
+                    : <>
+                      <span className="shrink-0 text-xs text-ink-500">৳</span>
+                      <Input type="number" min="0" step="0.01" value={line.price}
+                        aria-label={'Price for '+line.product.name}
+                        onChange={e => patchLine(line.product.id,{price:Number(e.target.value)})}
+                        className="h-9 min-w-0 w-full text-right"/>
+                    </>}
                 </div>
-                <strong className="text-right text-[13px] font-semibold text-ink">{taka(line.qty*line.price)}</strong>
+                <strong className="text-right text-[13px] font-semibold text-ink">{taka(lineTotal(line))}</strong>
                 <button type="button" className="flex size-8 items-center justify-center rounded-md text-ink-400 hover:bg-danger-bg hover:text-danger"
                   aria-label={'Remove '+line.product.name}
                   onClick={() => setLines(old => old.filter(l => l.product.id !== line.product.id))}>
@@ -475,8 +520,8 @@ export function LivePosPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <Dialog open={!!finished && !receiptOpen} onOpenChange={open=>{
-      if(!open && !saving && !receiptOpen && postedDialogMayResetRef.current) newSale();
+    <Dialog open={!!finished && !receiptOpen} onOpenChange={()=>{
+      // Deliberately ignore incidental close events; New Sale is explicit.
     }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success"/> Sale posted successfully</DialogTitle>
@@ -488,9 +533,9 @@ export function LivePosPage() {
           <p>Due <strong>{taka(finished?.dueAmount || 0)}</strong></p>
         </div>
         <p className="text-xs text-ink-500">Receipts are fetched from the saved invoice. A4 invoice layout and editing remain in the Vue ERP.</p>
-        <DialogFooter><Button variant="outline" disabled={receiptBusy} onClick={()=>void openReceipt()}>
+        <DialogFooter><Button variant="outline" disabled={receiptBusy || saving} onClick={()=>void openReceipt()}>
           {receiptBusy?'Loading receipt…':'View / Print receipt'}
-        </Button><Button onClick={newSale}>New Sale</Button></DialogFooter>
+        </Button><Button disabled={saving || receiptBusy} onClick={newSale}>New Sale</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
@@ -503,7 +548,7 @@ export function LivePosPage() {
             customer={receipt.customerName} customerPhone={receipt.customerPhone}
             guardianName={receipt.customerFatherName} customerAddress={receipt.customerAddress}
             lines={receipt.items.map(i=>({
-              name:i.productName,qty:String(i.quantity)+' '+(i.unit||'Pcs'),
+              name:i.productName,qty:i.unitDescription || String(i.quantity)+' '+(i.unit||'Pcs'),
               price:i.unitPrice,total:i.lineTotal
             }))}
             subtotal={receipt.subtotal} discount={receipt.discount} rounding={0}

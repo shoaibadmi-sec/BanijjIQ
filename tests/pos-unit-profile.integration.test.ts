@@ -100,7 +100,7 @@ test('authenticated D1 profile settings are revisioned and never change cash/sto
     assert.equal(pos.ok,true,JSON.stringify(pos));
     const product=pos.products.find((x:any)=>x.id===id);
     assert.equal(product.unitProfilePreview.revision,2);
-    assert.equal(product.unitProfilePreview.postingEnabled,false);
+    assert.equal(product.unitProfilePreview.postingEnabled,true);
     const lookup=await api('GET','/api/units');
     const pcs=lookup.items.find((x:any)=>x.name==='Pcs');
     assert.ok(pcs?.id);
@@ -110,11 +110,11 @@ test('authenticated D1 profile settings are revisioned and never change cash/sto
     assert.equal((await api('POST','/api/pos/cash-session/start',{openingCash:0})).ok,true);
     const cashBefore=(db.native.prepare('SELECT count(*) n FROM cash_book').get() as any).n;
     const rejected=await api('POST','/api/pos/sales',{
-      clientRequestId:'unit-posting-not-enabled-0001',customerName:'No posting',customerPhone:'01000009222',
-      paymentType:'Cash',discount:0,items:[{productId:id,qty:283,unitPrice:10,
+      clientRequestId:'unit-mismatched-base-request-0001',customerName:'No posting',customerPhone:'01000009222',
+      paymentType:'Cash',discount:0,items:[{productId:id,qty:284,unitPrice:10,
         unitQuantities:{Carton:1,Box:2,Pcs:3},unitProfileRevision:2}]
     });
-    assert.equal(rejected.ok,false);assert.match(rejected.error,/mixed-unit/i);
+    assert.equal(rejected.ok,false);assert.match(rejected.error,/base quantity/i);
     assert.equal((db.native.prepare('SELECT count(*) n FROM sales').get() as any).n,0);
     assert.equal((db.native.prepare('SELECT count(*) n FROM cash_book').get() as any).n,cashBefore);
     assert.equal((db.native.prepare('SELECT count(*) n FROM sale_item_lots').get() as any).n,0);

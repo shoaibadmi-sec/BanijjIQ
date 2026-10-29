@@ -16,7 +16,7 @@ export async function readUnitProfile(db:SherDatabase, productId:string):Promise
     .bind(productId).first<SavedProfile>();
   return json({ok:true,productId,revision:row?.revision??0,
     profile:row?JSON.parse(row.profile_json) as UnitProfile:null,
-    postingEnabled:false});
+    postingEnabled:true});
 }
 
 export async function saveUnitProfile(db:SherDatabase, productId:string, body:unknown):Promise<Response> {
@@ -38,7 +38,7 @@ export async function saveUnitProfile(db:SherDatabase, productId:string, body:un
     const result=await db.prepare("UPDATE product_unit_profiles SET base_unit=?,profile_json=?,revision=revision+1,updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE product_id=? AND revision=?")
       .bind(profile.baseUnit,JSON.stringify(profile),productId,Number(revision)).run();
     if(Number(result.meta.changes)!==1)return error('Unit profile changed concurrently. Refresh before saving.',409);
-    return json({ok:true,productId,revision:Number(revision)+1,profile,postingEnabled:false});
+    return json({ok:true,productId,revision:Number(revision)+1,profile,postingEnabled:true});
   }
   try{
     await db.prepare("INSERT INTO product_unit_profiles (product_id,base_unit,profile_json,revision) VALUES (?,?,?,1)")
@@ -47,7 +47,7 @@ export async function saveUnitProfile(db:SherDatabase, productId:string, body:un
     if(/UNIQUE|constraint|PRIMARY KEY/i.test(String(e)))return error('Unit profile was created concurrently. Refresh before editing.',409);
     throw e;
   }
-  return json({ok:true,productId,revision:1,profile,postingEnabled:false});
+  return json({ok:true,productId,revision:1,profile,postingEnabled:true});
 }
 
 export async function saveGlobalUnitSymbol(db:SherDatabase,id:string,body:unknown):Promise<Response>{
