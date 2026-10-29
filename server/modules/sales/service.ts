@@ -655,7 +655,10 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
   return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentMethod:s.payment_method||'',previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
 }
 
-export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string):Promise<Response>{
+export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string,user:AuthUser):Promise<Response>{
+  if(!(await hasModulePermission(db,user,'pos','view'))&&
+     !(await hasModulePermission(db,user,'returns','view')))
+    return error('Store Credit viewing permission is required.',403);
   const customer=await db.prepare(
     'SELECT customer_id,customer_name,phone,current_due,status,is_deleted FROM customers WHERE customer_id=?'
   ).bind(customerId).first<any>();
