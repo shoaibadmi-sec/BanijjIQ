@@ -100,6 +100,19 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
   assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,1000);
   assert.equal(row('SELECT COUNT(*) n FROM audit_logs WHERE action=\'CREATE_SALE\' AND entity_id=?',saleId).n,1);
+  // Two concurrent one-item checkouts cannot each spend the same last ৳10.
+  const contenders=await Promise.all([
+   api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-race-checkout-0001',
+     items:[{productId:id,qty:1,unitPrice:10}]}),
+   api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-race-checkout-0002',
+     items:[{productId:id,qty:1,unitPrice:10}]})
+  ]);
+  assert.equal(contenders.filter(x=>x.ok===true).length,1,JSON.stringify(contenders));
+  assert.equal(contenders.filter(x=>x.status===409).length,1,JSON.stringify(contenders));
+  assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,0);
+  assert.equal(row("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE entry_type='REDEEM'").n,2);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,books.bank);
   // No manual ledger edit/replay can steal the last credit.
   assert.throws(()=>db.native.prepare(
    "INSERT INTO customer_store_credit_entries "+
