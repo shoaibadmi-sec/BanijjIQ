@@ -360,22 +360,86 @@ export async function updateProduct(db: SherDatabase, productId: string, input: 
 }
 
 export async function adjustStockByDelta(db: SherDatabase, productId: string, deltaValue: unknown, note: string): Promise<Response> {
-  const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0`).bind(productId).first<ProductRow>();
-  if (!product) return error('Product not found', 404);
-  const delta = Number(deltaValue);
-  if (!Number.isFinite(delta) || delta === 0) return error('Adjustment must be a non-zero number');
-  const newStock = qty(Number(product.current_stock) + delta);
-  if (newStock < 0) return error('Stock cannot be negative');
-  await adjustStockToTarget(db, product, newStock, cleanText(note) || 'Manual stock adjustment');
-  await db.prepare(`UPDATE products SET current_stock = ?, updated_at = datetime('now') WHERE product_id = ?`).bind(newStock, productId).run();
-  return json({ ok: true });
+  const product=await db.prepare('SELECT * FROM products WHERE product_id=? AND is_deleted=0')
+    .bind(productId).first<ProductRow>();
+  if (!product) return error('Product not found',404);
+  const delta=Number(deltaValue);
+  if (deltaValue === null || deltaValue === undefined || deltaValue === '' ||
+      !Number.isFinite(delta) || delta === 0 ||
+      !Number.isSafeInteger(Math.round(delta*10000)) ||
+      Math.abs(delta - Math.round(delta*10000)/10000)>1e-8) {
+    return error('Adjustment must be a finite non-zero quantity with at most four decimals.');
+  }
+  const oldStock=Number(product.current_stock);
+  const newStock=Math.round((oldStock+delta)*10000)/10000;
+  if (!Number.isFinite(newStock) || !Number.isSafeInteger(Math.round(newStock*10000)) || newStock<0) {
+    return error('Stock cannot become negative or exceed safe quantity.');
+  }
+  if (delta<0 && trackingEnabled(product)) {
+    return error('Tracked stock cannot be removed by quantity adjustment. Use the tracked workflow.');
+  }
+  const lots=await db.prepare(`SELECT lot_id,remaining_quantity,source_type
+    FROM stock_lots WHERE product_id=? ORDER BY created_at ASC,id ASC`)
+    .bind(productId).all<{lot_id:string;remaining_quantity:number;source_type:string}>();
+  const rows=lots.results??[];
+  const physical=rows.reduce((total,l)=>total+Number(l.remaining_quantity||0),0);
+  if (Math.abs(physical-oldStock)>0.0001) {
+    return error('Stock lot/master balances do not match. Reconcile before adjusting.',409);
+  }
+  let remaining=-delta;
+  const lotStatements: ReturnType<SherDatabase['prepare']>[]=[];
+  let movementLotId: string | null=null;
+  if (delta<0) {
+    for (const lot of rows) {
+      if (remaining<=0) break;
+      if (Number(lot.remaining_quantity)<=0 || lot.source_type==='OVERSOLD') continue;
+      const taken=Math.min(remaining,Number(lot.remaining_quantity));
+      // The ordinary FIFO lot trigger rejects a stale draw that would go negative;
+      // the entire db.batch transaction (including master and movement) rolls back.
+      lotStatements.push(db.prepare(`UPDATE stock_lots
+        SET remaining_quantity=remaining_quantity-?,updated_at=datetime('now')
+        WHERE lot_id=?`).bind(taken,lot.lot_id));
+      remaining=Math.round((remaining-taken)*10000)/10000;
+    }
+    if (remaining>0) return error('Insufficient available FIFO stock.');
+  } else {
+    movementLotId=crypto.randomUUID();
+    let tracking:Awaited<ReturnType<typeof prepareNewLotTracking>>;
+    try {tracking=await prepareNewLotTracking(db,product,movementLotId,delta,undefined,true);}
+    catch(e) {return error(e instanceof Error?e.message:'Tracking validation failed');}
+    lotStatements.push(db.prepare(`INSERT INTO stock_lots
+      (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost,tracking_required_quantity,tracking_status,created_at)
+      VALUES (?,?,'OPENING_ADJUSTMENT','MANUAL_ADJUSTMENT',?,?,?,?,?,datetime('now'))`)
+      .bind(movementLotId,productId,delta,delta,money(product.purchase_price),
+        trackingEnabled(product)?Math.max(0,delta-tracking.assignedQuantity):0,tracking.status));
+    lotStatements.push(...tracking.statements);
+  }
+  try {
+    await db.batch([
+      // Conditional expression fails with a SQL error on a stale snapshot, preventing lost updates.
+      db.prepare(`UPDATE products SET current_stock=CASE WHEN current_stock=? THEN ?
+        ELSE json_extract('STALE_STOCK_SNAPSHOT','$') END, updated_at=datetime('now')
+        WHERE product_id=? AND is_deleted=0`).bind(oldStock,newStock,productId),
+      ...lotStatements,
+      db.prepare(`INSERT INTO stock_movements
+        (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id,created_at)
+        VALUES (?,?,?,?,?,?,?,?,datetime('now'))`).bind(
+          crypto.randomUUID(),productId,delta>0?'STOCK_IN_ADJUSTMENT':'STOCK_OUT_ADJUSTMENT',
+          Math.max(delta,0),Math.max(-delta,0),newStock,cleanText(note)||'Manual stock adjustment',movementLotId)
+    ]);
+  } catch(e) {
+    return error('Stock changed during adjustment or lot update failed. Refresh and retry.',409);
+  }
+  return json({ok:true});
 }
 
 export async function setProductStatus(db: SherDatabase, productId: string, status: string): Promise<Response> {
-  const next = status === 'Inactive' ? 'Inactive' : 'Active';
-  const result = await db.prepare(`UPDATE products SET status = ?, updated_at = datetime('now') WHERE product_id = ? AND is_deleted = 0`).bind(next, productId).run();
+  if (status!=='Active' && status!=='Inactive') return error('Invalid product status');
+  const result=await db.prepare(`UPDATE products SET status=?,updated_at=datetime('now')
+    WHERE product_id=? AND is_deleted=0`).bind(status,productId).run();
   if (!result.success) return error('Status update failed');
-  return json({ ok: true });
+  if (Number(result.meta.changes)!==1) return error('Product not found',404);
+  return json({ok:true});
 }
 
 export async function deleteProduct(db: SherDatabase, productId: string): Promise<Response> {
@@ -400,6 +464,19 @@ export async function getProductLots(db: SherDatabase, productId: string): Promi
     ORDER BY created_at DESC, id DESC
   `).bind(productId).all();
   return json({ ok: true, lots: lots.results ?? [] });
+}
+
+/** Read-only ledger of persisted stock movements; never synthesize history IDs. */
+export async function getProductHistory(db: SherDatabase, productId: string): Promise<Response> {
+  const found=await db.prepare('SELECT product_id FROM products WHERE product_id=? AND is_deleted=0')
+    .bind(productId).first();
+  if (!found) return error('Product not found',404);
+  const movements=await db.prepare(`SELECT movement_id AS movementId,created_at AS date,
+    movement_type AS type,quantity_in AS quantityIn,quantity_out AS quantityOut,
+    balance_after AS balanceAfter,COALESCE(note,'') AS note,lot_id AS lotId
+    FROM stock_movements WHERE product_id=? ORDER BY created_at DESC,id DESC`)
+    .bind(productId).all();
+  return json({ok:true,items:movements.results??[]});
 }
 
 export async function listLookups(db: SherDatabase, kind: 'category' | 'brand' | 'unit'): Promise<Response> {
