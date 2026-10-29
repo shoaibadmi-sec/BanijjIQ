@@ -11,7 +11,7 @@ This uses Cloudflare **Worker Previews** under the existing React Worker, not a 
 ## One-time Cloudflare dashboard configuration
 
 1. Open **Workers & Pages → banijjiq-hisabiq-react-preview → Settings → Build**. Connect GitHub repository `shoaibadmi-sec/BanijjIQ` if it is not already connected. If Cloudflare shows **Set up Worker Previews**, review the irreversible switch and select it; Cloudflare may use the older preview model for existing Workers. Do not change the production ERP Worker.
-2. Under **Branch control**, enable **Preview Builds** for non-production branches. Cloudflare needs to build the **branch's actual source** (do not use a prebuilt artifact from PR #9 or the live Worker). A PR whose source predates the React integration cannot produce this React UI: bring the pinned HisabIQ React integration and these configuration scripts into its branch first.
+2. Under **Branch control**, select **Enable Preview Builds** for non-production branches. Cloudflare needs to build the **branch's actual source** (do not use a prebuilt artifact from PR #9 or the live Worker). A PR whose source predates the React integration cannot produce this React UI: bring the pinned HisabIQ React integration and these configuration scripts into its branch first.
 3. Set the following **Build commands** for the **existing** React Worker:
 
    | Setting | Value |
