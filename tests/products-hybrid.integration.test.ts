@@ -139,6 +139,30 @@ test('Products Tasks 3–4: transactional D1 semantics and genuine Mohim actions
       assert.equal((await api('PUT','/api/products/'+productId+'/status',{status:'Inactive'})).status,200);
       assert.equal(sql('SELECT status FROM products WHERE product_id=?',productId).status,'Inactive');
     });
+    await t.test('read-only Products role can read stock history but cannot adjust or change status',async()=>{
+      const role=await api('POST','/api/roles',{
+        name:'Hybrid Products Reader', permissions:{products:{view:true,add:false,edit:false,delete:'disabled'}}
+      });
+      assert.equal(role.status,200,JSON.stringify(role));
+      const created=await api('POST','/api/users',{
+        name:'Synthetic Read Only',mobile:'01000005545',role:'Hybrid Products Reader',password:'ReadOnly-Test-2026!'
+      });
+      assert.equal(created.status,200,JSON.stringify(created));
+      const login=await api('POST','/api/auth/login',{
+        phone:'01000005545',password:'ReadOnly-Test-2026!'
+      });
+      assert.equal(login.status,200,JSON.stringify(login));
+      const bearer=login.token;
+      assert.equal((await api('GET','/api/products/'+productId+'/history',undefined,bearer)).status,200);
+      const stock=sql('SELECT current_stock n FROM products WHERE product_id=?',productId).n;
+      const movements=count('stock_movements');
+      assert.equal((await api('POST','/api/products/'+productId+'/adjust-stock',
+        {delta:5,note:'forbidden'},bearer)).status,403);
+      assert.equal((await api('PUT','/api/products/'+productId+'/status',
+        {status:'Active'},bearer)).status,403);
+      assert.equal(sql('SELECT current_stock n FROM products WHERE product_id=?',productId).n,stock);
+      assert.equal(count('stock_movements'),movements);
+    });
     await t.test('real stock history uses stored source movement IDs and lot quantities',async()=>{
       const expected=list('SELECT movement_id,quantity_in,quantity_out FROM stock_movements WHERE product_id=? ORDER BY created_at DESC,id DESC',productId);
       const res=await api('GET','/api/products/'+productId+'/history');
