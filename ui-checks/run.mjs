@@ -74,7 +74,7 @@ async function withCheck(name,fn){
   catch(error){results.failed.push({name,error:String(error?.stack||error)});
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
-function startMocking(context,calls){
+function startMocking(context,calls,creditFixture=false){
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -84,13 +84,37 @@ function startMocking(context,calls){
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
-      ok:true,products:[...posProducts,posMixedProduct],customers:[],bankAccounts:[],
+      ok:true,products:[...posProducts,posMixedProduct],customers:creditFixture?[{id:'CUS-CREDIT-E2E',name:'Credit UI Buyer',phone:'01000009801',fatherName:'',address:'',currentDue:50,storeCreditCents:15000,storeCreditBlocked:false}]:[],bankAccounts:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
       activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
       invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop','Shop Name Bangla':'টেস্ট দোকান',
         'Address':'Fixture address, Rajshahi','Phone 1':'01000000000',
         'Invoice Footer':'Test receipt only'},logoDataUri:''}
     });
+    if(creditFixture&&path==='/api/pos/store-credit/CUS-CREDIT-E2E'&&request.method()==='GET')
+      return respond({ok:true,customerId:'CUS-CREDIT-E2E',customerName:'Credit UI Buyer',
+        due:50,availableCents:15000,blocked:false,
+        history:[{entryId:'SC-CREDIT-1',type:'ISSUE',sourceType:'Sales Return',
+          sourceId:'UI-OLD-RETURN',deltaCents:15000,balanceAfterCents:15000,createdAt:'2026-10-29 11:00:00'}]});
+    if(creditFixture&&path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('STORE-CREDIT'))
+      return respond({ok:true,matches:[{invoiceId:'UI-STORE-CREDIT-1',date:'2026-10-29',
+        customerName:'Credit UI Buyer',customerPhone:'01000009801',grandTotal:120,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(creditFixture&&path==='/api/sales-returns/UI-STORE-CREDIT-1/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-STORE-CREDIT-1',date:'2026-10-29',
+        customerId:'CUS-CREDIT-E2E',customerName:'Credit UI Buyer',customerPhone:'01000009801',
+        grandTotal:120,subtotal:120,paidAmount:120,dueAmount:0,paymentMethod:'Cash',
+        previouslyReturnedAmount:0,netSale:120,
+        items:[{productId:'PRD-000001',name:'Copper Cable 2.5mm',soldQty:1,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:1,unitPrice:120,
+          trackSerial:false,trackExpiry:false,trackWarranty:false,availableSerials:[]}]}} );
+    if(creditFixture&&path==='/api/sales-returns'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.equal(payload.invoiceId,'UI-STORE-CREDIT-1');
+      assert.equal(payload.refundMethod,'Store Credit');
+      calls.push({method:'ASSERT',path:'/api/sales-returns',payload});
+      return respond({ok:true,returnId:'SRT-UI-CREDIT',totalReturnAmount:120});
+    }
     if(path==='/api/pos/sales'&&request.method()==='POST'){
       const posted=request.postDataJSON();
       assert.ok(['PRD-000001','PRD-000002','PRD-000003','PRD-MIXED-E2E'].includes(posted.items[0]?.productId));
@@ -569,6 +593,59 @@ try{
     assert.doesNotMatch(confirmation,/cash refund/i);
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-DUE-REV/reverse').length,1);
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('G2-C POS full Store Credit tender stays non-cash and shows separate due',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:920},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    await page.goto(base+'/#/app/pos');
+    await page.locator('[data-live-pos]').waitFor();
+    await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+    await page.getByRole('textbox',{name:'Customer name'}).fill('Credit UI Buyer');
+    await page.getByRole('textbox',{name:'Customer phone'}).fill('01000009801');
+    await page.getByRole('combobox',{name:'Payment method'}).selectOption('Store Credit');
+    await page.locator('[data-pos-store-credit-balance]').waitFor();
+    assert.match(await page.locator('[data-pos-store-credit-balance]').innerText(),/150/);
+    await page.locator('[data-credit-non-cash-notice]').waitFor();
+    await page.getByRole('button',{name:'Review and post real sale'}).click();
+    await page.locator('[data-credit-review-notice]').waitFor();
+    await screenshot(page,'phase3g2-pos-credit-mobile-390');
+    await page.getByRole('button',{name:'Confirm and post'}).click();
+    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
+    assert.equal(payload?.paymentMethod,'Store Credit');
+    assert.equal(payload?.customerId,'CUS-CREDIT-E2E');
+    assert.equal(payload?.paymentType,'Cash');
+    assert.equal(payload?.bankAccountId,'');
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('G2-D Store Credit return shows liability history and no cash payout',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();let confirmation='';
+    page.on('dialog',d=>{confirmation=d.message();void d.accept()});
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor();
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('STORE-CREDIT');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-STORE-CREDIT-1/}).click();
+    await page.locator('[data-return-store-credit-summary]').waitFor();
+    assert.match(await page.locator('[data-return-store-credit-summary]').innerText(),/Store Credit/);
+    await page.getByRole('spinbutton',{name:'Return quantity for Copper Cable 2.5mm'}).fill('1');
+    await page.getByRole('combobox',{name:'Refund method'}).selectOption('Store Credit');
+    await page.getByPlaceholder('Why was this returned?').fill('Customer requested non-cash credit');
+    await page.locator('[data-return-credit-no-cash]').waitFor();
+    await screenshot(page,'phase3g2-return-credit-tablet-768');
+    await page.getByRole('button',{name:'Review real return'}).click();
+    await page.getByRole('button',{name:'Confirm & issue credit'}).click();
+    await page.getByText('SRT-UI-CREDIT').waitFor();
+    assert.match(confirmation,/No cash or bank payout/);
+    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/sales-returns')?.payload;
+    assert.equal(payload?.refundMethod,'Store Credit');
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,1);
     results.apiCalls.push(...api);await ctx.close();
   });
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
