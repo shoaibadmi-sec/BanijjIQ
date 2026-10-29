@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "referencePurpose": "Source-faithful Products JSX preservation and Mohim workflow parity. Reference fixtures are not operational data.",
+  "hisabiq": {
+    "repository": "shuvodelux-commits/hisabiq_ui",
+    "path": "src/pages/Products.tsx",
+    "commit": "9a8dc1ac4e85ac4e60f254e068bd67c2a805673f",
+    "blobSha": "ffd429f0b65eaee8146ed7089cb9412a78f0e975",
+    "markers": {
+      "pageHeader": {
+        "line": "      <PageHeader",
+        "sha256": "b83dbef4fd8ecee88242311811aa95b304a0f5fd784a1060023b8276cd262e58"
+      },
+      "underlineTabs": {
+        "line": "      <MotionTabList className=\"flex flex-nowrap gap-1 overflow-x-auto border-b border-border scrollbar-thin\" role=\"tablist\">",
+        "sha256": "311b2fda9278f26644e559572622cd9bd2be613fe2ad0da69d5fa3de1bbc6273"
+      },
+      "columnPicker": {
+        "line": "            <ProductColumnPicker visible={visibleColumns} onToggle={toggleColumn} />",
+        "sha256": "4f920a198c1e492395f9a1015a5c075c93c3f27f9e3d83e89fdaa197c5d05269"
+      },
+      "stockValueHead": {
+        "line": "              {visibleColumns.stockValue && <TableHead className=\"h-9 text-right text-xs\" title={pl(\"Stock × purchase price\")}>{pl(\"Stock value\")}</TableHead>}",
+        "sha256": "33f1210560aa47270141ce9f626fd411d707b06eb0bf9e936df5f15311bdb8d1"
+      },
+      "rowActions": {
+        "line": "                    <ProductActions",
+        "sha256": "52e4136e0127be47ca7590e43a0c9a0da0eb5cdf7f820687914b82f8652fca5a"
+      },
+      "search": {
+        "line": "              placeholder={pl(\"Search name, বাংলা, SKU…\")}",
+        "sha256": "6fc247388fc5f5c1d2058625eca513ed19dd5b075f94451e4fda1517fbfe74b6"
+      },
+      "addForm": {
+        "line": "    <AddProductDialog presentation=\"page\"",
+        "sha256": "067ba2bb9dc66f9279e7f67d42008a20b04f151864055e916f021ed4728862d9"
+      },
+      "rowDensity": {
+        "line": "                <TableRow key={p.id} className=\"text-[13px]\">",
+        "sha256": "65599b768a77cb7a1f6d02616b9a65c4c01a034e13dd7f29dfa07300b797341c"
+      }
+    }
+  },
+  "mohim": {
+    "repository": "shuvodelux-commits/Mohim_ERP",
+    "path": "products.html",
+    "commit": "f95be8d9bcf55b08abe8841e7502d27b23c82c4c",
+    "blobSha": "b3c8fb5ba179f5eb7951dd9c66dcfb2fa0a37303",
+    "actions": [
+      {
+        "label": "Edit",
+        "legacyAction": "edit",
+        "target": "Mohim catalog editor; no direct stock mutation outside guarded movement workflow"
+      },
+      {
+        "label": "Adjust Stock",
+        "legacyAction": "stock",
+        "target": "Signed adjustment with required reason and atomic master/lot/movement accounting"
+      },
+      {
+        "label": "View Lots",
+        "legacyAction": "lots",
+        "target": "Real lot balances and purchase-cost provenance"
+      },
+      {
+        "label": "Activate / Deactivate",
+        "legacyAction": "toggle",
+        "target": "Guarded status update with RBAC and audit"
+      },
+      {
+        "label": "Delete",
+        "legacyAction": "del",
+        "target": "Only when backend confirms no stock/history/reference restrictions"
+      }
+    ],
+    "formEntrySelectors": [
+      "prodName",
+      "prodType",
+      "prodBrand",
+      "prodCategory",
+      "prodUnit",
+      "prodPurchasePrice",
+      "prodSellingPrice",
+      "prodStock",
+      "prodMinStock",
+      "prodBarcode"
+    ],
+    "formLayout": "Name then type, brand/category/unit, purchase/selling prices, opening/minimum stock, optional barcode. HisabIQ styling; no Mohim HTML embedding."
+  },
+  "visualReview": {
+    "viewports": [
+      390,
+      768,
+      1024,
+      1440
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "checklist": [
+      "underline tabs",
+      "compact row density",
+      "stock value",
+      "search and filters",
+      "column picker",
+      "row More/actions",
+      "Add Product entry",
+      "Bangla helper text",
+      "keyboard focus",
+      "no horizontal page overflow"
+    ],
+    "dataPolicy": "layout-only: exclude fixture values",
+    "routeSwitchDeferredUntilTask": 6,
+    "screenshots": "Capture and compare during Task 7; no screenshots or production deployment implied by this baseline.",
+    "controls": "Normal 36px; major actions about 48px; Geist + Hind Siliguri; no monospace numeric typography"
+  }
+}
