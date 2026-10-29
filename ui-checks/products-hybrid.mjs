@@ -57,8 +57,8 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
         'sellingPrice','currentStock','minimumStock','barcode']);
       assert.equal(await page.locator('#product-lookup-category option[value="Electrical"]').count(),1);
       await page.getByRole('textbox',{name:'Product name'}).fill('New Product');
-      await page.getByRole('textbox',{name:'Category'}).fill('Electrical');
-      await page.getByRole('textbox',{name:'Base unit'}).fill('Pcs');
+      await page.locator('[data-mohim-editor] input[name="category"]').fill('Electrical');
+      await page.locator('[data-mohim-editor] input[name="unit"]').fill('Pcs');
       await page.getByRole('spinbutton',{name:'Purchase price'}).fill('20');
       await page.getByRole('spinbutton',{name:'Selling price'}).fill('50');
       await page.getByRole('spinbutton',{name:'Opening stock'}).fill('3');
@@ -102,7 +102,7 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       await page.getByText('Readonly Cable').waitFor();
       assert.equal(await page.getByRole('button',{name:'Add Product'}).count(),0);
       await page.getByRole('button',{name:'Actions for Readonly Cable'}).click();
-      assert.equal(await page.getByRole('menuitem',{name:/Edit/}).isDisabled(),true);
+      assert.equal(await page.getByRole('menuitem',{name:/^Edit ·/}).isDisabled(),true);
       assert.equal(await page.getByRole('menuitem',{name:/Adjust stock/}).isDisabled(),true);
       assert.equal(await page.getByRole('menuitem',{name:/Deactivate/}).isDisabled(),true);
       await page.keyboard.press('Escape');
