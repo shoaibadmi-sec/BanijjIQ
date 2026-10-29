@@ -165,66 +165,114 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
   });
 }
 
-export async function createProduct(db: SherDatabase, input: ProductInput): Promise<Response> {
-  const productName = cleanText(input.productName);
-  const brand = cleanText(input.brand);
-  const category = cleanText(input.category);
-  const unit = cleanText(input.unit);
-  const barcode = cleanText(input.barcode);
-  if (!productName) return error('Product name is required');
-  if (!category) return error('Category is required');
-  if (!unit) return error('Unit is required');
+/** Reject malformed values before any D1 write; zero cost/stock remain valid. */
+function strictQuantity(value: unknown, field: string): number {
+  if (value === null || value === '' || (typeof value !== 'number' && typeof value !== 'string') ||
+      !Number.isFinite(Number(value)) || Number(value) < 0 ||
+      !Number.isSafeInteger(Math.round(Number(value) * 10000))) {
+    throw new Error(field + ' must be a finite nonnegative number within safe range.');
+  }
+  return Math.round(Number(value) * 10000) / 10000;
+}
 
-  const duplicate = await db.prepare(`SELECT product_id FROM products WHERE LOWER(product_name) = LOWER(?) AND is_deleted = 0 LIMIT 1`).bind(productName).first();
+/** Lookups must be part of the SAME transaction as the product and its stock. */
+async function planLookup(db: SherDatabase, table: 'product_brands' | 'product_categories' | 'product_units', name: string) {
+  if (!name) return [];
+  const field = table === 'product_brands' ? 'brand_name' : table === 'product_categories' ? 'category_name' : 'unit_name';
+  const idField = table === 'product_brands' ? 'brand_id' : table === 'product_categories' ? 'category_id' : 'unit_id';
+  const prefix = table === 'product_brands' ? 'PBRD' : table === 'product_categories' ? 'PCAT' : 'PUNT';
+  const current = await db.prepare(`SELECT ${idField} AS id,status FROM ${table} WHERE LOWER(${field})=LOWER(?) LIMIT 1`).bind(name).first<{id:string;status:string}>();
+  if (current) return current.status === 'Active' ? [] : [
+    db.prepare(`UPDATE ${table} SET status='Active' WHERE ${idField}=?`).bind(current.id)
+  ];
+  const id = await nextLookupId(db, table, idField, prefix);
+  return [db.prepare(`INSERT INTO ${table} (${idField},${field},status) VALUES (?,?,'Active')`).bind(id, name)];
+}
+
+export async function createProduct(db: SherDatabase, input: ProductInput): Promise<Response> {
+  if (!input || typeof input !== 'object') return error('Product data is required');
+  const productName = cleanText(input.productName);
+  const brand = cleanText(input.brand), category = cleanText(input.category);
+  const unit = cleanText(input.unit), barcode = cleanText(input.barcode);
+  if (!productName || !category || !unit) return error('Product name, category and unit are required');
+  if ([productName,brand,category,unit,barcode].some(x=>x.length>200)) return error('Product field is too long');
+  let purchasePrice:number,sellingPrice:number,currentStock:number,minimumStock:number;
+  try {
+    purchasePrice = strictQuantity(input.purchasePrice ?? 0,'Purchase price');
+    sellingPrice = strictQuantity(input.sellingPrice ?? 0,'Selling price');
+    currentStock = strictQuantity(input.currentStock ?? 0,'Opening stock');
+    minimumStock = strictQuantity(input.minimumStock ?? 0,'Minimum stock');
+  } catch(e) { return error(e instanceof Error ? e.message : 'Invalid product number'); }
+  if (input.status !== undefined && input.status !== 'Active' && input.status !== 'Inactive') return error('Invalid product status');
+  const trackSerial = input.trackSerial ? 1 : 0, trackExpiry = input.trackExpiry ? 1 : 0;
+  const trackWarranty = input.trackWarranty ? 1 : 0;
+  if (trackSerial && !Number.isInteger(currentStock)) return error('Serial-tracked opening stock must be a whole number');
+  const warrantyPeriodValue=trackWarranty ? Number(input.warrantyPeriodValue ?? 0):0;
+  if (!Number.isSafeInteger(warrantyPeriodValue) || warrantyPeriodValue<0) return error('Invalid warranty duration');
+  const warrantyPeriodUnit:WarrantyPeriodUnit=['Days','Months','Years'].includes(String(input.warrantyPeriodUnit)) ?
+    input.warrantyPeriodUnit as WarrantyPeriodUnit : 'Months';
+  const rawSerials = [
+    ...(Array.isArray(input.openingTracking?.serialNumbers) ? input.openingTracking!.serialNumbers! : []),
+    ...(Array.isArray(input.openingTracking?.expiryBatches) ?
+      input.openingTracking!.expiryBatches!.flatMap(b => Array.isArray(b.serialNumbers) ? b.serialNumbers : []) : [])
+  ].map(x=>cleanText(x).toLowerCase()).filter(Boolean);
+  if (new Set(rawSerials).size !== rawSerials.length) return error('Duplicate Serial / IMEI in opening stock');
+  if (!trackSerial && rawSerials.length) return error('Serial metadata requires serial tracking');
+  if (!trackExpiry && input.openingTracking?.expiryBatches?.length) return error('Expiry metadata requires expiry tracking');
+  const duplicate=await db.prepare("SELECT product_id FROM products WHERE LOWER(product_name)=LOWER(?) AND is_deleted=0 LIMIT 1").bind(productName).first();
   if (duplicate) return error('Product name already exists');
   if (barcode) {
-    const barcodeDuplicate = await db.prepare(`SELECT product_id FROM products WHERE barcode = ? AND is_deleted = 0 LIMIT 1`).bind(barcode).first();
-    if (barcodeDuplicate) return error('Barcode already exists');
+    const conflicting=await db.prepare('SELECT product_id FROM products WHERE barcode=? AND is_deleted=0 LIMIT 1').bind(barcode).first();
+    if (conflicting) return error('Barcode already exists');
   }
-
-  const productId = await nextProductId(db);
-  const currentStock = qty(input.currentStock);
-  const purchasePrice = money(input.purchasePrice);
-  const trackSerial = input.trackSerial ? 1 : 0;
-  const trackExpiry = input.trackExpiry ? 1 : 0;
-  const trackWarranty = input.trackWarranty ? 1 : 0;
-  const warrantyPeriodValue = trackWarranty ? Math.max(0, Math.round(Number(input.warrantyPeriodValue || 0))) : 0;
-  const warrantyPeriodUnit: WarrantyPeriodUnit = ['Days','Months','Years'].includes(String(input.warrantyPeriodUnit)) ? input.warrantyPeriodUnit as WarrantyPeriodUnit : 'Months';
-  let preferredSupplierId = '';
-  try { preferredSupplierId = await normalizePreferredSupplierId(db, input.preferredSupplierId); }
-  catch (err) { return error(err instanceof Error ? err.message : 'Preferred supplier is invalid.'); }
-
-  await db.prepare(`
-    INSERT INTO products
-      (product_id, product_name, brand, category, unit, barcode, purchase_price, selling_price, current_stock, minimum_stock, preferred_supplier_id, status,
-       track_serial, track_expiry, track_warranty, warranty_period_value, warranty_period_unit, is_deleted, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
-  `).bind(
-    productId,
-    productName,
-    brand,
-    category,
-    unit,
-    barcode,
-    purchasePrice,
-    money(input.sellingPrice),
-    currentStock,
-    qty(input.minimumStock),
-    preferredSupplierId,
-    input.status === 'Inactive' ? 'Inactive' : 'Active',
-    trackSerial, trackExpiry, trackWarranty, warrantyPeriodValue, warrantyPeriodUnit
-  ).run();
-
-  if (brand) await ensureLookup(db, 'product_brands', brand);
-  await ensureLookup(db, 'product_categories', category);
-  await ensureLookup(db, 'product_units', unit);
-
-  const product = await db.prepare(`SELECT * FROM products WHERE product_id = ?`).bind(productId).first<ProductRow>();
-  if (product && currentStock > 0) {
-    await adjustStockToTarget(db, { ...product, current_stock: 0 }, currentStock, 'Initial opening stock from Product form', input.openingTracking);
+  let preferredSupplierId='';
+  try {preferredSupplierId=await normalizePreferredSupplierId(db,input.preferredSupplierId);} catch(e) {
+    return error(e instanceof Error ? e.message : 'Preferred supplier is invalid');
   }
-
-  return json({ ok: true, productId });
+  const productId=await nextProductId(db);
+  const lotId=crypto.randomUUID();
+  let tracking:Awaited<ReturnType<typeof prepareNewLotTracking>>|null=null;
+  try {
+    if (currentStock>0) {
+      tracking=await prepareNewLotTracking(db,{
+        product_id:productId,product_name:productName,track_serial:trackSerial,track_expiry:trackExpiry,
+        track_warranty:trackWarranty,warranty_period_value:warrantyPeriodValue,
+        warranty_period_unit:warrantyPeriodUnit
+      },lotId,currentStock,input.openingTracking,true);
+    }
+  } catch(e) { return error(e instanceof Error ? e.message : 'Invalid opening tracking'); }
+  try {
+    const statements = [
+      db.prepare(`INSERT INTO products
+        (product_id,product_name,brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,preferred_supplier_id,status,
+         track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit,is_deleted,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,datetime('now'),datetime('now'))`)
+       .bind(productId,productName,brand,category,unit,barcode,purchasePrice,sellingPrice,currentStock,minimumStock,
+         preferredSupplierId,input.status==='Inactive'?'Inactive':'Active',
+         trackSerial,trackExpiry,trackWarranty,warrantyPeriodValue,warrantyPeriodUnit),
+      ...await planLookup(db,'product_brands',brand),
+      ...await planLookup(db,'product_categories',category),
+      ...await planLookup(db,'product_units',unit)
+    ];
+    if (currentStock>0 && tracking) {
+      statements.push(db.prepare(`INSERT INTO stock_lots
+        (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost,tracking_required_quantity,tracking_status,created_at)
+        VALUES (?,?,'OPENING_ADJUSTMENT','PRODUCT_EDIT',?,?,?,?,?,datetime('now'))`)
+        .bind(lotId,productId,currentStock,currentStock,purchasePrice,
+          (trackSerial||trackExpiry)?Math.max(0,currentStock-tracking.assignedQuantity):0,tracking.status));
+      statements.push(...tracking.statements);
+      statements.push(db.prepare(`INSERT INTO stock_movements
+        (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id,created_at)
+        VALUES (?,?,'STOCK_IN_ADJUSTMENT',?,0,?,?,?,datetime('now'))`)
+        .bind(crypto.randomUUID(),productId,currentStock,currentStock,'Initial opening stock from Product form',lotId));
+    }
+    await db.batch(statements);
+  } catch(e) {
+    const message=e instanceof Error?e.message:'Product creation failed';
+    return error(/unique|constraint|duplicate|already exists/i.test(message) ?
+      'Concurrent product/lookup conflict. Refresh and retry.' : 'Product creation failed. No changes saved.',409);
+  }
+  return json({ok:true,productId});
 }
 
 export async function updateProduct(db: SherDatabase, productId: string, input: ProductInput): Promise<Response> {
