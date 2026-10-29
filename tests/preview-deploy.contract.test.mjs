@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 const read=(file)=>readFileSync(file,'utf8');
 const workflow=read('.github/workflows/hisabiq-react-build.yml');
@@ -110,4 +111,90 @@ test('Phase 14 read-only hosted acceptance cannot run on PR or without protected
   assert.ok(launcher.includes('node d1-checks/phase12.mjs'));
   assert.ok(launcher.includes('node d1-checks/phase13-browser.mjs'));
   assert.ok(branch.includes('node d1-checks/phase13-browser.mjs'));
+});
+
+
+test('first-run and repeat-run hosted preview smoke preserve setup header and JSON shape',()=>{
+  // Run the actual remote-smoke module in a child with a synthetic HTTP boundary.
+  // No Cloudflare API calls, deployed Workers or credential disclosure.
+  const child=String.raw`
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const worker='https://banijjiq-hisabiq-react-preview.preview-ci-fixture.workers.dev';
+let initialized=process.env.SMOKE_ALREADY_SETUP==='yes';
+let setupPosts=0,blockedSetupPosts=0,loginPosts=0;
+const respond=(payload,status=200)=>new Response(JSON.stringify(payload),{
+ status,headers:{'content-type':'application/json'}});
+globalThis.fetch=async(input,options={})=>{
+ const url=String(input),method=options.method||'GET';
+ if(url==='https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID+'/workers/subdomain')
+   return respond({success:true,result:{subdomain:'preview-ci-fixture'}});
+ assert.ok(url.startsWith(worker+'/')||url===worker+'/', 'Unexpected external URL');
+ const path=url.slice(worker.length);
+ const headers=options.headers||{};
+ const body=options.body===undefined?null:JSON.parse(String(options.body));
+ if(path==='/api/health')return respond({ok:true});
+ if(path==='/api/setup/status')return respond({ok:true,setupRequired:!initialized});
+ if(path==='/api/setup/admin'){
+   if(!headers['x-setup-secret']){
+     blockedSetupPosts++;
+     assert.ok(body&&body.phone==='000','Unauthorized setup must be real JSON');
+     return respond({ok:false,error:'Administrator setup requires a valid setup secret'},403);
+   }
+   assert.equal(headers['x-setup-secret'],process.env.HISABIQ_PREVIEW_SETUP_SECRET);
+   assert.equal(headers['Content-Type'],'application/json');
+   assert.equal(body?.fullName,'Preview Administrator');
+   assert.equal(body?.phone,process.env.HISABIQ_PREVIEW_ADMIN_PHONE);
+   assert.equal(body?.password,process.env.HISABIQ_PREVIEW_ADMIN_PASSWORD);
+   assert.equal(initialized,false,'Unexpected admin reset');
+   initialized=true;setupPosts++;
+   return respond({ok:true,token:'local-ci-token'});
+ }
+ if(path==='/api/auth/login'){
+   assert.equal(headers['Content-Type'],'application/json');
+   assert.equal(body?.phone,process.env.HISABIQ_PREVIEW_ADMIN_PHONE);
+   assert.equal(body?.password,process.env.HISABIQ_PREVIEW_ADMIN_PASSWORD);
+   assert.equal(initialized,true);
+   loginPosts++;
+   return respond({ok:true,token:'local-ci-token',user:{role:'admin'}});
+ }
+ if(path==='/api/auth/me'){
+   assert.equal(headers.Authorization,'Bearer local-ci-token');
+   return respond({ok:true,user:{role:'admin'}});
+ }
+ if(path==='/api/bootstrap'){
+   assert.equal(headers.Authorization,'Bearer local-ci-token');
+   return respond({ok:true,products:[]});
+ }
+ if(path==='/api/pos/bootstrap'){
+   assert.equal(headers.Authorization,'Bearer local-ci-token');
+   return respond({ok:true,products:[],customers:[]});
+ }
+ if(path==='/')return new Response('<!doctype html><html></html>',{status:200,
+   headers:{'content-type':'text/html'}});
+ throw Error('Unexpected preview smoke endpoint: '+method+' '+path);
+};
+await import('./scripts/preview/remote-smoke.mjs');
+const artifact=JSON.parse(readFileSync('preview-checks/output/hosted-smoke.json','utf8'));
+assert.equal(artifact.failed.length,0);
+assert.equal(artifact.passed.length,6);
+assert.equal(setupPosts,process.env.SMOKE_ALREADY_SETUP==='yes'?0:1);
+assert.equal(blockedSetupPosts,1);
+assert.equal(loginPosts,1);
+`;
+  for(const already of ['no','yes']){
+    const proc=spawnSync(process.execPath,['--input-type=module','-e',child],{
+      cwd:process.cwd(),encoding:'utf8',timeout:30000,
+      env:{...process.env,SMOKE_ALREADY_SETUP:already,
+        CLOUDFLARE_ACCOUNT_ID:'11111111111111111111111111111111',
+        CLOUDFLARE_API_TOKEN:'SYNTHETIC-NONPRODUCTION-TEST-TOKEN',
+        HISABIQ_PREVIEW_D1_ID:'11111111-1111-4111-8111-111111111111',
+        HISABIQ_PREVIEW_SETUP_SECRET:'SYNTHETIC-NEVER-DEPLOY-SETUP-SECRET',
+        HISABIQ_PREVIEW_ADMIN_PHONE:'01000009999',
+        HISABIQ_PREVIEW_ADMIN_PASSWORD:'SYNTHETIC-LOCAL-ONLY-PASSWORD',
+        GITHUB_STEP_SUMMARY:''}
+    });
+    assert.equal(proc.status,0,'Mocked smoke '+already+' failed: '+(proc.stderr||proc.stdout).slice(-1800));
+    assert.match(proc.stdout,/Preview verified at/);
+  }
 });
