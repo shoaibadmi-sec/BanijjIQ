@@ -142,7 +142,7 @@ export function patchLiveProducts(source) {
     'API category tabs');
   jsx=replaceOnce(jsx,
     "const projection = p.kind==='Bundle' ? (getBundleVersion(p.id) ? getBundleProjection(getBundleVersion(p.id)!,list,lots) : null) : null;",
-    "const projection = null; // Non-integrated bundles are rejected by the catalog adapter.",
+    "// Non-integrated bundles are rejected by the catalog adapter.",
     'preview bundle projection');
   jsx=replaceOnce(jsx,
     "const s = p.kind==='Bundle' ? (!p.active?'inactive':(projection?.availableSets ?? 0)>0?'in':'out') : stockStatus(p);",
@@ -157,9 +157,9 @@ export function patchLiveProducts(source) {
     "p.kind === 'Service' || p.kind === 'Bundle' ? '—' : taka(rowStockValue, rowStockValue % 1 ? 2 : 0)",
     "rowStockValue===null ? '—' : taka(rowStockValue,rowStockValue%1?2:0)",
     'nullable D1 valuation');
-  const actionStart=jsx.indexOf('                    <ProductActions\n');
-  const actionEnd=jsx.indexOf('\n                    />',actionStart);
-  if(actionStart<0||actionEnd<0)throw new Error('Pinned Products row action block missing');
+  const rowActionStart=jsx.indexOf('                    <ProductActions\n');
+  const actionEnd=jsx.indexOf('\n                    />',rowActionStart);
+  if(rowActionStart<0||actionEnd<0)throw new Error('Pinned Products row action block missing');
   const safeActions=String.raw`                    <ProductActions
                       product={byId.get(p.id)!}
                       compact
@@ -168,7 +168,7 @@ export function patchLiveProducts(source) {
                       onChanged={()=>setNotice('Product updated · '+p.name)}
                       onAdjustStock={adjustStock} onSetStatus={setStatus}
                       loadLots={loadLots} loadHistory={loadHistory}`;
-  jsx=jsx.slice(0,actionStart)+safeActions+jsx.slice(actionEnd);
+  jsx=jsx.slice(0,rowActionStart)+safeActions+jsx.slice(actionEnd);
   const compiled=header+primitives+controller+jsx+"\n    </div>);\n}\n";
   const forbidden=[
     'availableProducts(', 'availableProductCategories(', 'availableStockLots(',
