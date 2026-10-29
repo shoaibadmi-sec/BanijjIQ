@@ -68,7 +68,9 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
-    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData});
+    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
+      categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
+      brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
       ok:true,products:posProducts,customers:[],bankAccounts:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
