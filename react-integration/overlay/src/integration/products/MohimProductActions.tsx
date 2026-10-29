@@ -9,7 +9,7 @@ import { productActionPolicy } from './productForm';
 
 type Panel='view'|'adjust'|'lots'|'history'|null;
 type Props={
- product:BackendProduct;canEdit:boolean;onEdit:()=>void;onChanged:()=>void;
+ product:BackendProduct;canEdit:boolean;compact?:boolean;onEdit:()=>void;onChanged:()=>void;
  onAdjustStock:(productId:string,delta:number,note:string)=>Promise<unknown>;
  onSetStatus:(productId:string,status:'Active'|'Inactive')=>Promise<unknown>;
  loadLots:(productId:string)=>Promise<LiveLot[]>;
@@ -17,7 +17,7 @@ type Props={
 };
 const format=(v:number)=>v.toLocaleString('en-BD',{maximumFractionDigits:4});
 export function MohimProductActions({
- product,canEdit,onEdit,onChanged,onAdjustStock,onSetStatus,loadLots,loadHistory
+ product,canEdit,compact=false,onEdit,onChanged,onAdjustStock,onSetStatus,loadLots,loadHistory
 }:Props){
  const policy=productActionPolicy(product,canEdit);
  const [open,setOpen]=useState(false),[panel,setPanel]=useState<Panel>(null);
@@ -75,11 +75,18 @@ export function MohimProductActions({
  };
  const deferred=[policy.addLot,policy.offers,policy.delete,policy.bundle];
  return <div ref={menuRef} className="relative inline-flex text-left" data-mohim-product-actions>
-   <Button ref={buttonRef} size="sm" variant="outline" disabled={busy} aria-label={'Actions for '+product.productName}
-     aria-haspopup="menu" aria-expanded={open} onClick={()=>setOpen(s=>!s)}>
-     {busy?<Loader2 className="size-3.5 animate-spin"/>:<MoreHorizontal className="size-3.5"/>}
-     Actions <ChevronDown className="size-3"/>
-   </Button>
+   {compact
+     ? <button ref={buttonRef} type="button" disabled={busy}
+         aria-label={'Actions for '+product.productName} aria-haspopup="menu"
+         aria-expanded={open} onClick={()=>setOpen(s=>!s)}
+         className="rounded-md p-1 text-ink-400 hover:bg-ink-50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500">
+         {busy?<Loader2 className="size-4 animate-spin"/>:<MoreHorizontal className="size-4"/>}
+       </button>
+     : <Button ref={buttonRef} size="sm" variant="outline" disabled={busy} aria-label={'Actions for '+product.productName}
+         aria-haspopup="menu" aria-expanded={open} onClick={()=>setOpen(s=>!s)}>
+         {busy?<Loader2 className="size-3.5 animate-spin"/>:<MoreHorizontal className="size-3.5"/>}
+         Actions <ChevronDown className="size-3"/>
+       </Button>}
    {open&&<div role="menu" aria-label={'Actions for '+product.productName}
      className="absolute right-0 top-full z-40 mt-1 w-52 rounded-lg border border-border bg-card p-1 shadow-pop">
      <button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-xs text-ink hover:bg-ink-50"
