@@ -114,3 +114,34 @@ the verified URL and test results.
 without Cloudflare credentials. The existing \`d1-checks/run.mjs\` tests the
 real Worker against **local** D1. Only the guarded hosted-preview job uses
 remote D1 commands.
+
+## Phase 14 security review — dispatch remains blocked
+
+The copy of `.github/workflows/hisabiq-hosted-preview-dispatch.yml`
+on the **draft PR branch** now runs all baseline, Phase 12 and Phase 13
+real-Worker/D1 regressions before deploying. A separate
+`accept-hosted-preview` job depends on the authorized isolated
+deployment and uses the protected `hisabiq-react-preview` environment.
+
+**Important:** the independently registered manual launcher on default
+branch `main` remains the **older version**; updating the PR-branch
+workflow does not update GitHub's manual Actions launcher. **Do not run
+the old default-branch manual preview deployment until its contents are
+explicitly reviewed and synchronized.** This step cannot be accomplished
+by merging PR #9 without violating the production release hold.
+
+The additional `scripts/preview/browser-acceptance.mjs` acceptance suite
+is read-only and enforces the exact dedicated `workers.dev` hostname. It
+uses actual Chromium, actual isolated API reads and actual preview-only
+login at 390/768/1440px, checking Products, POS, Returns, F2 keyboard,
+document overflow, screenshots and axe-core accessibility findings.
+An API request allowlist permits only GET and POST `/api/auth/login`;
+other writes abort before transmission and fail the audit. The remote
+suite runs **only after** an approved isolated preview deployment and
+cannot be initiated from a normal PR CI event.
+
+The same acceptance function runs locally as part of
+`d1-checks/phase13-browser.mjs` using an exclusively disposable D1.
+A local success does not establish hosted Cloudflare permissions or
+remote D1 readiness. Refer to `docs/hisabiq-react-phase14.md` before
+any preview authorization. Production remains untouched.
