@@ -93,7 +93,7 @@ function startMocking(context,calls){
     });
     if(path==='/api/pos/sales'&&request.method()==='POST'){
       const posted=request.postDataJSON();
-      assert.ok(['PRD-000001','PRD-000002','PRD-000003'].includes(posted.items[0]?.productId));
+      assert.ok(['PRD-000001','PRD-000002','PRD-000003','PRD-MIXED-E2E'].includes(posted.items[0]?.productId));
       if(posted.items[0]?.productId==='PRD-000003')
         assert.deepEqual(posted.items[0].serialNumbers,['SN-UI-001']);
       calls.push({method:'ASSERT',path:'/api/pos/sales',payload:posted});
