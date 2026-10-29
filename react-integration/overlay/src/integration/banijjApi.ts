@@ -199,7 +199,8 @@ export const postSalesReturn = (payload:SalesReturnPayload) =>
 export interface MixedReversalPreview {
   eligible:boolean;reason:string;invoiceId:string;refundAmount:number;
   previouslyRefundedAmount:number;remainingBaseQuantity:number;
-  refundMethod:'Cash'|'Bank'|'Mobile Banking';refundBankAccountId:string;refundAccountName:string;
+  refundMethod:'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment';refundBankAccountId:string;refundAccountName:string;
+  customerDueBefore:number;
   items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>;
 }
 export const getMixedReversalPreview = (id:string)=>
