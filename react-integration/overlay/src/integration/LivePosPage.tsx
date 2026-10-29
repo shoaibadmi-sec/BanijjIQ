@@ -320,7 +320,7 @@ export function LivePosPage() {
               <h2 className="text-sm font-semibold text-ink">Products <span className="font-bn font-normal text-xs text-ink-500">· বিক্রির তালিকা</span></h2>
               <span className="text-xs text-ink-500">{lines.length} lines</span>
             </header>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Sales cart rows — scroll horizontally with keyboard">
               <div className="grid min-w-[670px] grid-cols-[28px_minmax(160px,1fr)_82px_110px_110px_28px] gap-2 border-b border-border bg-ink-50 px-3 py-2 text-[11px] font-medium uppercase text-ink-500">
                 <span>#</span><span>Product</span><span className="text-right">Qty</span>
                 <span className="text-right">Price</span><span className="text-right">Total</span><span></span>
