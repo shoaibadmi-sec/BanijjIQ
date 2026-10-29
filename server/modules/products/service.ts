@@ -140,7 +140,7 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
     `).all(),
     db.prepare(`SELECT category_id AS id, category_name AS name FROM product_categories WHERE status = 'Active' ORDER BY category_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT brand_id AS id, brand_name AS name FROM product_brands WHERE status = 'Active' ORDER BY brand_name COLLATE NOCASE ASC`).all(),
-    db.prepare(`SELECT unit_id AS id, unit_name AS name FROM product_units WHERE status = 'Active' ORDER BY unit_name COLLATE NOCASE ASC`).all(),
+    db.prepare(`SELECT unit_id AS id, unit_name AS name, symbol FROM product_units WHERE status = 'Active' ORDER BY unit_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT supplier_id AS id, supplier_name AS name, current_due AS currentDue FROM suppliers WHERE status = 'Active' AND is_deleted = 0 ORDER BY supplier_name COLLATE NOCASE ASC`).all(),
     db.prepare(`SELECT bank_account_id AS id, account_name AS name, account_type AS accountType FROM bank_accounts WHERE status = 'Active' ORDER BY account_name COLLATE NOCASE ASC`).all()
   ]);
@@ -483,7 +483,7 @@ export async function listLookups(db: SherDatabase, kind: 'category' | 'brand' |
   const table = kind === 'category' ? 'product_categories' : kind === 'brand' ? 'product_brands' : 'product_units';
   const idColumn = kind === 'category' ? 'category_id' : kind === 'brand' ? 'brand_id' : 'unit_id';
   const nameColumn = kind === 'category' ? 'category_name' : kind === 'brand' ? 'brand_name' : 'unit_name';
-  const rows = await db.prepare(`SELECT ${idColumn} AS id, ${nameColumn} AS name, status FROM ${table} ORDER BY ${nameColumn} COLLATE NOCASE ASC`).all();
+  const rows = await db.prepare(`SELECT ${idColumn} AS id, ${nameColumn} AS name, status${kind === 'unit' ? ', symbol' : ''} FROM ${table} ORDER BY ${nameColumn} COLLATE NOCASE ASC`).all();
   return json({ ok: true, items: rows.results ?? [] });
 }
 

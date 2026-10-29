@@ -29,6 +29,7 @@ import {
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { updateProductCatalog } from './catalog.service.js';
+import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
 function cleanText(value: unknown): string {
@@ -84,6 +85,13 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
 
   const supplierWarrantyResolveMatch = path.match(/^\/api\/product-tracking\/supplier-warranty\/([^/]+)\/resolve$/);
   if (supplierWarrantyResolveMatch && request.method === 'POST') return resolveSupplierWarrantyRmaRoute(db, decodeURIComponent(supplierWarrantyResolveMatch[1]), await readBody<any>(request), user);
+
+  const unitProfileMatch = path.match(/^\/api\/products\/([^/]+)\/unit-profile$/);
+  if (unitProfileMatch && request.method === 'GET') return readUnitProfile(db, decodeURIComponent(unitProfileMatch[1]));
+  if (unitProfileMatch && request.method === 'PUT') return saveUnitProfile(db, decodeURIComponent(unitProfileMatch[1]), await readBody<unknown>(request));
+
+  const unitSymbolMatch = path.match(/^\/api\/units\/([^/]+)\/symbol$/);
+  if (unitSymbolMatch && request.method === 'PUT') return saveGlobalUnitSymbol(db, decodeURIComponent(unitSymbolMatch[1]), await readBody<unknown>(request));
 
   const catalogMatch = path.match(/^\/api\/products\/([^/]+)\/catalog$/);
   if (catalogMatch && request.method === 'PUT') return updateProductCatalog(db, decodeURIComponent(catalogMatch[1]), await readBody<any>(request));
