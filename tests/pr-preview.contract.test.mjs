@@ -52,7 +52,7 @@ test('automatic preview requires built React assets except for isolated contract
 test('Cloudflare build commands target React, exact Wrangler preview, and never production',()=>{
  const docs=readFileSync('docs/hisabiq-pr-auto-preview.md','utf8');
  const runner=readFileSync('scripts/preview/pr-preview-build.mjs','utf8');
- for(const term of ['npm run react:build','wrangler@4.135.0','build-pr-config.mjs'])
+ for(const term of ["['npm',['run','react:build']]",'wrangler@4.135.0','build-pr-config.mjs'])
    assert.ok(runner.includes(term),'Missing safe step: '+term);
  for(const term of [
    'hisabiq-pr-preview',
