@@ -42,6 +42,16 @@ const posProducts=productData.map(p=>({
   minimumStock:p.minimumStock,trackSerial:Boolean(p.trackSerial),trackExpiry:false,
   trackWarranty:Boolean(p.trackWarranty)
 }));
+const posMixedProduct={
+ id:'PRD-MIXED-E2E',name:'Carton Test Cable',productName:'Carton Test Cable',
+ brand:'',category:'Electrical',unit:'Pcs',barcode:'MIXED-E2E-001',
+ sellingPrice:10,stock:400,minimumStock:5,trackSerial:false,trackExpiry:false,trackWarranty:false,
+ unitProfilePreview:{baseUnit:'Pcs',revision:1,postingEnabled:true,units:[
+  {unit:'Carton',symbol:'CT',containsNext:12,factor:240,sellingPrice:2100},
+  {unit:'Box',symbol:'BOX',containsNext:20,factor:20,sellingPrice:180},
+  {unit:'Pcs',symbol:'PCS',containsNext:null,factor:1,sellingPrice:10}
+ ]}
+};
 const invoice={invoiceId:'UI-E2E-INV-001',date:'2026-10-28',
  customerName:'Test Customer',customerPhone:'01000000001',
  customerFatherName:'',customerAddress:'',subtotal:120,discount:0,
@@ -74,7 +84,7 @@ function startMocking(context,calls){
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
-      ok:true,products:posProducts,customers:[],bankAccounts:[],
+      ok:true,products:[...posProducts,posMixedProduct],customers:[],bankAccounts:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
       activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
       invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop','Shop Name Bangla':'টেস্ট দোকান',
@@ -271,6 +281,39 @@ try{
       }
       results.apiCalls.push(...api);
       await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('mixed-unit joined quantity '+width+' layout and posting',async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:960},reducedMotion:'reduce'});
+      const api=[];await startMocking(ctx,api);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('mixed '+width+': '+e.message));
+      await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
+      await page.locator('[data-live-pos]').waitFor();
+      await page.locator('[data-live-pos] button').filter({hasText:'Carton Test Cable'}).first().click();
+      const line=page.locator('[data-pos-line]').filter({hasText:'Carton Test Cable'});
+      const inputs=line.locator('[data-multi-quantity] input');
+      await inputs.first().waitFor();
+      assert.equal(await inputs.count(),3);
+      await inputs.nth(0).fill('1');await inputs.nth(1).fill('2');await inputs.nth(2).fill('3');
+      assert.ok((await line.textContent()).includes('2,490'),'mixed prices remain independent');
+      const tops=await inputs.evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().top));
+      assert.ok(tops.every(top=>Math.abs(top-tops[0])<2),'one compact horizontal quantity line');
+      await screenshot(page,'phase3b-mixed-quantity-'+width);
+      await page.locator('input[list="live-pos-customer-names"]').fill('UI Unit Buyer');
+      await page.locator('input[list="live-pos-customer-phones"]').fill('01000009123');
+      await page.getByRole('spinbutton',{name:/Amount received/}).fill('2490');
+      await page.getByRole('button',{name:'Review and post real sale'}).click();
+      await page.getByRole('button',{name:'Confirm and post'}).click();
+      await page.getByText('Sale posted successfully').waitFor({timeout:12000});
+      const posted=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
+      assert.equal(posted.items[0].qty,283);
+      assert.equal(posted.items[0].unitProfileRevision,1);
+      assert.deepEqual(posted.items[0].unitQuantities,{Carton:1,Box:2,Pcs:3});
+      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
+      results.apiCalls.push(...api);await ctx.close();
     });
   }
   await withCheck('tracked serial POS selects backend eligible IMEI and posts once',async()=>{

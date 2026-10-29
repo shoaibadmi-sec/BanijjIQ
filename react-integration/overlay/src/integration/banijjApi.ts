@@ -71,11 +71,15 @@ export const logout = () =>
 export const getBootstrap = () =>
   request<{ ok: true; products: BackendProduct[] }>('/api/bootstrap');
 
+export interface PosUnitEntry { unit:string; symbol:string; factor:number; containsNext:number|null; sellingPrice:number }
+export interface PosUnitProfile { baseUnit:string; units:PosUnitEntry[] }
+export interface PosProfilePreview extends PosUnitProfile { revision:number; postingEnabled:boolean }
 export interface PosProduct {
   id: string; name: string; productName: string; brand: string; category: string; unit: string;
   barcode: string; sellingPrice: number; stock: number; minimumStock: number;
   trackSerial: boolean; trackExpiry: boolean; trackWarranty: boolean;
   totalStock?: number; pendingTracking?: number; expiredStock?: number;
+  unitProfilePreview?: PosProfilePreview | null;
 }
 export interface PosCustomer {
   id: string; name: string; phone: string; fatherName: string; address: string; currentDue: number;
@@ -92,6 +96,7 @@ export interface PosSaleLine {
   productId: string; name: string; qty: number; unitPrice: number;
   fulfillmentMode: 'own' | 'negative' | 'vendor';
   serialNumbers?: string[];
+  unitQuantities?: Record<string,number>; unitProfileRevision?: number;
   vendorId?: string;
   vendorUnitCost?: number;
 }
@@ -106,7 +111,8 @@ export interface PosInvoice {
   invoiceId: string; date: string; customerName: string; customerPhone: string;
   customerFatherName?: string; customerAddress?: string; subtotal: number; discount: number;
   paymentMethod: string;
-  items: Array<{productId:string;productName:string;quantity:number;unit:string;unitPrice:number;lineTotal:number}>;
+  items: Array<{productId:string;productName:string;quantity:number;unit:string;unitPrice:number;lineTotal:number;
+    unitDescription?:string;unitSnapshot?:{revision:number;profile:PosUnitProfile;quantities:Record<string,number>}}>;
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
 }
 export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');

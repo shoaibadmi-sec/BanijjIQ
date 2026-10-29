@@ -2,6 +2,7 @@ import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import { daysSince, hasModulePermission } from '../auth/permissions.js';
 import type { PosSaleInput } from './types.js';
+import {quoteUnitQuantities, type UnitProfile} from '../products/unitProfile.js';
 import { aggregateSaleTrackingDraws, getAvailabilityMap, planTrackedSale, trackingEnabled, warrantyEndDate } from '../products/tracking.service.js';
 
 const jsonHeaders = {
@@ -73,7 +74,7 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
     db.prepare(`SELECT setting_key,setting_value FROM app_settings`).all<{setting_key:string;setting_value:string}>(),
     db.prepare('SELECT product_id,profile_json,revision FROM product_unit_profiles').all<{product_id:string;profile_json:string;revision:number}>()
   ]);
-  const profiles=new Map((profileRows.results||[]).map(row=>[row.product_id,{...JSON.parse(row.profile_json),revision:row.revision,postingEnabled:false}]));
+  const profiles=new Map((profileRows.results||[]).map(row=>[row.product_id,{...JSON.parse(row.profile_json),revision:row.revision,postingEnabled:true}]));
   const settings:Record<string,string>={};
   for(const row of settingsRows.results||[]) settings[row.setting_key]=row.setting_value||'';
   const showPurchasePrice = String(settings['POS Show Purchase Price'] || '').trim().toLowerCase() === 'true' && await hasModulePermission(db,user,'posCost','view');
@@ -121,7 +122,24 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   const seen=new Set<string>(); let subtotal=0; const lines:any[]=[];
   for(let i=0;i<input.items.length;i++){
     const item=input.items[i], productId=cleanText(item.productId), qRaw=Number(item.qty||0), q=Math.round(qRaw), price=Number(item.unitPrice??0);
-    if(item.unitQuantities!==undefined || item.unitProfileRevision!==undefined) return error('Mixed-unit posting is not enabled. This unit profile is preview-only until FIFO and invoice snapshot acceptance.');
+    let unitSnapshot: null | {profile:UnitProfile; revision:number; quantities:Record<string,number>; description:string; lineTotal:number}=null;
+    if(item.unitQuantities!==undefined || item.unitProfileRevision!==undefined){
+      if(!item.unitQuantities || typeof item.unitQuantities!=='object' || Array.isArray(item.unitQuantities) ||
+         !Number.isSafeInteger(item.unitProfileRevision) || Number(item.unitProfileRevision)<1)
+        return error('Mixed-unit sale needs a saved unit profile and exact unit quantities.');
+      const saved=await db.prepare('SELECT revision,profile_json FROM product_unit_profiles WHERE product_id=?')
+        .bind(productId).first<{revision:number;profile_json:string}>();
+      if(!saved || saved.revision!==item.unitProfileRevision)
+        return error('Unit conversion was updated. Refresh the sale before posting.',409);
+      try{
+        const profile=JSON.parse(saved.profile_json) as UnitProfile;
+        const quote=quoteUnitQuantities(profile,item.unitQuantities);
+        if(qRaw!==quote.baseQuantity)return error('Mixed-unit base quantity does not match entered units.');
+        if(quote.lineTotal>1000000000)return error('Sale total is outside the supported range.');
+        unitSnapshot={profile,revision:saved.revision,quantities:item.unitQuantities,
+          description:quote.description,lineTotal:quote.lineTotal};
+      }catch(e){return error(e instanceof Error?e.message:'Invalid mixed-unit quantities.');}
+    }
     if(!productId||!Number.isFinite(qRaw)||qRaw<=0||!Number.isInteger(qRaw)) return error(`Line ${i+1}: quantity must be a whole number greater than zero.`); if(!Number.isFinite(price)||price<0) return error(`Line ${i+1}: price must be a valid number.`);
     if(seen.has(productId)) return error(`${cleanText(item.name)||'Product'} appears more than once — combine it into one line.`); seen.add(productId);
     const product=await db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,unit,purchase_price,current_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<any>(); if(!product) return error(`Product ${cleanText(item.name)} no longer exists.`);
@@ -139,7 +157,8 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     const vendorId=cleanText(item.vendorId); const fulfillmentMode=cleanText(item.fulfillmentMode); let vendor:any=null,vendorQty=0,vendorUnitCost=0;
     if(!isTracked&&vendorId){ if(need<=0) return error(`${product.product_name}: there is no shortage on this line to source from a vendor.`); vendor=await db.prepare(`SELECT vendor_id,vendor_name,current_due FROM vendors WHERE vendor_id=?`).bind(vendorId).first<any>(); if(!vendor) return error(`${product.product_name}: vendor not found.`); vendorUnitCost=Number(item.vendorUnitCost??NaN); if(!Number.isFinite(vendorUnitCost)||vendorUnitCost<0) return error(`${product.product_name}: enter a valid vendor unit cost.`); vendorQty=need; need=0; }
     if(need>0 && fulfillmentMode!=='negative') return error(`${product.product_name}: stock is short by ${need}. Choose Vendor Sourcing or Negative Stock.`);
-    lines.push({product,q,price,draws,trackingDraws,shortfall:need,vendor,vendorQty,vendorUnitCost,ownQty:q-vendorQty,isTracked}); subtotal+=q*price;
+    const lineTotal=unitSnapshot?unitSnapshot.lineTotal:q*price;
+    lines.push({product,q,price:unitSnapshot?lineTotal/q:price,lineTotal,unitSnapshot,draws,trackingDraws,shortfall:need,vendor,vendorQty,vendorUnitCost,ownQty:q-vendorQty,isTracked}); subtotal+=lineTotal;
   }
   const discount=Math.max(0,Number(input.discount||0)), grandTotal=Math.max(0,subtotal-discount); let paidAmount=0,dueAmount=0;
   if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
@@ -165,7 +184,14 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   stmts.push(db.prepare(`INSERT INTO sales (invoice_id,sale_date,sale_time,customer_id,customer_name,customer_phone,customer_address,customer_father_name,subtotal,discount,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method,bank_account_id,bank_account_name,is_backdated,backdated_reason,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Completed',?)`).bind(invoiceId,date,nowTime(),customerId,customerName,customerPhone,cleanText(input.customerAddress),cleanText(input.customerFatherName),subtotal,discount,grandTotal,paidAmount,dueAmount,input.paymentType,paymentStatus,paymentMethod,bankId,bankName,date<todayDate()?1:0,cleanText(input.backdatedReason),user.fullName));
   for(const line of lines){
     const displayName=String(line.product.brand||'').trim()?`${String(line.product.brand).trim()} ${line.product.product_name}`:line.product.product_name;
-    stmts.push(db.prepare(`INSERT INTO sale_items (invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES (?,?,?,?,?,?)`).bind(invoiceId,line.product.product_id,displayName,line.q,line.price,line.q*line.price));
+    stmts.push(db.prepare(`INSERT INTO sale_items (invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES (?,?,?,?,?,?)`).bind(invoiceId,line.product.product_id,displayName,line.q,line.price,line.lineTotal));
+    if(line.unitSnapshot){
+      const snap=line.unitSnapshot;
+      stmts.push(db.prepare(`INSERT INTO sale_item_unit_snapshots
+        (invoice_id,product_id,profile_revision,profile_json,quantities_json,description,base_quantity,line_total_cents)
+        VALUES (?,?,?,?,?,?,?,?)`).bind(invoiceId,line.product.product_id,snap.revision,
+        JSON.stringify(snap.profile),JSON.stringify(snap.quantities),snap.description,line.q,Math.round(line.lineTotal*100)));
+    }
     stmts.push(db.prepare(`UPDATE products SET current_stock=current_stock-?,updated_at=datetime('now') WHERE product_id=?`).bind(line.ownQty,line.product.product_id));
     for(const d of line.draws){stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=remaining_quantity-?,updated_at=datetime('now'),status=CASE WHEN remaining_quantity-?>0 THEN 'Active' ELSE 'Depleted' END WHERE lot_id=?`).bind(d.take,d.take,d.lot_id));stmts.push(db.prepare(`INSERT INTO sale_item_lots (invoice_id,product_id,lot_id,quantity,unit_cost,supplier_id) VALUES (?,?,?,?,?,?)`).bind(invoiceId,line.product.product_id,d.lot_id,d.take,Number(d.unit_cost||0),d.supplier_id||''));stmts.push(db.prepare(`INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?, 'Sale',0,?,(SELECT current_stock FROM products WHERE product_id=?),?,?)`).bind(`SM-${crypto.randomUUID().slice(0,10).toUpperCase()}`,line.product.product_id,d.take,line.product.product_id,invoiceId,d.lot_id));}
     if(line.isTracked){
@@ -194,14 +220,38 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
         return getInvoiceRoute(db,prior.invoice_id);
       }
     }
+    if(String(err).includes('UNIT_PROFILE_CONFLICT'))return error('Unit conversion changed during checkout. Refresh and review the cart.',409);
     if(String(err).includes('POS_STOCK_CONFLICT'))return error('Stock changed during checkout. Reload POS and review available stock before retrying.',409);
     throw err;
   }
-  return json({ok:true,invoice:{invoiceId,date,customerName,customerPhone,customerFatherName:cleanText(input.customerFatherName),customerAddress:cleanText(input.customerAddress),subtotal,discount,grandTotal,paidAmount,dueAmount,paymentStatus,paymentMethod,items:lines.map(l=>({productId:l.product.product_id,productName:(String(l.product.brand||'').trim()?`${String(l.product.brand).trim()} ${l.product.product_name}`:l.product.product_name),quantity:l.q,unit:l.product.unit||'',unitPrice:l.price,lineTotal:l.q*l.price}))}});
+  return json({ok:true,invoice:{invoiceId,date,customerName,customerPhone,customerFatherName:cleanText(input.customerFatherName),customerAddress:cleanText(input.customerAddress),subtotal,discount,grandTotal,paidAmount,dueAmount,paymentStatus,paymentMethod,items:lines.map(l=>({productId:l.product.product_id,productName:(String(l.product.brand||'').trim()?`${String(l.product.brand).trim()} ${l.product.product_name}`:l.product.product_name),quantity:l.q,unit:l.product.unit||'',unitPrice:l.price,lineTotal:l.lineTotal,unitDescription:l.unitSnapshot?.description,unitSnapshot:l.unitSnapshot?{profile:l.unitSnapshot.profile,quantities:l.unitSnapshot.quantities,revision:l.unitSnapshot.revision}:undefined}))}});
 }
 
 export async function getSalesByPhoneRoute(db:SherDatabase,phone:string):Promise<Response>{const r=await db.prepare(`SELECT invoice_id,sale_date,grand_total,payment_status FROM sales WHERE customer_phone=? AND is_deleted=0 ORDER BY sale_date DESC,created_at DESC LIMIT 50`).bind(phone).all<any>();return json({ok:true,sales:(r.results||[]).map((s:any)=>({invoiceId:s.invoice_id,date:s.sale_date,grandTotal:Number(s.grand_total||0),paymentStatus:s.payment_status}))});}
-export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Response>{const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);const ir=await db.prepare(`SELECT si.product_id,si.product_name,si.quantity,si.unit_price,si.line_total,COALESCE(p.unit,'') unit FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? ORDER BY si.id`).bind(id).all<any>();return json({ok:true,invoice:{invoiceId:s.invoice_id,date:s.sale_date,customerName:s.customer_name,customerPhone:s.customer_phone,customerFatherName:s.customer_father_name||'',customerAddress:s.customer_address,subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentStatus:s.payment_status,paymentMethod:s.payment_method,items:(ir.results||[]).map((i:any)=>({productId:i.product_id,productName:i.product_name,quantity:Number(i.quantity),unit:i.unit||'',unitPrice:Number(i.unit_price),lineTotal:Number(i.line_total)}))}});}
+export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Response>{
+  const s=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0').bind(id).first<any>();
+  if(!s)return error('Invoice not found.',404);
+  const [items,snapshots]=await Promise.all([
+    db.prepare(`SELECT si.product_id,si.product_name,si.quantity,si.unit_price,si.line_total,COALESCE(p.unit,'') unit
+      FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id
+      WHERE si.invoice_id=? ORDER BY si.id`).bind(id).all<any>(),
+    db.prepare('SELECT product_id,profile_revision,profile_json,quantities_json,description FROM sale_item_unit_snapshots WHERE invoice_id=?')
+      .bind(id).all<any>()
+  ]);
+  const snapshotMap=new Map((snapshots.results||[]).map((x:any)=>[x.product_id,x]));
+  return json({ok:true,invoice:{invoiceId:s.invoice_id,date:s.sale_date,customerName:s.customer_name,
+    customerPhone:s.customer_phone,customerFatherName:s.customer_father_name||'',customerAddress:s.customer_address,
+    subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),grandTotal:Number(s.grand_total||0),
+    paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentStatus:s.payment_status,
+    paymentMethod:s.payment_method,items:(items.results||[]).map((i:any)=>{
+      const snap:any=snapshotMap.get(i.product_id);
+      return{productId:i.product_id,productName:i.product_name,quantity:Number(i.quantity),unit:i.unit||'',
+        unitPrice:Number(i.unit_price),lineTotal:Number(i.line_total),
+        ...(snap?{unitDescription:snap.description,unitSnapshot:{
+          revision:snap.profile_revision,profile:JSON.parse(snap.profile_json),
+          quantities:JSON.parse(snap.quantities_json)}}:{})};
+    })}});
+}
 
 export async function getSalesManagementRoute(db:SherDatabase):Promise<Response>{
   const [sr,rr,ri,br,open]=await Promise.all([
@@ -290,6 +340,8 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   if(!(await getOpenCashSession(db)))return error('Start your cash session first before recording a Sales Return.');
   const invoiceId=cleanText(input.invoiceId),refundMethod=cleanText(input.refundMethod),reason=cleanText(input.reason);
   if(!invoiceId)return error('No invoice selected.');
+  if(await db.prepare('SELECT 1 AS x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1').bind(invoiceId).first())
+    return error('Mixed-unit invoice returns need unit-aware allocation. Use the full invoice cancellation workflow until multi-unit returns are enabled.',409);
   if(refundMethod!=='Cash'&&refundMethod!=='Store Credit')return error('Choose a refund method.');
   const returnDate=/^\d{4}-\d{2}-\d{2}$/.test(cleanText(input.date))?cleanText(input.date):todayDate(),backdated=returnDate<todayDate(),backdatedReason=cleanText(input.backdatedReason);
   if(backdated&&!backdatedReason)return error('A reason is required when dating a return in the past.');
@@ -385,7 +437,7 @@ export async function deleteSaleRoute(db:SherDatabase,id:string,reason:string,us
 }
 
 export async function updateSaleRoute(db:SherDatabase,id:string,input:any,user:AuthUser):Promise<Response>{
-  const reason=cleanText(input.reason);if(!reason)return error('Enter a reason for this update.');if(!(await getOpenCashSession(db)))return error('Start your cash session first.');const old=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!old)return error('Invoice not found.',404);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be edited. Use Sales Return and create a corrected sale.');const ret=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(ret)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');const open=await getOpenCashSession(db);if(!open||String(old.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited.');
+  const reason=cleanText(input.reason);if(!reason)return error('Enter a reason for this update.');if(!(await getOpenCashSession(db)))return error('Start your cash session first.');const old=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!old)return error('Invoice not found.',404);if(await db.prepare('SELECT 1 AS x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1').bind(id).first())return error('Mixed-unit invoice editing requires unit-aware history. Reverse the full invoice until editing is enabled.',409);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be edited. Use Sales Return and create a corrected sale.');const ret=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(ret)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');const open=await getOpenCashSession(db);if(!open||String(old.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited.');
   const customerName=cleanText(input.customerName),customerPhone=cleanText(input.customerPhone);if(!customerName||!customerPhone)return error('Customer name and phone are required for every sale.');if(!Array.isArray(input.items)||!input.items.length)return error('Cart is empty.');
   const oldVendor=await db.prepare(`SELECT * FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>(),oldItems=await db.prepare(`SELECT product_id,SUM(quantity) qty FROM sale_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>();const oldVendorQty=new Map<string,number>();for(const v of oldVendor.results||[])oldVendorQty.set(v.product_id,(oldVendorQty.get(v.product_id)||0)+Number(v.quantity||0));const oldOwn=new Map<string,number>();for(const i of oldItems.results||[])oldOwn.set(i.product_id,Math.max(0,Number(i.qty||0)-Number(oldVendorQty.get(i.product_id)||0)));const restored=await restoreSaleLotsPlan(db,id,oldOwn);
   const lotRows=await db.prepare(`SELECT id,lot_id,product_id,original_quantity,remaining_quantity,unit_cost,supplier_id,source_type FROM stock_lots ORDER BY id`).all<any>();const lotsByProduct=new Map<string,any[]>();for(const l of lotRows.results||[]){const x={...l,balance:Number(l.remaining_quantity||0)};const r=restored.get(l.lot_id);if(r){x.balance=r.sourceType==='OVERSOLD'?Math.min(0,r.current+r.restore):Math.min(r.original,r.current+r.restore);}if(!lotsByProduct.has(l.product_id))lotsByProduct.set(l.product_id,[]);lotsByProduct.get(l.product_id)!.push(x);}
