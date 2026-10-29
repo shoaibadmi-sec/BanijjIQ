@@ -29,7 +29,7 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
   const creditMatch=path.match(/^\/api\/pos\/store-credit\/([^/]+)$/);
-  if(creditMatch && request.method==='GET')return getStoreCreditAccountRoute(db,decodeURIComponent(creditMatch[1]));
+  if(creditMatch && request.method==='GET')return getStoreCreditAccountRoute(db,decodeURIComponent(creditMatch[1]),user);
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
   if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string }>(request), user);
   if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string }>(request), user);
