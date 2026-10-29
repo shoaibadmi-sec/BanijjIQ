@@ -603,8 +603,13 @@ try{
     await page.goto(base+'/#/app/pos');
     await page.locator('[data-live-pos]').waitFor();
     await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
-    await page.getByRole('combobox',{name:'Customer name'}).fill('Credit UI Buyer');
-    await page.getByRole('combobox',{name:'Customer phone'}).fill('01000009801');
+    // Select the saved customer through the same name + blur workflow as a cashier.
+    // Do not race a second phone fill against the blur handler that populates both fields.
+    const customerNameInput=page.getByRole('combobox',{name:'Customer name'});
+    await customerNameInput.fill('Credit UI Buyer');
+    await customerNameInput.press('Tab');
+    await page.locator('[data-pos-previous-balance-inline]').waitFor({timeout:12000});
+    assert.equal(await page.getByRole('combobox',{name:'Customer phone'}).inputValue(),'01000009801');
     await page.getByRole('combobox',{name:'Payment method'}).selectOption('Store Credit');
     await page.locator('[data-pos-store-credit-balance]').waitFor();
     assert.match(await page.locator('[data-pos-store-credit-balance]').innerText(),/150/);
