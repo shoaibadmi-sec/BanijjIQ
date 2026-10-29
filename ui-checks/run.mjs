@@ -196,12 +196,12 @@ try{
         await screenshot(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
           await audit(page,'products-390-light');
-          const search=page.getByRole('textbox',{name:'Search real products'});
+          const search=page.getByRole('textbox',{name:'Search products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
-          await page.getByRole('button',{name:'Clear Search real products',exact:true}).click();
+          await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),3);
-          await page.getByRole('button',{name:'Add Product'}).click();
+          await page.getByRole('button',{name:/Add product/i}).click();
           await page.locator('[data-live-product-editor]').waitFor();
           await screenshot(page,'product-editor-390');
         }
