@@ -124,7 +124,7 @@ export function MohimProductActions({
        {panel==='adjust'&&<form onSubmit={e=>void adjust(e)} className="space-y-3">
          <p className="text-sm text-ink-600">Current stock: <strong>{format(product.currentStock)} {product.unit}</strong></p>
          <label className="block text-xs font-medium text-ink-700">Change quantity (use − to remove)
-           <Input type="number" step="0.0001" aria-label="Stock change" required
+           <Input type="number" step="0.0001" min={-1000000000} aria-label="Stock change" required
              className="mt-1 h-9 w-full" value={delta} onChange={e=>setDelta(e.target.value)} disabled={busy}/>
          </label>
          {delta&&Number.isFinite(Number(delta))&&<p className="text-xs text-ink-600">
