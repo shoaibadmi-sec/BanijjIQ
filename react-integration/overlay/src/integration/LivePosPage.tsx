@@ -68,10 +68,8 @@ export function LivePosPage() {
   const [salesChecked, setSalesChecked] = useState(false);
   const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
   const postingRef = useRef(false);
-  // Closing the success dialog is permitted to reset the posted invoice once.
-  // Radix can deliver an onOpenChange(false) after the explicit New Sale click:
-  // such a stale close must not erase the next cart/customer/payment.
-  const postedDialogMayResetRef = useRef(false);
+  // A posted sale stays read-only until the user explicitly chooses New Sale.
+  // Outside-click/Escape dialogs must NEVER silently reset a subsequent cart.
   const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
@@ -223,7 +221,6 @@ export function LivePosPage() {
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
   const newSale = () => {
-    postedDialogMayResetRef.current = false;
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
@@ -267,7 +264,6 @@ export function LivePosPage() {
     setSaving(true);setError('');
     try {
       const result = await postSale(payload);
-      postedDialogMayResetRef.current = true;
       setFinished(result.invoice);
       setReviewOpen(false);
       await load();
@@ -524,8 +520,8 @@ export function LivePosPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <Dialog open={!!finished && !receiptOpen} onOpenChange={open=>{
-      if(!open && !saving && !receiptOpen && postedDialogMayResetRef.current) newSale();
+    <Dialog open={!!finished && !receiptOpen} onOpenChange={()=>{
+      // Deliberately ignore incidental close events; New Sale is explicit.
     }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success"/> Sale posted successfully</DialogTitle>
