@@ -56,7 +56,7 @@ export function MohimProductActions({
    if(!reason.trim()){setError('Reason for adjustment is required.');return;}
    const next=Number(product.currentStock)+n;
    if(next<0){setError('Stock cannot become negative using this adjustment.');return;}
-   if(!window.confirm('Confirm stock change: '+format(product.currentStock)+' → '+format(next)+' '+product.unit+'?'))return;
+   if(!window.confirm('Confirm stock change: '+format(product.currentStock)+' → '+format(next)+' '+product.unit+'?\nReason: '+reason.trim()))return;
    setBusy(true);setError('');
    try {
      await onAdjustStock(product.productId,n,reason.trim());
