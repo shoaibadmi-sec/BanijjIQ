@@ -87,6 +87,25 @@ test('Products Tasks 3–4: transactional D1 semantics and genuine Mohim actions
       assert.equal(list('SELECT * FROM stock_lots WHERE product_id NOT IN (SELECT product_id FROM products)').length,0);
       assert.equal(list('SELECT * FROM product_serials WHERE product_id NOT IN (SELECT product_id FROM products)').length,0);
     });
+    await t.test('forced SQL failure after product/lookups/lot creation rolls everything back',async()=>{
+      const tables=['products','stock_lots','stock_movements','product_categories','product_brands','product_units'];
+      const before=tables.map(count);
+      db.native.exec(`CREATE TRIGGER hybrid_fail_move BEFORE INSERT ON stock_movements
+        WHEN (SELECT product_name FROM products WHERE product_id=NEW.product_id)='Force Rollback'
+        BEGIN SELECT RAISE(ABORT,'forced-movement-failure'); END;`);
+      try {
+        const res=await api('POST','/api/products',base('Force Rollback',{
+          category:'Rollback Category',brand:'Rollback Brand',currentStock:3
+        }));
+        assert.notEqual(res.status,200,JSON.stringify(res));
+        assert.deepEqual(tables.map(count),before,'atomic D1 batch must undo earlier inserts');
+        assert.equal(list('SELECT * FROM products WHERE product_name=?','Force Rollback').length,0);
+        assert.equal(list('SELECT * FROM product_brands WHERE brand_name=?','Rollback Brand').length,0);
+        assert.equal(list('SELECT * FROM product_categories WHERE category_name=?','Rollback Category').length,0);
+      } finally {
+        db.native.exec('DROP TRIGGER IF EXISTS hybrid_fail_move');
+      }
+    });
     await t.test('catalog concurrent revision winner and stale loser never change stock or lots', async () => {
       const old=sql('SELECT updated_at AS version FROM products WHERE product_id=?',productId).version;
       const payload={expectedUpdatedAt:old, productName:'Hybrid Cable Updated',brand:'Hybrid Brand',
