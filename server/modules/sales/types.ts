@@ -1,4 +1,4 @@
-export type PosSaleLineInput = { productId?: string; name?: string; qty?: number; unitPrice?: number; vendorId?: string; vendorUnitCost?: number; fulfillmentMode?: 'own' | 'vendor' | 'negative'; serialNumbers?: string[] };
+export type PosSaleLineInput = { productId?: string; name?: string; qty?: number; unitPrice?: number; vendorId?: string; vendorUnitCost?: number; fulfillmentMode?: 'own' | 'vendor' | 'negative'; serialNumbers?: string[]; unitQuantities?: Record<string,number>; unitProfileRevision?: number };
 export type PosSaleInput = {
   clientRequestId?: string;
   customerId?: string; customerName?: string; customerPhone?: string; customerAddress?: string; customerFatherName?: string;

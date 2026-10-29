@@ -118,6 +118,7 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   const seen=new Set<string>(); let subtotal=0; const lines:any[]=[];
   for(let i=0;i<input.items.length;i++){
     const item=input.items[i], productId=cleanText(item.productId), qRaw=Number(item.qty||0), q=Math.round(qRaw), price=Number(item.unitPrice??0);
+    if(item.unitQuantities!==undefined || item.unitProfileRevision!==undefined) return error('Mixed-unit posting is not enabled. This unit profile is preview-only until FIFO and invoice snapshot acceptance.');
     if(!productId||!Number.isFinite(qRaw)||qRaw<=0||!Number.isInteger(qRaw)) return error(`Line ${i+1}: quantity must be a whole number greater than zero.`); if(!Number.isFinite(price)||price<0) return error(`Line ${i+1}: price must be a valid number.`);
     if(seen.has(productId)) return error(`${cleanText(item.name)||'Product'} appears more than once — combine it into one line.`); seen.add(productId);
     const product=await db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,unit,purchase_price,current_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<any>(); if(!product) return error(`Product ${cleanText(item.name)} no longer exists.`);
