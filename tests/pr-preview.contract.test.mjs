@@ -73,3 +73,24 @@ test('Cloudflare build commands target React, exact Wrangler preview, and never 
  assert.ok(!runner.includes('wrangler d1 migrations apply'),'Unreviewed PR must not auto-migrate shared D1');
  assert.ok(!docs.includes('shererp-new-db --remote'),'No production migration instructions');
 });
+
+
+test('one-time migration configuration targets only explicitly supplied demo D1 and never runs migrations',()=>{
+ const p=spawnSync(process.execPath,['scripts/preview/build-pr-migrations-config.mjs'],{
+   encoding:'utf8',env:{...process.env,HISABIQ_PR_PREVIEW_D1_ID:safeId}
+ });
+ assert.equal(p.status,0,p.stderr);
+ assert.ok(!p.stdout.includes('Applying migrations'));
+ const migratePath='wrangler.hisabiq-pr-migrations.generated.jsonc';
+ assert.ok(readFileSync('.gitignore','utf8').includes(migratePath));
+ const c=JSON.parse(readFileSync(migratePath,'utf8'));
+ assert.equal(c.d1_databases.length,1);
+ assert.equal(c.d1_databases[0].database_name,'hisabiq-pr-preview-db');
+ assert.equal(c.d1_databases[0].database_id,safeId);
+ assert.notEqual(c.d1_databases[0].database_id,prod.d1_databases[0].database_id);
+ const denied=spawnSync(process.execPath,['scripts/preview/build-pr-migrations-config.mjs'],{
+   encoding:'utf8',env:{...process.env,
+     HISABIQ_PR_PREVIEW_D1_ID:prod.d1_databases[0].database_id}
+ });
+ assert.notEqual(denied.status,0,'Refuse to generate a production migration command');
+});
