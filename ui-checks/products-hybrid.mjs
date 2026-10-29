@@ -100,12 +100,12 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       await page.getByRole('button',{name:'Actions for Copper Cable'}).click();
       await page.getByRole('menuitem',{name:/Edit ·/}).click();
       await page.locator('[data-live-unit-settings] button[aria-expanded]').click();
-      await page.getByRole('textbox',{name:'Unit 1'}).fill('Box');
+      await page.getByRole('combobox',{name:'Unit 1'}).fill('Box');
       await page.getByRole('textbox',{name:'Short symbol 1'}).fill('BOX');
       await page.getByRole('spinbutton',{name:'Contains next 1'}).fill('20');
       await page.getByRole('spinbutton',{name:'Selling price for Box'}).fill('580');
       await page.getByRole('button',{name:/Add larger unit/}).click();
-      await page.getByRole('textbox',{name:'Unit 1'}).fill('Carton');
+      await page.getByRole('combobox',{name:'Unit 1'}).fill('Carton');
       await page.getByRole('textbox',{name:'Short symbol 1'}).fill('CT');
       await page.getByRole('spinbutton',{name:'Contains next 1'}).fill('12');
       await page.getByRole('spinbutton',{name:'Selling price for Carton'}).fill('6900');
