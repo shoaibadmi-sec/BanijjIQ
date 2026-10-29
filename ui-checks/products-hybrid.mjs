@@ -123,7 +123,8 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       const page=await context.newPage();
       await page.goto(base+'/#/app/products');
       await page.getByText('Readonly Cable').waitFor();
-      assert.equal(await page.getByRole('button',{name:/Add product/i}).count(),0);
+      assert.equal(await page.getByRole('button',{name:/Add product/i}).isDisabled(),true,
+        'Original HisabIQ Add product remains visible but disabled for read-only users');
       await page.getByRole('button',{name:'Actions for Readonly Cable'}).click();
       assert.equal(await page.getByRole('menuitem',{name:/^Edit ·/}).isDisabled(),true);
       assert.equal(await page.getByRole('menuitem',{name:/Adjust stock/}).isDisabled(),true);
