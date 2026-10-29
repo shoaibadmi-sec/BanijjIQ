@@ -18,7 +18,10 @@
     "cloudflare:backup": "wrangler d1 export DB --remote --output=./backup.sql",
     "react:prepare": "git submodule update --init --recursive apps/hisabiq-web && node scripts/prepare-hisabiq-react.mjs",
     "react:build": "npm run react:prepare && npm ci --prefix .generated/hisabiq-web && npm run build --prefix .generated/hisabiq-web",
-    "react:dev": "npm run react:prepare && npm run dev --prefix .generated/hisabiq-web"
+    "react:dev": "npm run react:prepare && npm run dev --prefix .generated/hisabiq-web",
+    "preview:pr-build": "node scripts/preview/pr-preview-build.mjs",
+    "preview:pr-deploy": "wrangler preview --config wrangler.hisabiq-pr.generated.jsonc",
+    "preview:pr-no-production": "node scripts/preview/no-production-deploy.mjs"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
