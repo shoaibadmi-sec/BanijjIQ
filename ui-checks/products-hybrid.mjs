@@ -89,10 +89,13 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       let confirmation='';
       page.once('dialog',d=>{confirmation=d.message();void d.accept();});
       await page.getByRole('button',{name:'Review and save adjustment'}).click();
-      await page.getByText('Product updated · Copper Cable').waitFor({timeout:8000});
       assert.match(confirmation,/5.*4/,'confirmation must show old and new quantity');
       assert.ok(confirmation.includes('Damaged item'),'confirmation must show entered reason');
-      assert.equal(calls.filter(x=>x.path==='/api/products/PRD-UI-1/adjust-stock'&&x.method==='POST').length,1);
+      await page.waitForTimeout(400);
+      const adjustments=calls.filter(x=>x.path==='/api/products/PRD-UI-1/adjust-stock'&&x.method==='POST');
+      const errors=await page.locator('[role="alert"]').allTextContents();
+      assert.equal(adjustments.length,1,'Expected one stock POST; UI errors: '+errors.join(' | '));
+      await page.getByText('Product updated · Copper Cable').waitFor({timeout:3000});
       results.apiCalls.push(...calls);
     } finally {await context.close();}
   });
