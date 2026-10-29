@@ -9,6 +9,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ReceiptPreview } from '../components/brand/ReceiptPreview';
 import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
 import { LiveStockShortageDialog, type ShortageSelection } from './LiveStockShortageDialog';
+import { LiveCheckoutPanel } from './LiveCheckoutPanel';
 import { Link } from 'react-router-dom';
 import './liveReceiptPrint.css';
 import type { Product } from '../types/erp';
@@ -45,6 +46,7 @@ export function LivePosPage() {
   const [address, setAddress] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [discount, setDiscount] = useState('');
+  const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>('amount');
   const [paid, setPaid] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Bank' | 'Mobile Banking'>('Cash');
   const [bankAccountId, setBankAccountId] = useState('');
@@ -96,9 +98,10 @@ export function LivePosPage() {
   const shortageLine = lines.find(l=>l.product.id===shortageId);
   const serialProduct=selectable.find(p=>p.id===serialId);
   const subtotal = useMemo(() => lines.reduce((sum, l) => sum + l.qty * l.price, 0), [lines]);
-  const discountAmount = asNumber(discount);
-  const paidAmount = paid.trim() ? asNumber(paid) : 0;
-  const total = Math.max(0, subtotal - discountAmount);
+  const rawDiscount = discount.trim() ? Number(discount) : 0;
+  const discountAmount = discountMode === 'percent' ? Math.round(subtotal * rawDiscount) / 100 : rawDiscount;
+  const paidAmount = paid.trim() ? Number(paid) : 0;
+  const total = Number.isFinite(discountAmount) ? Math.max(0, subtotal - discountAmount) : 0;
   const due = Math.max(0, total - paidAmount);
   const selectedCustomer = bootstrap?.customers.find(p => p.phone === customerPhone.trim());
   const matchingAccounts = (bootstrap?.bankAccounts || []).filter(a =>
@@ -191,7 +194,7 @@ export function LivePosPage() {
   const newSale = () => {
     postedDialogMayResetRef.current = false;
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
-    setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
+    setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
     setShortageId(null);setSerialId(null);setAvailableSerials([]);
     saleRequestId.current=crypto.randomUUID();
@@ -416,75 +419,28 @@ export function LivePosPage() {
             </div>
           </div>
         </div>
-        <aside className="min-w-0 overflow-hidden rounded-xl border border-border bg-card shadow-card" aria-label="Live checkout">
-          <div className="space-y-3 border-b border-border p-3.5">
-            <div className="flex items-center justify-between">
-              <div><h2 className="text-sm font-semibold text-ink">Sale checkout</h2>
-                <p className="font-bn text-[11px] text-ink-500">বিক্রির টাকা নিন</p></div>
-              <button type="button" onClick={newSale} className="text-xs font-medium text-teal-700 hover:underline">New sale</button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="min-w-0 text-xs text-ink-700">Customer name *
-                <Input list="live-pos-customer-names" value={customerName}
-                  onChange={e=>setCustomerName(e.target.value)}
-                  onBlur={()=>selectCustomer(customerName,'name')} className="mt-1 h-9" />
-                <datalist id="live-pos-customer-names">{bootstrap.customers.map(c=><option key={c.id} value={c.name}/>)}</datalist>
-              </label>
-              <label className="min-w-0 text-xs text-ink-700">Phone *
-                <Input list="live-pos-customer-phones" inputMode="tel" value={customerPhone}
-                  onChange={e=>setCustomerPhone(e.target.value)}
-                  onBlur={()=>selectCustomer(customerPhone,'phone')} className="mt-1 h-9" />
-                <datalist id="live-pos-customer-phones">{bootstrap.customers.map(c=><option key={c.id} value={c.phone}/>)}</datalist>
-              </label>
-            </div>
-            {selectedCustomer && <div className="flex justify-between gap-2 rounded-lg bg-danger-bg px-3 py-2 text-xs text-danger">
-              <span>Previous due · আগের বাকি</span><strong>{taka(selectedCustomer.currentDue)}</strong>
-            </div>}
-            <button type="button" onClick={()=>setDetailsOpen(v=>!v)} className="text-left text-xs text-teal-700 hover:underline">
-              {detailsOpen?'−':'+'} More customer details
-            </button>
-            {detailsOpen && <div className="grid grid-cols-2 gap-2">
-              <label className="text-xs">Father name<Input value={fatherName} onChange={e=>setFatherName(e.target.value)} className="mt-1 h-9"/></label>
-              <label className="text-xs">Address<Input value={address} onChange={e=>setAddress(e.target.value)} className="mt-1 h-9"/></label>
-            </div>}
-          </div>
-          <div className="space-y-3 p-3.5">
-            <div className="flex items-center justify-between text-sm text-ink-600"><span>Subtotal</span><strong className="text-ink">{taka(subtotal)}</strong></div>
-            <label className="flex items-center justify-between gap-2 text-sm text-ink-600">
-              Discount · ছাড় <Input type="number" min="0" step="0.01" value={discount}
-                onChange={e=>setDiscount(e.target.value)} className="h-9 w-28 text-right"/>
-            </label>
-            <div className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-3">
-              <span className="text-xs text-ink-600">Total payable · সর্বমোট</span>
-              <div className="text-right text-[28px] font-semibold tracking-tight text-ink">{taka(total)}</div>
-            </div>
-            <label className="block text-xs text-ink-700">
-              Amount received · কত টাকা পেলেন
-              <Input ref={paidRef} type="number" min="0" step="0.01" value={paid}
-                onChange={e=>setPaid(e.target.value)} placeholder="Blank for full due" className="mt-1 h-9 w-full"/>
-            </label>
-            <label className="block text-xs text-ink-700">
-              Payment method · টাকা নিলেন
-              <select value={paymentMethod} onChange={e=>{setPaymentMethod(e.target.value as typeof paymentMethod);setBankAccountId('');}}
-                className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-ink">
-                <option>Cash</option><option>Bank</option><option>Mobile Banking</option>
-              </select>
-            </label>
-            {requiresAccount && <label className="block text-xs text-ink-700">Payment account *
-              <select value={bankAccountId} onChange={e=>setBankAccountId(e.target.value)}
-                className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-ink">
-                <option value="">Select account</option>{matchingAccounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </label>}
-            {due > 0 && <div className="flex items-center justify-between rounded-lg bg-danger-bg p-2 text-xs text-danger"><span>Due · বাকি</span><strong>{taka(due)}</strong></div>}
-            {errors.length > 0 && <p className="flex items-start gap-2 rounded-lg bg-warning-bg p-2 text-xs text-warning" role="alert">
-              <AlertTriangle className="size-4 shrink-0"/>{errors[0]}
-            </p>}
-            <Button className="h-12 w-full" disabled={saving || errors.length > 0 || !!finished}
-              onClick={()=>setReviewOpen(true)}>Review and post real sale</Button>
-            <p className="text-center text-[11px] text-ink-500">Saves inventory, cash and customer ledger through BanijjIQ backend.</p>
-          </div>
-        </aside>
+        <LiveCheckoutPanel
+          customers={bootstrap.customers} selectedCustomer={selectedCustomer}
+          accounts={bootstrap.bankAccounts}
+          customerName={customerName} customerPhone={customerPhone}
+          fatherName={fatherName} address={address}
+          detailsOpen={detailsOpen} onDetailsOpen={setDetailsOpen}
+          onCustomerName={setCustomerName} onCustomerPhone={setCustomerPhone}
+          onFatherName={setFatherName} onAddress={setAddress}
+          onSelectCustomer={selectCustomer}
+          subtotal={subtotal} itemCount={lines.length}
+          discount={discount} discountMode={discountMode} discountAmount={discountAmount}
+          onDiscount={setDiscount} onDiscountMode={setDiscountMode}
+          total={total} paid={paid} paidAmount={paidAmount} due={due}
+          paymentMethod={paymentMethod} bankAccountId={bankAccountId}
+          matchingAccounts={matchingAccounts} requiresAccount={requiresAccount}
+          onPaid={setPaid}
+          onPaymentMethod={method => { setPaymentMethod(method); setBankAccountId(''); }}
+          onBankAccountId={setBankAccountId} paidRef={paidRef}
+          errors={errors} disabled={saving} completed={!!finished}
+          onClear={() => { if (!lines.length || window.confirm('Clear this unsaved sale?')) newSale(); }}
+          onReview={() => setReviewOpen(true)}
+        />
       </div>
     </>}
     {serialProduct && <SerialPickerDialog

@@ -53,6 +53,7 @@ jobs:
           node --test react-integration/tests/contract.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
+          node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
       - name: Check hosted-preview isolation (dry run, no Cloudflare credentials)
         run: |
