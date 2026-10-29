@@ -134,4 +134,32 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       assert.equal(calls.some(s=>/POST|PUT|DELETE/.test(s)),false);
     } finally {await context.close();}
   });
+  await withCheck('original Products table has an authentic empty-D1 state, not sample products',async()=>{
+    const context=await browser.newContext({viewport:{width:390,height:900},reducedMotion:'reduce'});
+    const calls=[];
+    try{
+      await context.route('**/api/**',route=>{
+        const req=route.request(),path=new URL(req.url()).pathname;
+        calls.push(req.method()+' '+path);
+        const body=path==='/api/auth/me'
+          ?{ok:true,user:{userId:'EMPTY-ADMIN',fullName:'Empty Shop',phone:'01000009999',role:'admin'}}
+          :path==='/api/bootstrap'
+           ?{ok:true,products:[],categories:[],brands:[],units:[]}
+           :{ok:false,error:'Unexpected request'};
+        return route.fulfill({status:path==='/api/bootstrap'||path==='/api/auth/me'?200:404,
+          contentType:'application/json',body:JSON.stringify(body)});
+      });
+      await context.addInitScript(()=>localStorage.setItem('shererp_auth_token','empty-shop-test-token'));
+      const page=await context.newPage();
+      await page.goto(base+'/#/app/products');
+      await page.locator('[data-live-products]').waitFor();
+      await page.getByText('No products match').waitFor();
+      assert.equal(await page.locator('[data-live-products] tbody tr').count(),0);
+      assert.equal(await page.getByText('Copper Cable 2.5mm').count(),0);
+      assert.equal(await page.getByText('PVC Pipe 20mm').count(),0);
+      assert.equal(calls.filter(v=>v==='GET /api/bootstrap').length,1);
+      assert.equal(calls.filter(v=>/POST|PUT|DELETE/.test(v)).length,0);
+    }finally{await context.close();}
+  });
+
 }
