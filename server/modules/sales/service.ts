@@ -649,7 +649,38 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
     })():null;
     mapped.push({productId:i.product_id,name:i.product_name,soldQty:sold,vendorQty:vendor,previouslyReturnedQty:already,availableQty,unitPrice:Number(i.unit_price||0),...p,availableSerials,mixedUnit});
   }
-  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
+  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentMethod:s.payment_method||'',previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
+}
+
+export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string):Promise<Response>{
+  const customer=await db.prepare(
+    'SELECT customer_id,customer_name,phone,current_due,status,is_deleted FROM customers WHERE customer_id=?'
+  ).bind(customerId).first<any>();
+  if(!customer||customer.status!=='Active'||Number(customer.is_deleted)!==0)
+    return error('Store Credit customer not found.',404);
+  const balance=await db.prepare(
+    'SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?'
+  ).bind(customerId).first<any>();
+  const journal=await db.prepare(
+    "SELECT entry_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_at "+
+    "FROM customer_store_credit_entries WHERE customer_id=? ORDER BY created_at DESC,entry_id DESC LIMIT 20"
+  ).bind(customerId).all<any>();
+  const historic=await db.prepare(
+    "SELECT COUNT(*) n FROM store_credit_legacy_unreconciled l "+
+    "JOIN sales_returns sr ON sr.return_id=l.return_id "+
+    "WHERE sr.customer_id=? OR sr.customer_phone=?"
+  ).bind(customerId,customer.phone).first<{n:number}>();
+  const ledger=await db.prepare(
+    "SELECT COUNT(*) n FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit'"
+  ).bind(customerId).first<{n:number}>();
+  return json({ok:true,customerId,customerName:customer.customer_name,
+    due:Number(customer.current_due||0),availableCents:Number(balance?.available_cents||0),
+    blocked:Number(customer.current_due)<0||Number(historic?.n||0)>0||Number(ledger?.n||0)>0,
+    history:(journal.results||[]).map((e:any)=>({
+      entryId:e.entry_id,type:e.entry_type,sourceType:e.source_type,
+      sourceId:e.source_id,deltaCents:Number(e.delta_cents),
+      balanceAfterCents:Number(e.balance_after_cents),createdAt:e.created_at
+    }))});
 }
 
 export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser,authorizedReversal=false):Promise<Response>{
