@@ -143,7 +143,7 @@ export function LiveSalesReturnsPage(){
   };
   const submitFullReversal=async()=>{
     if(!canReverse||!sale||!reversalPreview?.eligible||reversalReason.trim().length<8||posting||unknown)return;
-    if(!window.confirm('Reverse the ENTIRE original invoice '+sale.invoiceId+
+    if(!window.confirm('Complete the FULL remaining reversal for invoice '+sale.invoiceId+
       ' and issue a real cash refund of '+money(reversalPreview.refundAmount)+
       '? This preserves the original invoice and creates a permanent reversal journal.'))return;
     setPosting(true);setError('');
@@ -230,11 +230,12 @@ export function LiveSalesReturnsPage(){
               {reversalLoading?'Checking…':'Check full reversal'}
             </Button>
           </div>
-          <p className="text-[11px] text-ink-500">A full refund cancels all items through an audited Sales Return. The original invoice and prices stay unchanged.</p>
+          <p className="text-[11px] text-ink-500">Complete all remaining unreturned units through an audited Sales Return. Previous cash refunds stay recorded; original prices stay unchanged.</p>
           {reversalPreview&&!reversalPreview.eligible&&
             <p role="alert" className="rounded-md bg-warning-bg p-2 text-xs text-warning">{reversalPreview.reason}</p>}
           {reversalPreview?.eligible&&<>
-            <p className="text-xs text-ink-700">Eligible: {reversalPreview.items.length} lines · Cash refund <strong>{money(reversalPreview.refundAmount)}</strong></p>
+            <p className="text-xs text-ink-700">Remaining: {reversalPreview.items.length} lines · {reversalPreview.remainingBaseQuantity} base units · Cash refund <strong>{money(reversalPreview.refundAmount)}</strong></p>
+            {reversalPreview.previouslyRefundedAmount>0&&<p data-prior-refunds className="text-[11px] text-ink-600">Already refunded: {money(reversalPreview.previouslyRefundedAmount)} · Prior returns stay unchanged</p>}
             <label className="block text-[11px] text-ink-600">Reversal reason · বাতিলের কারণ
               <Input className="mt-1 h-9" value={reversalReason} maxLength={500}
                 aria-label="Full invoice reversal reason"
