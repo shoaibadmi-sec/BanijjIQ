@@ -54,3 +54,14 @@ npm run react:build
 **Cloudflare account access is still required once** to connect/enable Preview Builds and set the existing D1 UUID in the Worker's build environment; the GitHub app cannot change that Cloudflare dashboard setting or confirm a live PR URL.
 
 Official docs: https://developers.cloudflare.com/workers/previews/ ; https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/ ; https://developers.cloudflare.com/workers/previews/resources/ .
+
+
+## First automatic PR #10 build — Cloudflare account connected
+
+Cloudflare dashboard screenshots from 2026-10-29 confirm the existing Worker is connected to `shoaibadmi-sec/BanijjIQ`, Worker Previews and non-production builds are enabled, the Build/Preview commands point to this branch's scripts, and **Previews Base → Bindings** shows `DB` mapped to the existing React preview D1 database.
+
+A documentation-only push on PR #10 can now act as the first non-production build trigger. Once the build finishes, check **Workers & Pages → banijjiq-hisabiq-react-preview → Deployments → View build history**, then find its Preview under the Worker's **Previews** section or the GitHub PR comment.
+
+A GitHub green CI check does **not** verify a hosted Cloudflare Preview. If Cloudflare errors, inspect the build log; do not switch the Preview command to `wrangler deploy`, do not change production `wrangler.jsonc` or touch the existing stable React deployment.
+
+Do not assume a PR URL exists until Cloudflare confirms the Preview was successfully published. All branch previews share the existing staging D1; any edits or sales are shared.
