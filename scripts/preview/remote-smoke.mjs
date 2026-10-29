@@ -56,28 +56,31 @@ try{
   await check('public setup secret is required',async()=>{
     const status=await call('GET','/api/setup/status');
     assert.equal(status.ok,true);
-    const denied=await call('POST','/api/setup/admin',{
+    const denied=await call('POST','/api/setup/admin',{json:{
       fullName:'Disallowed Test',phone:'000',password:'NotUsedTest123!'
-    });
+    }});
     assert.equal(denied.status,403,'Public setup must never accept missing secret');
   });
   await check('initialize isolated administrator only when new',async()=>{
     const status=await call('GET','/api/setup/status');
     if(status.setupRequired){
       const setup=await call('POST','/api/setup/admin',{
-        fullName:'Preview Administrator',
-        phone:env.HISABIQ_PREVIEW_ADMIN_PHONE,
-        password:env.HISABIQ_PREVIEW_ADMIN_PASSWORD
-      },{setupSecret:true});
+        json:{
+          fullName:'Preview Administrator',
+          phone:env.HISABIQ_PREVIEW_ADMIN_PHONE,
+          password:env.HISABIQ_PREVIEW_ADMIN_PASSWORD
+        },
+        setupSecret:true
+      });
       assert.equal(setup.ok,true,'Preview admin setup failed, status '+setup.status);
     }else console.log('Existing preview admin preserved; no password reset.');
   });
   let token='';
   await check('authenticate with preview-only credentials',async()=>{
-    const response=await call('POST','/api/auth/login',{
+    const response=await call('POST','/api/auth/login',{json:{
       phone:env.HISABIQ_PREVIEW_ADMIN_PHONE,
       password:env.HISABIQ_PREVIEW_ADMIN_PASSWORD
-    });
+    }});
     assert.equal(response.ok,true,'Preview login failed, status '+response.status);
     assert.ok(response.token,'Missing authentication token');
     assert.equal(response.user?.role,'admin');
