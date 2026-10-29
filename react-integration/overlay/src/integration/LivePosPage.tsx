@@ -75,12 +75,12 @@ export function LivePosPage() {
   const paidRef = useRef<HTMLInputElement>(null);
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!canView) { setBusy(false); return; }
-    setBusy(true); setError('');
+    if(!silent)setBusy(true); setError('');
     try { const result = await getPosBootstrap(); setBootstrap(result); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not load the POS'); }
-    finally { setBusy(false); }
+    finally { if(!silent)setBusy(false); }
   }, [canView]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -266,7 +266,7 @@ export function LivePosPage() {
       const result = await postSale(payload);
       setFinished(result.invoice);
       setReviewOpen(false);
-      await load();
+      await load(true);
     } catch (err) {
       const unknown = !(err instanceof BackendRequestError) || err.status === null || err.status >= 500;
       if (unknown) {
@@ -533,9 +533,9 @@ export function LivePosPage() {
           <p>Due <strong>{taka(finished?.dueAmount || 0)}</strong></p>
         </div>
         <p className="text-xs text-ink-500">Receipts are fetched from the saved invoice. A4 invoice layout and editing remain in the Vue ERP.</p>
-        <DialogFooter><Button variant="outline" disabled={receiptBusy} onClick={()=>void openReceipt()}>
+        <DialogFooter><Button variant="outline" disabled={receiptBusy || saving} onClick={()=>void openReceipt()}>
           {receiptBusy?'Loading receipt…':'View / Print receipt'}
-        </Button><Button onClick={newSale}>New Sale</Button></DialogFooter>
+        </Button><Button disabled={saving || receiptBusy} onClick={newSale}>New Sale</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
