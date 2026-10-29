@@ -7,7 +7,7 @@ import {
   getSaleReturnDataRoute, getSalesByPhoneRoute, getSalesManagementRoute, getSalesReturnDetailRoute,
   getSalesReturnHistoryRoute, getSaleUpdateDataRoute, receiveCustomerPaymentRoute,
   searchSalesInvoicesForReturnRoute, startCashSessionRoute, updateSaleRoute,
-  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute
+  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute, getStoreCreditAccountRoute
 } from './service.js';
 
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
@@ -28,6 +28,8 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   if (path === '/api/sales-returns' && request.method === 'POST') return completeSalesReturnRoute(db, await readBody<any>(request), user);
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
+  const creditMatch=path.match(/^\/api\/pos\/store-credit\/([^/]+)$/);
+  if(creditMatch && request.method==='GET')return getStoreCreditAccountRoute(db,decodeURIComponent(creditMatch[1]));
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
   if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string }>(request), user);
   if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string }>(request), user);
