@@ -178,14 +178,23 @@ export async function runRealD1Browser(){
           const dueProduct=page.locator('[data-live-pos] button').filter({hasText:'D1 CI Copper Wire'}).first();
           await dueProduct.click();
           await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
+          const resetVersionBefore=await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version');
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
           // A stale receipt/dialog close event must not erase the next sale.
           await page.evaluate(() => new Promise(resolve =>
             requestAnimationFrame(() => requestAnimationFrame(resolve))));
-          assert.equal(await name.inputValue(),'Real Browser Due Buyer',
-            'Starting the next sale must preserve its customer name');
+          const actualNext={
+            customerName:await name.inputValue(),
+            customerPhone:await phone.inputValue(),
+            paid:await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),
+            resetBefore:resetVersionBefore,
+            resetAfter:await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version'),
+            customerCount:await page.locator('input[list="live-pos-customer-names"]').count()
+          };
+          assert.equal(actualNext.customerName,'Real Browser Due Buyer',
+            'Starting the next sale must preserve its customer name: '+JSON.stringify(actualNext));
           assert.equal(await phone.inputValue(),'01000000124',
             'Starting the next sale must preserve its phone');
           assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40',

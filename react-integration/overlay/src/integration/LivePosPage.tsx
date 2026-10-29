@@ -71,6 +71,7 @@ export function LivePosPage() {
   // A posted sale stays read-only until the user explicitly chooses New Sale.
   // Outside-click/Escape dialogs must NEVER silently reset a subsequent cart.
   const lastResetPostedInvoiceRef = useRef<string | null>(null);
+  const [saleResetVersion,setSaleResetVersion]=useState(0);
   const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
@@ -222,6 +223,7 @@ export function LivePosPage() {
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
   const resetSaleState=()=>{
+    setSaleResetVersion(v=>v+1);
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
@@ -317,7 +319,7 @@ export function LivePosPage() {
     You do not have permission to use POS. · বিক্রির অনুমতি নেই
   </section>;
 
-  return <section className="pos-screen mx-auto max-w-[1440px] space-y-4" data-live-pos>
+  return <section className="pos-screen mx-auto max-w-[1440px] space-y-4" data-live-pos data-sale-reset-version={saleResetVersion}>
     <PageHeader title="POS" titleBn="বিক্রি" description="Original HisabIQ POS cart · Live base-unit FIFO accounting through BanijjIQ API"
       actions={<div className="flex flex-wrap items-center gap-2">
         <span className="hidden items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-[11px] text-ink-500 lg:flex">
