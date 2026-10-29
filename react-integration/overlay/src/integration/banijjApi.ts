@@ -198,6 +198,7 @@ export const postSalesReturn = (payload:SalesReturnPayload) =>
   });
 export interface MixedReversalPreview {
   eligible:boolean;reason:string;invoiceId:string;refundAmount:number;
+  previouslyRefundedAmount:number;remainingBaseQuantity:number;
   items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>;
 }
 export const getMixedReversalPreview = (id:string)=>

@@ -112,13 +112,14 @@ function startMocking(context,calls){
         paymentStatus:'Paid',returnStatus:'No Return'}]});
     if(path==='/api/sales-management/UI-E2E-MIXED/reverse'&&request.method()==='GET')
       return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-MIXED',
-        refundAmount:2490,items:[{productId:'PRD-MIXED-E2E',qty:283,unitPrice:0,
-          unitQuantities:{Carton:1,Box:2,Pcs:3}}]}});
+        refundAmount:2300,previouslyRefundedAmount:190,remainingBaseQuantity:262,
+        items:[{productId:'PRD-MIXED-E2E',qty:262,unitPrice:0,
+          unitQuantities:{Carton:1,Box:1,Pcs:2}}]}});
     if(path==='/api/sales-management/UI-E2E-MIXED/reverse'&&request.method()==='POST'){
       const payload=request.postDataJSON();
       assert.ok(payload.reason.length>=8);
       calls.push({method:'ASSERT',path,payload});
-      return respond({ok:true,returnId:'SRT-UI-REVERSE-0001',totalReturnAmount:2490});
+      return respond({ok:true,returnId:'SRT-UI-REVERSE-0001',totalReturnAmount:2300});
     }
     if(path==='/api/sales-returns/UI-E2E-MIXED/data'&&request.method()==='GET')
       return respond({ok:true,sale:{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
@@ -457,7 +458,8 @@ try{
     await page.getByRole('button',{name:/UI-E2E-MIXED/}).click();
     await page.locator('[data-mixed-full-reversal]').waitFor();
     await page.getByRole('button',{name:'Check full reversal'}).click();
-    await page.getByText('Eligible: 1 lines').waitFor();
+    await page.getByText(/Remaining: 1 lines/).waitFor();
+    await page.getByText(/Already refunded:/).waitFor();
     const reversalButton=page.getByRole('button',{name:'Review and reverse entire invoice'});
     assert.equal(await reversalButton.isDisabled(),true);
     await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Original customer requested a corrected sale');

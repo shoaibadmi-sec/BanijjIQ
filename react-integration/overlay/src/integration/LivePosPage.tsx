@@ -70,6 +70,8 @@ export function LivePosPage() {
   const postingRef = useRef(false);
   // A posted sale stays read-only until the user explicitly chooses New Sale.
   // Outside-click/Escape dialogs must NEVER silently reset a subsequent cart.
+  const lastResetPostedInvoiceRef = useRef<string | null>(null);
+  const [saleResetVersion,setSaleResetVersion]=useState(0);
   const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
@@ -220,7 +222,8 @@ export function LivePosPage() {
     setCustomerName(customer.name); setCustomerPhone(customer.phone);
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
-  const newSale = () => {
+  const resetSaleState=()=>{
+    setSaleResetVersion(v=>v+1);
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
@@ -228,6 +231,18 @@ export function LivePosPage() {
     saleRequestId.current=crypto.randomUUID();
     setOutcomeUnknown(false);setSalesChecked(false);setRecentSales([]);
     requestAnimationFrame(() => productRef.current?.focus());
+  };
+  const newSale=()=>{
+    // The success dialog can emit repeated click/close events after another
+    // transaction begins. An invoice may reset the form only once.
+    if(!finished?.invoiceId||lastResetPostedInvoiceRef.current===finished.invoiceId)return;
+    lastResetPostedInvoiceRef.current=finished.invoiceId;
+    resetSaleState();
+  };
+  const clearDraft=()=>{
+    if(finished)return; // Posted invoices must use the explicit New Sale action.
+    if(!lines.length&&!customerName.trim()&&!customerPhone.trim()&&!paid.trim()&&!discount.trim())return;
+    if(window.confirm('Discard this unsaved cart, customer and payment details?'))resetSaleState();
   };
   const startDay = async () => {
     const amount = Number(openingCash);
@@ -304,7 +319,7 @@ export function LivePosPage() {
     You do not have permission to use POS. · বিক্রির অনুমতি নেই
   </section>;
 
-  return <section className="pos-screen mx-auto max-w-[1440px] space-y-4" data-live-pos>
+  return <section className="pos-screen mx-auto max-w-[1440px] space-y-4" data-live-pos data-sale-reset-version={saleResetVersion}>
     <PageHeader title="POS" titleBn="বিক্রি" description="Original HisabIQ POS cart · Live base-unit FIFO accounting through BanijjIQ API"
       actions={<div className="flex flex-wrap items-center gap-2">
         <span className="hidden items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-[11px] text-ink-500 lg:flex">
@@ -319,7 +334,7 @@ export function LivePosPage() {
         </Button>
       </div>} />
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
-      Mixed-unit sales calculate stock in the smallest unit and preserve price/conversion snapshots. Mixed-unit returns and invoice edits are not yet available; bundles, installments, split payments and drafts remain pending.
+      Mixed-unit sales and returns preserve original prices and base-unit FIFO history. Invoice edit-in-place, bundles, installments, split payments and drafts remain pending.
     </p>
     {error && <p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {feedback && <p role="status" className="rounded-lg bg-info-bg p-3 text-sm text-info">{feedback}</p>}
@@ -482,7 +497,7 @@ export function LivePosPage() {
           onPaymentMethod={method => { setPaymentMethod(method); setBankAccountId(''); }}
           onBankAccountId={setBankAccountId} paidRef={paidRef}
           errors={errors} disabled={saving} completed={!!finished}
-          onClear={() => { if (!lines.length || window.confirm('Clear this unsaved sale?')) newSale(); }}
+          onClear={clearDraft}
           onReview={() => setReviewOpen(true)}
         />
       </div>

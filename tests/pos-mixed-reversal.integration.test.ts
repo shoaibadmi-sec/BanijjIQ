@@ -104,9 +104,79 @@ test('full mixed-unit invoice reversal is atomic, audited, FIFO-correct and cann
   assert.equal(partial.ok,true,JSON.stringify(partial));
   const notEligible=await api('GET','/api/sales-management/'+nextId+'/reverse');
   assert.equal(notEligible.preview.eligible,false);
-  assert.match(notEligible.preview.reason,/partial return/i);
+  assert.match(notEligible.preview.reason,/previous returns already cover/i);
   assert.equal((await api('POST','/api/sales-management/'+nextId+'/reverse',
     {reason:'Cannot reverse after prior return'})).status,409);
   assert.equal(row('SELECT status FROM sales WHERE invoice_id=?',nextId).status,'Completed');
+
+  // The first return already refunded 1 BOX + 1 PCS = 21 base units / ৳190.
+  // Full reversal must refund ONLY 1 CT + 1 BOX + 2 PCS = 262 base units / ৳2,300.
+  const third=await api('POST','/api/pos/sales',{
+    clientRequestId:'unit-reverse-sale-2026-0003',customerName:'Third Buyer',customerPhone:'01000008158',
+    paymentType:'Cash',paymentMethod:'Cash',discount:0,
+    items:[{productId:id,name:'Reversal Carton Cable',qty:283,unitPrice:0,
+      unitQuantities:{Carton:1,Box:2,Pcs:3},unitProfileRevision:1,fulfillmentMode:'own'}]});
+  assert.equal(third.ok,true,JSON.stringify(third));
+  const thirdId=third.invoice.invoiceId;
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,117);
+  const earlier=await api('POST','/api/sales-returns',{
+    invoiceId:thirdId,refundMethod:'Cash',reason:'One box and piece were defective',
+    items:[{productId:id,qty:21,unitPrice:0,unitQuantities:{Box:1,Pcs:1}}]});
+  assert.equal(earlier.ok,true,JSON.stringify(earlier));
+  assert.equal(earlier.totalReturnAmount,190);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,138);
+  const pending=await api('GET','/api/sales-management/'+thirdId+'/reverse');
+  assert.equal(pending.ok,true,JSON.stringify(pending));
+  assert.equal(pending.preview.eligible,true,JSON.stringify(pending));
+  assert.equal(pending.preview.previouslyRefundedAmount,190);
+  assert.equal(pending.preview.refundAmount,2300);
+  assert.equal(pending.preview.remainingBaseQuantity,262);
+  assert.deepEqual(pending.preview.items[0].unitQuantities,{Carton:1,Box:1,Pcs:2});
+  assert.equal(pending.preview.items[0].qty,262);
+  const completed=await api('POST','/api/sales-management/'+thirdId+'/reverse',{
+    reason:'Cancel all remaining units on corrected invoice'});
+  assert.equal(completed.ok,true,JSON.stringify(completed));
+  assert.equal(completed.totalReturnAmount,2300);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,400);
+  assert.equal(row('SELECT remaining_quantity FROM stock_lots WHERE lot_id=?',opening).remaining_quantity,100);
+  assert.equal(row('SELECT remaining_quantity FROM stock_lots WHERE lot_id=?','REVERSAL-LOT-2').remaining_quantity,300);
+  assert.equal(row('SELECT status FROM sales WHERE invoice_id=?',thirdId).status,'Reversed');
+  assert.equal(row('SELECT refund_amount_cents FROM sale_reversal_logs WHERE invoice_id=?',thirdId).refund_amount_cents,230000);
+  assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',thirdId).n,2);
+  assert.deepEqual(rows('SELECT total_return_amount FROM sales_returns WHERE invoice_id=? ORDER BY total_return_amount',thirdId)
+    .map(x=>x.total_return_amount),[190,2300]);
+  assert.equal(row("SELECT SUM(credit)-SUM(debit) net FROM cash_book WHERE is_deleted=0 AND type IN ('Sale','Sales Return')").net,0);
+  const originallySold=(await api('GET','/api/pos/invoices/'+thirdId)).invoice;
+  assert.equal(originallySold.items[0].unitSnapshot.profile.units[0].sellingPrice,2100);
+  assert.deepEqual(rows('SELECT lot_id,SUM(quantity) q FROM sales_return_item_lots WHERE invoice_id=? GROUP BY lot_id',thirdId)
+    .map(x=>[x.lot_id,x.q]).sort(),[[opening,100],['REVERSAL-LOT-2',183]].sort());
+  const alreadyReversed=await api('POST','/api/sales-management/'+thirdId+'/reverse',{
+    reason:'This invoice is already reversed'});
+  assert.equal(alreadyReversed.status,409);
+  assert.equal(row('SELECT COUNT(*) n FROM sale_reversal_logs WHERE invoice_id=?',thirdId).n,1);
+  assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',thirdId).n,2);
+
+  // Previous Store Credit is a customer liability and cannot silently become a cash reversal.
+  const fourth=await api('POST','/api/pos/sales',{
+    clientRequestId:'unit-reverse-sale-2026-0004',customerName:'Credit Buyer',customerPhone:'01000008159',
+    paymentType:'Cash',paymentMethod:'Cash',discount:0,
+    items:[{productId:id,name:'Reversal Carton Cable',qty:20,unitPrice:0,
+      unitQuantities:{Box:1},unitProfileRevision:1,fulfillmentMode:'own'}]});
+  assert.equal(fourth.ok,true,JSON.stringify(fourth));
+  const creditId=fourth.invoice.invoiceId;
+  const creditReturn=await api('POST','/api/sales-returns',{
+    invoiceId:creditId,refundMethod:'Store Credit',reason:'Store credit requested by buyer',
+    items:[{productId:id,qty:1,unitPrice:0,unitQuantities:{Pcs:1}}]});
+  assert.equal(creditReturn.ok,false,'Cannot return PCS that was not explicitly sold on this invoice');
+  const otherCredit=await api('POST','/api/sales-returns',{
+    invoiceId:creditId,refundMethod:'Store Credit',reason:'Store credit requested by buyer',
+    items:[{productId:id,qty:20,unitPrice:0,unitQuantities:{Box:1}}]});
+  assert.equal(otherCredit.ok,true,JSON.stringify(otherCredit));
+  const blocked=await api('GET','/api/sales-management/'+creditId+'/reverse');
+  assert.equal(blocked.preview.eligible,false);
+  assert.match(blocked.preview.reason,/Store Credit/);
+  assert.equal((await api('POST','/api/sales-management/'+creditId+'/reverse',
+    {reason:'Reverse despite unresolved store credit'})).status,409);
+  assert.equal(row('SELECT COUNT(*) n FROM sale_reversal_logs WHERE invoice_id=?',creditId).n,0);
  }finally{db.close();}
 });

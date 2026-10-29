@@ -354,6 +354,7 @@ export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user
  */
 async function planMixedSaleReversal(db:SherDatabase,id:string){
   const no=(reason:string)=>({eligible:false,reason,invoiceId:id,refundAmount:0,
+    previouslyRefundedAmount:0,remainingBaseQuantity:0,
     items:[] as Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>});
   const sale=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0')
     .bind(id).first<any>();
@@ -366,8 +367,6 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   if(sale.payment_type!=='Cash'||sale.payment_method!=='Cash'||Number(sale.due_amount||0)!==0||
       Math.abs(Number(sale.paid_amount||0)-Number(sale.grand_total||0))>0.001)
     return no('Full reversal requires a fully paid cash invoice with no due or bank transaction.');
-  if(await db.prepare('SELECT 1 AS x FROM sales_returns WHERE invoice_id=? LIMIT 1').bind(id).first())
-    return no('Partial returns already exist. Use the existing returns workflow.');
   if(await db.prepare('SELECT 1 AS x FROM vendor_sourcing WHERE invoice_id=? LIMIT 1').bind(id).first())
     return no('Vendor-sourced invoices require specialist settlement.');
   if(await db.prepare(
@@ -383,27 +382,77 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   ).bind(id).first<{n:number}>();
   if(Math.abs(Number(received?.n||0)-Number(sale.paid_amount||0))>0.001)
     return no('Original cash ledger cannot be reconciled.');
+  // Previously returned units are immutable. Only CASH refunds are eligible for
+  // final cash reversal; store credits have separate outstanding customer liabilities.
+  const history=await db.prepare(
+    'SELECT return_id,refund_method,total_return_amount FROM sales_returns WHERE invoice_id=? ORDER BY created_at,return_id'
+  ).bind(id).all<any>();
+  const prior=history.results||[];
+  if(prior.some((r:any)=>r.refund_method!=='Cash'))
+    return no('A previous return used Store Credit. Reconcile customer credit before reversing.');
+  // Verify each historical cash refund has a live cash-book debit with the same
+  // amount and no duplicate adjustment for this return ID.
+  let priorRefundCents=0;
+  for(const entry of prior){
+    const cents=Math.round(Number(entry.total_return_amount||0)*100);
+    if(!Number.isSafeInteger(cents)||cents<=0)return no('Previous return amount is invalid.');
+    const cashRows=await db.prepare(
+      "SELECT COUNT(*) n,COALESCE(SUM(debit),0) amount FROM cash_book WHERE type='Sales Return' AND reference=? AND is_deleted=0"
+    ).bind(entry.return_id).first<{n:number;amount:number}>();
+    if(Number(cashRows?.n||0)!==1||Math.round(Number(cashRows?.amount||0)*100)!==cents)
+      return no('Previous return cash ledger does not reconcile.');
+    priorRefundCents+=cents;
+  }
   const dataResponse=await getSaleReturnDataRoute(db,id);
   const data=await dataResponse.json() as any;
   if(!data.ok)return no('Invoice return history could not be read.');
   if(!data.sale.items?.length)return no('No sale items found.');
   const subtotal=Number(sale.subtotal||0),grand=Number(sale.grand_total||0);
-  if(subtotal<=0||grand<=0)return no('This invoice has no positive amount to reverse.');
-  let refundCents=0;
+  const grandCents=Math.round(grand*100);
+  if(subtotal<=0||grandCents<=0)return no('This invoice has no positive amount to reverse.');
+  if(priorRefundCents>grandCents)
+    return no('Earlier refunds exceed the original invoice total.');
+  if(Math.round(Number(data.sale.previouslyReturnedAmount||0)*100)!==priorRefundCents)
+    return no('Prior return summary does not reconcile to the cash ledger.');
+  let refundCents=0,remainingBaseQuantity=0;
   const items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>=[];
   for(const line of data.sale.items){
     if(!line.mixedUnit)return no('All items must have a saved mixed-unit snapshot.');
-    if(Number(line.availableQty)!==Number(line.soldQty))
-      return no('Original quantities are not fully available for reversal.');
-    const quantities=line.mixedUnit.originalQuantities as Record<string,number>;
-    const quote=quoteUnitQuantities(line.mixedUnit.profile as UnitProfile,quantities);
-    if(quote.baseQuantity!==Number(line.soldQty))return no('Saved conversion quantities are inconsistent.');
-    refundCents+=Math.round(quote.lineTotal*grand/subtotal*100);
-    items.push({productId:line.productId,qty:quote.baseQuantity,unitPrice:0,unitQuantities:quantities});
+    const quantities=line.mixedUnit.availableQuantities as Record<string,number>;
+    const profile=line.mixedUnit.profile as UnitProfile;
+    // Cross-check that the remaining unit map and previously returned base units
+    // reconcile exactly; no denomination substitution is allowed.
+    let original:ReturnType<typeof quoteUnitQuantities>;
+    try{original=quoteUnitQuantities(profile,line.mixedUnit.originalQuantities);}
+    catch{return no('Original mixed-unit profile cannot be verified.');}
+    if(original.baseQuantity!==Number(line.soldQty))
+      return no('Original sale quantities do not match the frozen unit profile.');
+    let base=0,partAmount=0;
+    const nonzero=Object.fromEntries(Object.entries(quantities)
+      .filter(([,count])=>Number(count)>0)) as Record<string,number>;
+    if(Object.keys(nonzero).length){
+      try{
+        const quote=quoteUnitQuantities(profile,nonzero);
+        base=quote.baseQuantity;
+        partAmount=quote.lineTotal;
+      }catch{return no('Remaining unit quantities cannot be verified.');}
+    }
+    if(base!==Number(line.availableQty)||base+Number(line.previouslyReturnedQty)!==Number(line.soldQty))
+      return no('Previous returns and remaining unit quantities do not reconcile.');
+    if(base>0){
+      const cents=Math.round(partAmount*grand/subtotal*100);
+      if(cents<=0)return no('Remaining refund amount is zero; use manual review.');
+      refundCents+=cents;
+      remainingBaseQuantity+=base;
+      items.push({productId:line.productId,qty:base,unitPrice:0,unitQuantities:nonzero});
+    }
   }
-  if(refundCents!==Math.round(grand*100))
-    return no('Discount rounding needs review; no automatic full reversal can be posted.');
-  return {eligible:true,reason:'',invoiceId:id,refundAmount:grand,items};
+  if(!items.length)return no('Previous returns already cover the entire invoice.');
+  if(refundCents+priorRefundCents!==grandCents)
+    return no('Historical refund rounding does not reconcile to the original sale; manual review required.');
+  return {eligible:true,reason:'',invoiceId:id,
+    refundAmount:refundCents/100,previouslyRefundedAmount:priorRefundCents/100,
+    remainingBaseQuantity,items};
 }
 export async function getMixedSaleReversalPreviewRoute(db:SherDatabase,id:string):Promise<Response>{
   const preview=await planMixedSaleReversal(db,id);
