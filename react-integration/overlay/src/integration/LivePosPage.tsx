@@ -335,7 +335,7 @@ export function LivePosPage() {
               <span className="sr-only">Remove</span>
             </div>
             <div data-testid="pos-cart" className="divide-y divide-border">
-              {lines.map((line,index) => <div data-pos-line key={line.product.id}
+              {lines.map((line,index) => <div data-testid="pos-cart-row" data-cart-row="sale" data-pos-line key={line.product.id}
                 className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 px-3 py-2`}>
                 <span className="pr-1 text-right text-xs text-ink-400">{index+1}.</span>
                 <div className="min-w-0">
