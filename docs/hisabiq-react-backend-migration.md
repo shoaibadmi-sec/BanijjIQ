@@ -1,0 +1,74 @@
+# HisabIQ_UI React frontend + existing BanijjIQ API
+
+## Decision
+The approved production UI source is **HisabIQ_UI React**, NOT a Vue component-by-component port. Keep BanijjIQ's Hono backend, Cloudflare Worker runtime, D1 data and migrations unchanged. The existing Vue application remains the production fallback until feature parity is verified.
+
+## Pinned source
+Original source: https://github.com/shuvodelux-commits/hisabiq_ui
+Pinned commit: `9a8dc1ac4e85ac4e60f254e068bd67c2a805673f`
+Git submodule: `apps/hisabiq-web`
+Do not blindly track source main: review and update the pinned SHA, then run the integration build and tests.
+
+## How to build
+```bash
+git clone --recurse-submodules https://github.com/shoaibadmi-sec/BanijjIQ.git
+cd BanijjIQ
+git checkout feat/hisabiq-react-api
+npm run react:build
+```
+The build makes a disposable, ignored copy in `.generated/hisabiq-web`; the React app compiles to `.generated/hisabiq-web/dist`. GitHub Actions automatically builds it on this PR and uploads compiled assets. `npm run build` and the existing live Cloudflare config still build/deploy the **old Vue frontend**, deliberately.
+
+## Integration overlay
+`scripts/prepare-hisabiq-react.mjs` copies the pinned source into `.generated/hisabiq-web` and applies `react-integration/overlay` **only to that disposable build worktree**. The Git submodule stays clean, pinned, and directly reusable.
+- Login, account verification and logout use existing `/api/auth/*` endpoints with the same bearer-token key as the existing Vue app.
+- `#/app/live-products` is the first **real API-backed** read-only HisabIQ-style screen, using `/api/bootstrap` product records.
+- All other inherited HisabIQ_UI screens still use fixture / demo stores and MUST NOT be mistaken for real sales, inventory, ledger or cash posting. A visible banner says so.
+- The demo sign-in/signup preview routes remain examples inside the design app; **only the outer backend gate signs in to BanijjIQ**. Do not equate preview UI with working auth flows.
+- The source's HashRouter is retained; only API requests go to Hono.
+
+## Deployment safety
+`wrangler.react-preview.example.jsonc` is intentionally NOT deployable without a **separate preview D1** database. Never bind a preview with sample workflows to the production D1 database. Production Wrangler remains unchanged and continues serving Vue.
+No stock, money, invoices, or permissions are mutated by the new read-only Products integration. Backend authorization still applies to /api/*.
+
+## Remaining migration gates
+1. Add API adapters and production workflow wiring to each module without changing the approved component design: Dashboard, Products create/edit, POS, Sales/Returns, Purchases, Parties, Vendors, Finance, Bank, Daybook, Reports, Settings.
+2. For unsupported preview-only features (multi-unit, installments, drafts, SMS, bundle posting, etc), implement and verify backend contracts or explicitly disable those workflows.
+3. Build dedicated preview database and deploy isolated Worker; test login, permission guards, POS totals and real posting, FIFO, refunds, customer due, printing, mobile and dark-mode.
+4. Compare route parity and get business acceptance before replacing existing live Vue assets. Do not delete the Vue frontend or merge the previous Vue redesign PRs until a tested cutover strategy is approved.
+
+## Phase 2 — 2026-10-28
+- Main `#/app/products` route now uses the real product read-only catalog with the approved HisabIQ shared Table/PageHeader styling. Demo product editor is not connected to production and is reachable only at `#/app/products-design-preview` for design comparison.
+- Main `#/app/pos` route now uses a real API-backed **single-unit** POS utilizing HisabIQ's original ProductCombobox and PageHeader, and BanijjIQ's POS bootstrap + /api/pos/sales transaction endpoint. Original demo POS is still visible at `#/app/pos-design-preview` for comparison and is clearly labeled as demo by the gate.
+- Cash session opening is an explicit user action. Real sale posting requires customer name/phone, existing active session, no stock shortage, no tracked serial/expiry, valid integer quantities, valid discounts and payment account where needed. Confirmation modal is mandatory; post only once pending; successful response shows the server invoice ID.
+- Not yet supported in the integrated POS: mixed units, negative/vendor fulfillment, tracked products, bundles, installment, split payments, invoice editing/printing, draft/templates. Such features remain unoffered, not silently approximated.
+- Both new routes use backend permission declarations; Hono continues enforcing permissions server-side.
+
+### Post-result ambiguity safeguards
+- If POST /api/pos/sales fails due to network transport or server 5xx, the UI treats the transaction result as **unknown**, not safely failed. It blocks retry, shows recent invoices for the entered phone through /api/pos/sales-by-phone, and requires explicit reconciliation before allowing another post.
+- A synchronous submission lock prevents rapid duplicate clicks. This is a client-side guard only; backend idempotency keys remain a recommended production enhancement before switching away from Vue.
+
+## Phase 3 — Product catalog write integration
+- Reuses the approved source `AddProductDialog` full-page form directly, with supported-feature validation before any API submission.
+- `POST /api/products` creates **basic stock products** and, when supplied, the opening FIFO stock lot.
+- `PUT /api/products/:id/catalog` updates name/brand/category/barcode/purchase/sell/minimum-stock metadata **without updating `current_stock`, `stock_lots`, tracking or FIFO**.
+- Catalog edit requires `expectedUpdatedAt` and rejects concurrent changes (HTTP 409). Permission middleware maps PUT to products.edit.
+- Source form preview capabilities that backend cannot store (Bangla name, images, multiple units, serials, expiry, warranty, services/bundles) are rejected with an explicit UI message, not silently discarded.
+- On unknown save result, the editor checks the live product list before considering a retry.
+- Build CI now compiles the backend too. **This is not permission to deploy to production yet**: real database-level product creation/update tests remain outstanding.
+
+## Phase 4 — saved receipt preview
+- Basic POS now fetches the committed invoice from `GET /api/pos/invoices/:id` and renders the original HisabIQ `ReceiptPreview` component.
+- The receipt uses server invoice items and the business branding supplied by BanijjIQ POS invoice settings; never the preview/demo shop name.
+- Print CSS supports a thermal receipt. Full A4 invoice layouts, image export, and advanced item details remain in Vue.
+- This change is draft-only: print layout still needs browser/printer verification before production use.
+
+## Phase 5 — SQL accounting regression and repeat-safe posting (October 28, 2026)
+
+- `migrations/0028_pos_sale_idempotency.sql` adds `pos_sale_requests` with a unique request ID and saved invoice ID. It does not modify historical invoices.
+- The React POS creates a unique `clientRequestId` per new sale; retries keep that key. Existing Vue callers can continue without the new optional field while being migrated.
+- On duplicate delivery with the same payload, `POST /api/pos/sales` reads and returns the original invoice instead of posting cash, inventory or dues again. Reuse with modified details returns HTTP 409.
+- Cash/due customer creation and contact updates now execute inside the same SQL batch as the invoice and lot movements. An injected SQL error must roll all of them back.
+- `tests/pos-accounting.integration.test.ts` migrates a disposable in-memory SQLite database using every real SQL migration and drives the existing `handleApiRequest` entrypoint: admin setup, product opening lot, second simulated purchased lot, cash session, cash sale and FIFO cost allocation, replay, partial payment and customer due, oversell/invalid-payment rejection, invoice readback, forced failure rollback.
+- The GitHub CI backend phase compiles the backend and executes the full-schema test alongside catalog regression; the browser phase still runs Playwright/axe with synthetic API responses.
+- **Not yet covered:** real Cloudflare D1 and production Worker transaction semantics, isolated end-to-end database browser tests, simultaneous requests under high concurrency, all returns, serial/expiry and multi-unit accounting. Do not merge/deploy until these are verified.
+

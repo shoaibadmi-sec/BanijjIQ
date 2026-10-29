@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "banijjiq-hisabiq-react-preview",
+  "main": "server/runtime/cloudflare.ts",
+  "compatibility_date": "2026-08-22",
+  "assets": {
+    "directory": "./.generated/hisabiq-web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "REPLACE_WITH_SEPARATE_PREVIEW_DB",
+      "database_id": "REPLACE_WITH_SEPARATE_PREVIEW_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
