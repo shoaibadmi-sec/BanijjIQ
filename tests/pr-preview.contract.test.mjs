@@ -10,15 +10,15 @@ const safeId='11111111-1111-4111-8111-111111111111';
 
 function generate({id=safeId,withAssets=false}={}){
  const p=spawnSync(process.execPath,['scripts/preview/build-pr-config.mjs'],{
-   encoding:'utf8',env:{...process.env,HISABIQ_PR_PREVIEW_D1_ID:id,
+   encoding:'utf8',env:{...process.env,HISABIQ_PREVIEW_D1_ID:id,
      HISABIQ_PR_PREVIEW_TEST_ASSETS:withAssets?'yes':'no'}});
  return p;
 }
 
-test('auto-preview config has a distinct Worker and preview-only DB, never production DB at top level',()=>{
+test('auto-preview config reuses existing React preview Worker and D1 without modifying its live root',()=>{
  const p=generate(); assert.equal(p.status,0,p.stderr);
  const c=JSON.parse(readFileSync(configFile,'utf8'));
- assert.equal(c.name,'hisabiq-pr-preview');
+ assert.equal(c.name,'banijjiq-hisabiq-react-preview');
  assert.equal(c.main,'server/runtime/cloudflare.ts');
  assert.equal(c.assets.directory,'./.generated/hisabiq-web/dist');
  assert.deepEqual(c.assets.run_worker_first,['/api/*']);
@@ -27,7 +27,7 @@ test('auto-preview config has a distinct Worker and preview-only DB, never produ
  assert.equal(c.previews.d1_databases.length,1);
  assert.equal(c.previews.d1_databases[0].binding,'DB');
  assert.equal(c.previews.d1_databases[0].database_id,safeId);
- assert.equal(c.previews.d1_databases[0].database_name,'hisabiq-pr-preview-db');
+ assert.equal(c.previews.d1_databases[0].database_name,'banijjiq-hisabiq-react-preview-db');
  assert.equal(c.previews.d1_databases[0].migrations_dir,'migrations');
  assert.notEqual(c.previews.d1_databases[0].database_id,prod.d1_databases[0].database_id);
  assert.equal('routes' in c,false);
@@ -55,13 +55,13 @@ test('Cloudflare build commands target React, exact Wrangler preview, and never 
  for(const term of ["['npm',['run','react:build']]",'wrangler@4.135.0','build-pr-config.mjs'])
    assert.ok(runner.includes(term),'Missing safe step: '+term);
  for(const term of [
-   'hisabiq-pr-preview',
-   'hisabiq-pr-preview-db',
+   'banijjiq-hisabiq-react-preview',
+   'banijjiq-hisabiq-react-preview-db',
    'npm run preview:pr-build',
    'npm run preview:pr-deploy',
    'npm run preview:pr-no-production',
    'Enable Preview Builds',
-   'HISABIQ_PR_PREVIEW_D1_ID',
+   'HISABIQ_PREVIEW_D1_ID',
    'Cloudflare Access'
  ])assert.ok(docs.includes(term),'Missing operator instruction: '+term);
  assert.ok(readFileSync('.gitignore','utf8').includes(configFile),'Never commit generated D1 config');
@@ -75,22 +75,13 @@ test('Cloudflare build commands target React, exact Wrangler preview, and never 
 });
 
 
-test('one-time migration configuration targets only explicitly supplied demo D1 and never runs migrations',()=>{
- const p=spawnSync(process.execPath,['scripts/preview/build-pr-migrations-config.mjs'],{
-   encoding:'utf8',env:{...process.env,HISABIQ_PR_PREVIEW_D1_ID:safeId}
- });
- assert.equal(p.status,0,p.stderr);
- assert.ok(!p.stdout.includes('Applying migrations'));
- const migratePath='wrangler.hisabiq-pr-migrations.generated.jsonc';
- assert.ok(readFileSync('.gitignore','utf8').includes(migratePath));
- const c=JSON.parse(readFileSync(migratePath,'utf8'));
- assert.equal(c.d1_databases.length,1);
- assert.equal(c.d1_databases[0].database_name,'hisabiq-pr-preview-db');
- assert.equal(c.d1_databases[0].database_id,safeId);
- assert.notEqual(c.d1_databases[0].database_id,prod.d1_databases[0].database_id);
- const denied=spawnSync(process.execPath,['scripts/preview/build-pr-migrations-config.mjs'],{
-   encoding:'utf8',env:{...process.env,
-     HISABIQ_PR_PREVIEW_D1_ID:prod.d1_databases[0].database_id}
- });
- assert.notEqual(denied.status,0,'Refuse to generate a production migration command');
+test('existing preview D1 is reused without auto schema migrations',()=>{
+ assert.equal(existsSync('scripts/preview/build-pr-migrations-config.mjs'),false,
+   'An existing database must not gain an unused operator migration helper');
+ const r=readFileSync('scripts/preview/build-pr-config.mjs','utf8');
+ assert.ok(!r.includes('wrangler d1 migrations apply'));
+ const docs=readFileSync('docs/hisabiq-pr-auto-preview.md','utf8');
+ assert.ok(docs.includes('banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev'));
+ assert.ok(docs.includes('existing database'));
+ assert.ok(docs.includes('stable PR URL'));
 });
