@@ -145,8 +145,16 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
     db.prepare(`SELECT bank_account_id AS id, account_name AS name, account_type AS accountType FROM bank_accounts WHERE status = 'Active' ORDER BY account_name COLLATE NOCASE ASC`).all()
   ]);
 
+  const conversions = await db.prepare(`SELECT product_id AS productId, unit_name AS unit, smaller_unit AS smallerUnit,
+    units_per_smaller AS count, base_factor AS factor FROM product_unit_conversions ORDER BY sort_order`).all();
+  const unitMap = new Map<string, any[]>();
+  for (const rule of conversions.results || [] as any[]) {
+    const row = rule as any;
+    if (!unitMap.has(row.productId)) unitMap.set(row.productId, []);
+    unitMap.get(row.productId)!.push(row);
+  }
   const availability = await getAvailabilityMap(db);
-  const productRows = (products.results ?? []).map((p: any) => ({ ...p,
+  const productRows = (products.results ?? []).map((p: any) => ({ ...p, conversions: unitMap.get(String(p.productId)) || [],
     sellableStock: availability.get(String(p.productId))?.sellable ?? Number(p.currentStock || 0),
     pendingTracking: availability.get(String(p.productId))?.pending ?? 0,
     expiredStock: availability.get(String(p.productId))?.expired ?? 0
@@ -239,6 +247,10 @@ export async function updateProduct(db: SherDatabase, productId: string, input: 
   if (!productName) return error('Product name is required');
   if (!category) return error('Category is required');
   if (!unit) return error('Unit is required');
+  if (unit.toLocaleLowerCase() !== existing.unit.toLocaleLowerCase()) {
+    const hasConversions = await db.prepare('SELECT 1 AS found FROM product_unit_conversions WHERE product_id=? LIMIT 1').bind(productId).first();
+    if (hasConversions) return error('Remove product unit conversions before changing its stock unit.');
+  }
 
   const duplicate = await db.prepare(`
     SELECT product_id FROM products

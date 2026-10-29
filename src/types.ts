@@ -393,6 +393,7 @@ export interface BankAccount {
 }
 
 export interface PosProduct {
+  conversions?: { unit:string; smallerUnit:string; count:number; factor:number }[];
   id: string;
   name: string;
   productName: string;
@@ -441,6 +442,8 @@ export interface CashSessionSummary {
 }
 
 export interface PosCartLine {
+  unitBreakdown?: { unit:string; count:number }[];
+  conversions?: { unit:string; smallerUnit:string; count:number; factor:number }[];
   purchasePrice?: number;
   unit?: string;
   productId: string;
@@ -458,6 +461,7 @@ export interface PosCartLine {
 }
 
 export interface PosInvoiceItem {
+  unitBreakdown?: { unit:string; count:number }[];
   productId: string;
   productName: string;
   quantity: number;
@@ -501,6 +505,7 @@ export interface SalesListRow {
 }
 
 export interface SaleDetailItem {
+  unitBreakdown?: { unit:string; count:number }[];
   productId: string;
   name: string;
   qty: number;
@@ -570,6 +575,7 @@ export interface SaleReturnDataItem {
 }
 
 export interface SaleReturnData {
+  subtotal?: number;
   invoiceId: string;
   date: string;
   customerId: string;

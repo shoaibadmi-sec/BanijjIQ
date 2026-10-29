@@ -1,0 +1,25 @@
+name: Mohim ERP parity integration
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  port:
+    name: Vue, Hono, D1 + batch accounting checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npx tsc -p tsconfig.server.json --noEmit
+      - run: npm run test:mohim-parity
+      - name: Ephemeral local D1 migrations only
+        run: npx wrangler d1 migrations apply DB --local

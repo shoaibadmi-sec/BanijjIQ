@@ -25,6 +25,7 @@ import {
   updateWarrantyClaimRoute,
   updateWarrantyRoute
 } from './tracking.service.js';
+import { getProductUnitConfig, saveProductUnitConfig } from './units.service.js';
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
@@ -98,6 +99,10 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
     const body = await readBody<{ delta?: number; note?: string }>(request);
     return adjustStockByDelta(db, decodeURIComponent(adjustMatch[1]), body.delta, cleanText(body.note));
   }
+
+  const multiUnitMatch = path.match(/^\/api\/products\/([^/]+)\/conversions$/);
+  if (multiUnitMatch && request.method === 'GET') return getProductUnitConfig(db, decodeURIComponent(multiUnitMatch[1]));
+  if (multiUnitMatch && request.method === 'PUT') return saveProductUnitConfig(db, decodeURIComponent(multiUnitMatch[1]), await readBody<{ relations?: import('./units.service.js').UnitRelation[] }>(request));
 
   const lotsMatch = path.match(/^\/api\/products\/([^/]+)\/lots$/);
   if (lotsMatch && request.method === 'GET') return getProductLots(db, decodeURIComponent(lotsMatch[1]));

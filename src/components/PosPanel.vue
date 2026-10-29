@@ -226,9 +226,12 @@ async function closeDay(){
 
 function addProduct(p:PosProduct){
   const line=cart.value.find(x=>x.productId===p.id);
-  if(line) line.qty=Math.round(Number(line.qty||0))+1;
+  if(line) {
+    if(line.conversions?.length) setMixedUnit(line,line.unit||p.unit,lineUnitCount(line,line.unit||p.unit)+1);
+    else line.qty=Math.round(Number(line.qty||0))+1;
+  }
   else cart.value.push({
-    productId:p.id,name:p.name,unit:p.unit,qty:1,unitPrice:p.sellingPrice,stock:p.stock,
+    productId:p.id,name:p.name,unit:p.unit,conversions:p.conversions||[],unitBreakdown:p.conversions?.length?[{unit:p.unit,count:1}]:undefined,qty:1,unitPrice:p.sellingPrice,stock:p.stock,
     vendorId:'',vendorUnitCost:null,fulfillmentMode:p.stock>0?'own':undefined,
     trackSerial:!!p.trackSerial,trackExpiry:!!p.trackExpiry,trackWarranty:!!p.trackWarranty,serialNumbers:[]
   });
@@ -250,8 +253,22 @@ function onSearchKeydown(e:KeyboardEvent){
   if(pick){ e.preventDefault(); addProduct(pick); if(exact) clearProductSearch(); }
 }
 function removeLine(i:number){ cart.value.splice(i,1); }
+function lineUnitCount(l:PosCartLine, unit:string): number {
+  return l.unitBreakdown?.find(p => p.unit.toLocaleLowerCase() === unit.toLocaleLowerCase())?.count || 0;
+}
+function setMixedUnit(l:PosCartLine, unit:string, count:number) {
+  const parts = l.unitBreakdown?.filter(p => p.unit.toLocaleLowerCase() !== unit.toLocaleLowerCase()) || [];
+  if (Number.isSafeInteger(count) && count > 0) parts.push({unit,count});
+  l.unitBreakdown = parts;
+  const factor = l.conversions?.find(p=>p.unit.toLocaleLowerCase()===unit.toLocaleLowerCase())?.factor || 1;
+  void factor;
+  const total = parts.reduce((n,p)=>n + p.count*(l.conversions?.find(r=>r.unit.toLocaleLowerCase()===p.unit.toLocaleLowerCase())?.factor || 1),0);
+  l.qty = Number.isSafeInteger(total) && total >= 0 ? total : 0;
+  if (l.trackSerial && (l.serialNumbers?.length||0)>l.qty) l.serialNumbers=(l.serialNumbers||[]).slice(0,l.qty);
+}
 function setQty(l:PosCartLine,q:number){
   l.qty=Math.max(1,Math.round(Number(q||1)));
+  if (l.conversions?.length) l.unitBreakdown=[{unit:l.unit||'',count:l.qty}];
   if(l.trackSerial && (l.serialNumbers?.length||0)>l.qty) l.serialNumbers=(l.serialNumbers||[]).slice(0,l.qty);
   if(lineShortage(l)<=0){ l.fulfillmentMode='own'; l.vendorId=''; l.vendorUnitCost=null; }
 }
@@ -272,7 +289,7 @@ function toggleLineSerial(serial:string){
 }
 function useOwnStock(l:PosCartLine){
   if(l.stock<=0){error.value=`${l.name}: no own stock available.`;return;}
-  l.qty=Math.max(1,Math.round(l.stock)); l.fulfillmentMode='own';l.vendorId='';l.vendorUnitCost=null;
+  setQty(l,Math.max(1,Math.round(l.stock))); l.fulfillmentMode='own';l.vendorId='';l.vendorUnitCost=null;
 }
 function useNegative(l:PosCartLine){l.fulfillmentMode='negative';l.vendorId='';l.vendorUnitCost=null;}
 function useVendor(l:PosCartLine){l.fulfillmentMode='vendor';}
@@ -299,6 +316,7 @@ async function finishSale(){
     return;
   }
   for(const l of cart.value){
+    if (!Number.isSafeInteger(l.qty) || l.qty < 1) { error.value = `${l.name}: enter at least one unit.`; return; }
     if(lineShortage(l)>0 && (l.trackSerial || l.trackExpiry)){error.value=`${l.name}: only ${formatQty(l.stock)} fully tracked item(s) are ready. Complete Serial / Expiry tracking first.`;return;}
     if(l.trackSerial && (l.serialNumbers||[]).length!==Math.max(1,Math.round(Number(l.qty||1)))){error.value=`${l.name}: select exactly ${Math.max(1,Math.round(Number(l.qty||1)))} Serial / IMEI number(s).`;return;}
     if(lineShortage(l)>0 && !l.fulfillmentMode){error.value=`${l.name}: choose Own Stock, Vendor Sourcing, or Negative Stock.`;return;}
@@ -319,8 +337,8 @@ async function finishSale(){
       paymentType:paymentType.value,paidAmount:paymentType.value==='Partial'?received.value:0,
       paymentMethod:sale.paymentMethod,bankAccountId:sale.bankAccountId,
       items:cart.value.map(l=>({
-        productId:l.productId,name:l.name,qty:Math.round(Number(l.qty||1)),unitPrice:Number(l.unitPrice||0),
-        stock:l.stock,vendorId:l.vendorId,vendorUnitCost:l.vendorUnitCost,fulfillmentMode:l.fulfillmentMode,serialNumbers:l.trackSerial?(l.serialNumbers||[]):undefined
+        productId:l.productId,name:l.name,qty:Math.round(Number(l.qty)),unitPrice:Number(l.unitPrice||0),
+        stock:l.stock,vendorId:l.vendorId,vendorUnitCost:l.vendorUnitCost,fulfillmentMode:l.fulfillmentMode,unitBreakdown:l.unitBreakdown,serialNumbers:l.trackSerial?(l.serialNumbers||[]):undefined
       }))
     };
     const r=isUpdating
@@ -403,7 +421,7 @@ async function loadRequestedInvoice(req:PosLoadRequest|null|undefined){
       cart.value=inv.items.map(i=>{
         const p=products.value.find(x=>x.id===i.productId);
         const current=p?.stock||0,vendorQty=Number(i.vendorQty||0),ownQty=Math.max(0,Math.round(Number(i.qty||0))-Math.round(vendorQty));
-        return {productId:i.productId,name:i.name,unit:p?.unit||'',qty:Math.max(1,Math.round(i.qty)),unitPrice:i.unitPrice,stock:current+ownQty,vendorId:i.vendorId||'',vendorUnitCost:i.vendorUnitCost??null,fulfillmentMode:vendorQty>0?'vendor':'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
+        return {productId:i.productId,name:i.name,unit:p?.unit||'',conversions:p?.conversions||[],unitBreakdown:(i as any).unitBreakdown?.length ? (i as any).unitBreakdown : (p?.conversions?.length ? [{unit:p.unit,count:Math.max(1,Math.round(Number((i as any).qty??(i as any).quantity??1)))}] : undefined),qty:Math.max(1,Math.round(i.qty)),unitPrice:i.unitPrice,stock:current+ownQty,vendorId:i.vendorId||'',vendorUnitCost:i.vendorUnitCost??null,fulfillmentMode:vendorQty>0?'vendor':'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
       });
       sale.customerId=inv.customerId||'';sale.customerName=inv.customerName||'';sale.customerPhone=inv.customerPhone||'';
       sale.customerAddress=inv.customerAddress||'';sale.customerFatherName=inv.customerFatherName||'';sale.discount=Number(inv.discount||0);
@@ -413,7 +431,7 @@ async function loadRequestedInvoice(req:PosLoadRequest|null|undefined){
       updateInvoiceId.value='';updateReason.value='';
       cart.value=inv.items.map(i=>{
         const p=products.value.find(x=>x.id===i.productId);
-        return {productId:i.productId,name:i.productName,unit:p?.unit||'',qty:Math.max(1,Math.round(i.quantity)),unitPrice:i.unitPrice,stock:p?.stock||0,vendorId:'',vendorUnitCost:null,fulfillmentMode:'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
+        return {productId:i.productId,name:i.productName,unit:p?.unit||'',conversions:p?.conversions||[],unitBreakdown:(i as any).unitBreakdown?.length ? (i as any).unitBreakdown : (p?.conversions?.length ? [{unit:p.unit,count:Math.max(1,Math.round(Number((i as any).qty??(i as any).quantity??1)))}] : undefined),qty:Math.max(1,Math.round(i.quantity)),unitPrice:i.unitPrice,stock:p?.stock||0,vendorId:'',vendorUnitCost:null,fulfillmentMode:'own',trackSerial:!!p?.trackSerial,trackExpiry:!!p?.trackExpiry,trackWarranty:!!p?.trackWarranty,serialNumbers:[]};
       });
       sale.customerId='';sale.customerName=inv.customerName||'';sale.customerPhone=inv.customerPhone||'';
       sale.customerAddress=inv.customerAddress||'';sale.customerFatherName=inv.customerFatherName||'';sale.discount=Number(inv.discount||0);
@@ -521,7 +539,7 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
               <div class="c-name">
                 <strong>{{l.name}}</strong>
                 <div class="cart-meta">
-                  {{l.unit||''}}
+                  {{ l.unitBreakdown?.length ? l.unitBreakdown.map(p => p.count + ' ' + p.unit).join(' ') : (l.unit||'') }}
                   <button
                     v-if="hasCost(l.productId)"
                     type="button"
@@ -532,7 +550,13 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
                   >{{revealedCostProductId===l.productId?money(productCostById[l.productId]):'▪'}}</button>
                 </div>
               </div>
-              <input class="cart-qty" :value="l.qty" type="number" min="1" step="1" aria-label="Quantity" @input="setQty(l,Number(($event.target as HTMLInputElement).value))">
+              <div v-if="l.conversions?.length" class="cart-multi-units" :aria-label="'Mixed units for '+l.name">
+                  <label v-for="u in [...(l.conversions||[]), {unit:l.unit||'',factor:1}]" :key="u.unit">
+                    <input type="number" :aria-label="u.unit + ' quantity'" min="0" step="1" :value="lineUnitCount(l,u.unit)" @input="setMixedUnit(l,u.unit,Number(($event.target as HTMLInputElement).value))" />
+                    <span>{{u.unit}}</span>
+                  </label>
+                </div>
+                <input v-else class="cart-qty" :value="l.qty" type="number" min="1" step="1" aria-label="Quantity" @input="setQty(l,Number(($event.target as HTMLInputElement).value))">
               <input class="cart-price" v-model.number="l.unitPrice" type="number" min="0" step="0.01" aria-label="Unit price">
               <div class="c-line-total">{{money(l.qty*l.unitPrice)}}</div>
               <button class="cart-remove" type="button" title="Remove" @click="removeLine(i)">×</button>
@@ -716,4 +740,7 @@ onBeforeUnmount(()=>{if(costTimer)clearTimeout(costTimer);if(completeSaleButtonR
   .inv-signatures{break-inside:avoid!important;page-break-inside:avoid!important}
   @page{margin:8mm}
 }
+ .cart-multi-units { display:flex;flex-wrap:wrap;gap:4px;align-items:center;max-width:260px }
+.cart-multi-units label { display:inline-flex;gap:3px;align-items:center;font-size:11px;white-space:nowrap }
+.cart-multi-units input { width:47px;min-width:47px;text-align:right;padding:4px 3px }
 </style>
