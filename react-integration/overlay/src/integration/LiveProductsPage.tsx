@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Plus, RefreshCw, Search } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
@@ -7,8 +7,10 @@ import { ProductThumb } from '../components/ProductThumb';
 import { StatusBadge } from '../components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/Table';
 import { canUseModule, useBackendSession } from './BackendGate';
-import { getBootstrap, type BackendProduct } from './banijjApi';
-import { LiveProductEditor } from './LiveProductEditor';
+import type { BackendProduct } from './banijjApi';
+import { MohimProductEditor } from './products/MohimProductEditor';
+import { MohimProductActions } from './products/MohimProductActions';
+import { useLiveProducts } from './products/useLiveProducts';
 
 type StockFilter = 'all' | 'low' | 'out';
 const qty = (n: number) => Number(n || 0).toLocaleString('en-BD');
@@ -21,25 +23,11 @@ export function LiveProductsPage() {
   const canEdit = canUseModule(user,'products','edit');
   const [editing,setEditing] = useState<BackendProduct | null | undefined>(undefined);
   const [notice,setNotice] = useState('');
-  const [products, setProducts] = useState<BackendProduct[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const {items:products,lookups,loading,error,refresh,create,edit,adjustStock,setStatus,loadLots,loadHistory,pendingOperation} = useLiveProducts(permitted);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
   const [showBarcode, setShowBarcode] = useState(false);
-  const [reload, setReload] = useState(0);
-  useEffect(() => {
-    if (!permitted) return;
-    let active = true;
-    setLoading(true); setError('');
-    getBootstrap().then(result => {
-      if (active) setProducts(Array.isArray(result.products) ? result.products : []);
-    }).catch(err => {
-      if (active) setError(err instanceof Error ? err.message : 'Could not load products');
-    }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [permitted, reload]);
   const categories = useMemo(() => ['All', ...new Set(products.map(p => p.category).filter(Boolean))], [products]);
   const active = useMemo(() => products.filter(p => p.status !== 'Inactive'), [products]);
   const low = useMemo(() => active.filter(p => Number(p.sellableStock ?? p.currentStock) > 0 &&
@@ -56,7 +44,9 @@ export function LiveProductsPage() {
         .some(v => String(v || '').toLocaleLowerCase().includes(term));
     });
   }, [products, category, stockFilter, query]);
-  if (editing !== undefined) return <LiveProductEditor key={editing?.productId || 'new'} product={editing} onCancel={()=>setEditing(undefined)} onDone={savedId=>{setEditing(undefined);setReload(v=>v+1);setNotice('Product saved to BanijjIQ · '+savedId);}} />;
+  if (editing !== undefined) return <MohimProductEditor key={editing?.productId || 'new'} product={editing}
+    lookups={lookups} onCreate={create} onEdit={edit}
+    onCancel={()=>setEditing(undefined)} onSaved={savedId=>{setEditing(undefined);setNotice('Product saved to BanijjIQ · '+savedId);}} />;
   if (!permitted) return <section className="rounded-xl border border-danger bg-danger-bg p-4 text-sm text-danger" role="alert">
     You do not have permission to view products. · পণ্য দেখার অনুমতি নেই
   </section>;
@@ -65,7 +55,7 @@ export function LiveProductsPage() {
       actions={<div className="flex items-center gap-2">
         <StatusBadge tone="teal">Live · Catalog editing</StatusBadge>
         {canAdd && <Button size="sm" onClick={() => setEditing(null)}><Plus className="size-3.5"/> Add Product</Button>}
-        <Button variant="outline" size="sm" onClick={() => setReload(n => n + 1)} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => void refresh().catch(()=>{})} disabled={loading||pendingOperation!==null}>
           <RefreshCw className="size-3.5" /> Refresh
         </Button>
       </div>} />
@@ -104,7 +94,7 @@ export function LiveProductsPage() {
           Barcode
         </label>
       </div>
-      <p className="text-xs text-ink-500">{visible.length} records · Catalog edits are supported for basic products. Stock and lot changes are not.</p>
+      <p className="text-xs text-ink-500">{visible.length} real records · Mohim product actions use confirmed D1 inventory and movement history.</p>
       {error && <p className="rounded-md bg-danger-bg p-3 text-sm text-danger" role="alert">{error}</p>}
       {loading && <p className="p-5 text-center text-sm text-ink-500" role="status">Loading live products…</p>}
       {!loading && !error && <div className="overflow-x-auto">
@@ -131,11 +121,10 @@ export function LiveProductsPage() {
                 {p.status === 'Inactive' ? 'Inactive' : stock <= 0 ? 'Out' : isLow ? 'Low' : 'In stock'}
               </StatusBadge></TableCell>
               <TableCell className="text-right">
-                {canEdit && !p.trackSerial && !p.trackExpiry && !p.trackWarranty ?
-                  <Button variant="outline" size="sm" onClick={()=>setEditing(p)} aria-label={'Edit '+p.productName}>
-                    <Pencil className="size-3.5"/> Edit
-                  </Button>:
-                  <span className="text-[11px] text-ink-400">Advanced / restricted</span>}
+                <MohimProductActions product={p} canEdit={canEdit}
+                  onEdit={()=>setEditing(p)} onChanged={()=>setNotice('Product updated · '+p.productName)}
+                  onAdjustStock={adjustStock} onSetStatus={setStatus}
+                  loadLots={loadLots} loadHistory={loadHistory}/>
               </TableCell>
             </TableRow>;
           })}</TableBody>
@@ -143,6 +132,6 @@ export function LiveProductsPage() {
         {!visible.length && <p className="p-5 text-center text-sm text-ink-500">No products found · কোনো পণ্য পাওয়া যায়নি</p>}
       </div>}
     </div>
-    <p className="text-xs text-ink-500">Basic product creation and catalog edits are live. Stock adjustments, serial/expiry, warranty, multi-unit products and lot operations remain in the existing Vue ERP.</p>
+    <p className="text-xs text-ink-500">Product catalog, stock adjustment, status, lots and history use live D1. Purchase-lot creation, bundle editing and advanced tracking remain disabled in React.</p>
   </section>;
 }

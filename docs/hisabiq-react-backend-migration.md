@@ -1,5 +1,9 @@
 # HisabIQ_UI React frontend + existing BanijjIQ API
 
+> **Current draft status (October 29, 2026):** Products Tasks 1–7 are implemented and locally verified on [draft PR #10](https://github.com/shoaibadmi-sec/BanijjIQ/pull/10), head based on `feat/hisabiq-react-api`. The primary `#/app/products` route renders the **original pinned HisabIQ Products table** with authenticated D1 catalog data, Mohim-styled Add/Edit, guarded FIFO stock adjustments, status changes, lots and history. `#/app/live-products` remains the temporary fallback. Existing real React POS and returns flows remain separate. This is **not a production release**; any hosted activation and merge require separate approval and independent visual/business review. The numbered phases below are historical migration milestones; earlier "read-only"/"not yet supported" statements describe their original phases, not today's draft.
+>
+> **Final technical evidence:** [GitHub Actions run 40842483907](https://github.com/shoaibadmi-sec/BanijjIQ/actions/runs/40842483907) passed on code commit `58f67936b598ab647d218ec76bf76d3d33c517d0`: 25/25 UI checks, 21 screenshots, nine 390–1440px light/dark axe audits with no serious/critical findings, 13/13 real local Worker/D1 checks and 11/11 Phase 13 browser/D1 checks. Detailed [action matrix, visual review and rollback](./superpowers/reviews/2026-10-29-hisabiq-products-task7-acceptance.md). Hosted deployment jobs were skipped.
+
 ## Decision
 The approved production UI source is **HisabIQ_UI React**, NOT a Vue component-by-component port. Keep BanijjIQ's Hono backend, Cloudflare Worker runtime, D1 data and migrations unchanged. The existing Vue application remains the production fallback until feature parity is verified.
 
@@ -21,14 +25,14 @@ The build makes a disposable, ignored copy in `.generated/hisabiq-web`; the Reac
 ## Integration overlay
 `scripts/prepare-hisabiq-react.mjs` copies the pinned source into `.generated/hisabiq-web` and applies `react-integration/overlay` **only to that disposable build worktree**. The Git submodule stays clean, pinned, and directly reusable.
 - Login, account verification and logout use existing `/api/auth/*` endpoints with the same bearer-token key as the existing Vue app.
-- `#/app/live-products` is the first **real API-backed** read-only HisabIQ-style screen, using `/api/bootstrap` product records.
+- The main `#/app/products` route is now the original, source-faithful HisabIQ table backed by authenticated `/api/bootstrap`. `#/app/live-products` is a temporary API-backed fallback, not the primary route.
 - All other inherited HisabIQ_UI screens still use fixture / demo stores and MUST NOT be mistaken for real sales, inventory, ledger or cash posting. A visible banner says so.
 - The demo sign-in/signup preview routes remain examples inside the design app; **only the outer backend gate signs in to BanijjIQ**. Do not equate preview UI with working auth flows.
 - The source's HashRouter is retained; only API requests go to Hono.
 
 ## Deployment safety
 `wrangler.react-preview.example.jsonc` is intentionally NOT deployable without a **separate preview D1** database. Never bind a preview with sample workflows to the production D1 database. Production Wrangler remains unchanged and continues serving Vue.
-No stock, money, invoices, or permissions are mutated by the new read-only Products integration. Backend authorization still applies to /api/*.
+This draft's live Products and POS routes **can post real changes** to whichever D1 database an authorized deployment binds, so never point the React preview at production credentials/data without a separately approved cutover. Backend authorization still applies to /api/*. Routine GitHub CI uses isolated local D1; hosted deploy jobs are gated and remain skipped.
 
 ## Remaining migration gates
 1. Add API adapters and production workflow wiring to each module without changing the approved component design: Dashboard, Products create/edit, POS, Sales/Returns, Purchases, Parties, Vendors, Finance, Bank, Daybook, Reports, Settings.
@@ -47,7 +51,7 @@ No stock, money, invoices, or permissions are mutated by the new read-only Produ
 - If POST /api/pos/sales fails due to network transport or server 5xx, the UI treats the transaction result as **unknown**, not safely failed. It blocks retry, shows recent invoices for the entered phone through /api/pos/sales-by-phone, and requires explicit reconciliation before allowing another post.
 - A synchronous submission lock prevents rapid duplicate clicks. This is a client-side guard only; backend idempotency keys remain a recommended production enhancement before switching away from Vue.
 
-## Phase 3 — Product catalog write integration
+## Phase 3 — Product catalog write integration (historical initial form)
 - Reuses the approved source `AddProductDialog` full-page form directly, with supported-feature validation before any API submission.
 - `POST /api/products` creates **basic stock products** and, when supplied, the opening FIFO stock lot.
 - `PUT /api/products/:id/catalog` updates name/brand/category/barcode/purchase/sell/minimum-stock metadata **without updating `current_stock`, `stock_lots`, tracking or FIFO**.

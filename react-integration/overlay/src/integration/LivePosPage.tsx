@@ -58,6 +58,10 @@ export function LivePosPage() {
   const [salesChecked, setSalesChecked] = useState(false);
   const [recentSales, setRecentSales] = useState<Array<{ invoiceId: string; date: string; grandTotal: number; paymentStatus: string }>>([]);
   const postingRef = useRef(false);
+  // Closing the success dialog is permitted to reset the posted invoice once.
+  // Radix can deliver an onOpenChange(false) after the explicit New Sale click:
+  // such a stale close must not erase the next cart/customer/payment.
+  const postedDialogMayResetRef = useRef(false);
   const saleRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
@@ -185,6 +189,7 @@ export function LivePosPage() {
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
   const newSale = () => {
+    postedDialogMayResetRef.current = false;
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setPaymentMethod('Cash');setBankAccountId('');
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
@@ -226,6 +231,7 @@ export function LivePosPage() {
     setSaving(true);setError('');
     try {
       const result = await postSale(payload);
+      postedDialogMayResetRef.current = true;
       setFinished(result.invoice);
       setReviewOpen(false);
       await load();
@@ -320,7 +326,7 @@ export function LivePosPage() {
               <h2 className="text-sm font-semibold text-ink">Products <span className="font-bn font-normal text-xs text-ink-500">· বিক্রির তালিকা</span></h2>
               <span className="text-xs text-ink-500">{lines.length} lines</span>
             </header>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Sales cart rows — scroll horizontally with keyboard">
               <div className="grid min-w-[670px] grid-cols-[28px_minmax(160px,1fr)_82px_110px_110px_28px] gap-2 border-b border-border bg-ink-50 px-3 py-2 text-[11px] font-medium uppercase text-ink-500">
                 <span>#</span><span>Product</span><span className="text-right">Qty</span>
                 <span className="text-right">Price</span><span className="text-right">Total</span><span></span>
@@ -491,7 +497,9 @@ export function LivePosPage() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <Dialog open={!!finished && !receiptOpen} onOpenChange={open=>{if(!open && !saving && !receiptOpen)newSale();}}>
+    <Dialog open={!!finished && !receiptOpen} onOpenChange={open=>{
+      if(!open && !saving && !receiptOpen && postedDialogMayResetRef.current) newSale();
+    }}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle className="flex items-center gap-2"><CheckCircle2 className="size-5 text-success"/> Sale posted successfully</DialogTitle>
           <DialogDescription>BanijjIQ confirmed this invoice and posted the transaction.</DialogDescription></DialogHeader>

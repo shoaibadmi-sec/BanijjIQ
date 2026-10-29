@@ -180,7 +180,7 @@ try{
   await check('real React browser signs in, reads D1 products, posts POS sale and fetches receipt',async()=>{
     // No API mocking. Uses Wrangler's real assets + Hono + this test D1.
     report.realBrowser=await runRealD1Browser();
-    assert.equal(report.realBrowser.checks.length,10);
+    assert.equal(report.realBrowser.checks.length,13,'Include real D1 product lots, stock adjustments and status');
   });
   await check('independent simultaneous buyers cannot double-consume one FIFO unit',async()=>{
     for(let i=0;i<4;i++){
@@ -267,7 +267,8 @@ try{
     const browserDueLedger=query("SELECT debit,balance FROM customer_ledger WHERE reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000124')");
     const browserDueCash=query("SELECT credit FROM cash_book WHERE type='Sale' AND reference=(SELECT invoice_id FROM sales WHERE customer_phone='01000000124')");
     const createdProduct=query("SELECT product_id,product_name,current_stock,purchase_price,selling_price FROM products WHERE product_name='D1 Browser Socket Updated'");
-    const createdLots=query("SELECT remaining_quantity,unit_cost FROM stock_lots WHERE product_id=(SELECT product_id FROM products WHERE product_name='D1 Browser Socket Updated')");
+    const createdLots=query("SELECT remaining_quantity,unit_cost,source_type FROM stock_lots WHERE product_id=(SELECT product_id FROM products WHERE product_name='D1 Browser Socket Updated')");
+    const adjustmentRows=query("SELECT movement_type,quantity_in,quantity_out,balance_after,note FROM stock_movements WHERE product_id=(SELECT product_id FROM products WHERE product_name='D1 Browser Socket Updated') AND note='Task 7 real cycle count' ORDER BY created_at,id");
     const audit={stock:qty[0]?.stock,sales:sales[0]?.n,paidSaleLotQty:rows[0]?.units,
       cashReceived:cash[0]?.credit,customerDue:customer[0]?.due,
       ledgerDue:ledger[0]?.due,requestKeys:requestKeys[0]?.n,
@@ -281,8 +282,8 @@ try{
       browserDueCash:browserDueCash[0]?.credit,
       createdProductCount:createdProduct.length,createdProductStock:createdProduct[0]?.current_stock,
       createdProductCost:createdProduct[0]?.purchase_price,createdProductSelling:createdProduct[0]?.selling_price,
-      createdLotCount:createdLots.length,createdLotStock:createdLots[0]?.remaining_quantity,
-      createdLotCost:createdLots[0]?.unit_cost,
+      createdLotCount:createdLots.length,createdLotStock:createdLots.reduce((sum,l)=>sum+Number(l.remaining_quantity),0),
+      createdLotCosts:createdLots.map(l=>l.unit_cost),adjustmentRows,
       raceProducts:raceRows.length,raceStocks:raceRows.map(x=>x.current_stock),
       raceLotBalances:raceLots.map(x=>x.remaining_quantity),raceDrawTotals:raceDraws.map(x=>x.total),
       sharedDueBalances:sharedDueLedger.map(x=>x.balance),
@@ -313,9 +314,13 @@ try{
     assert.equal(audit.createdProductStock,3);
     assert.equal(audit.createdProductCost,95);
     assert.equal(audit.createdProductSelling,175);
-    assert.equal(audit.createdLotCount,1);
-    assert.equal(audit.createdLotStock,3);
-    assert.equal(audit.createdLotCost,95);
+    assert.equal(audit.createdLotCount,2,'Opening FIFO lot plus one adjustment lot');
+    assert.equal(audit.createdLotStock,3,'All FIFO lots reconcile with current stock');
+    assert.deepEqual(audit.createdLotCosts,[95,95]);
+    assert.equal(audit.adjustmentRows.length,2,'Both real browser stock adjustments are audited');
+    assert.deepEqual(audit.adjustmentRows.map(m=>[m.movement_type,m.quantity_in,m.quantity_out]),[
+      ['STOCK_IN_ADJUSTMENT',1,0],['STOCK_OUT_ADJUSTMENT',0,1]
+    ]);
     assert.equal(audit.raceProducts,4);
     assert.deepEqual(audit.raceStocks,[0,0,0,0]);
     assert.deepEqual(audit.raceLotBalances,[0,0,0,0]);

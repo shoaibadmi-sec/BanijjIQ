@@ -1,5 +1,6 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
+import { patchLiveProducts } from './preview/patch-live-products.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -27,6 +28,10 @@ function copyDirectory(from, to) {
   }
 }
 copyDirectory(overlay, web);
+const sourceProductsPath=join(sourceWeb,'src/pages/Products.tsx');
+const generatedProductsPath=join(web,'src/pages/Products.tsx');
+// Pinned source never changes; the build-copy transform fails closed on unknown JSX.
+writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
 
 const appPath = join(web, 'src/App.tsx');
 let app = readFileSync(appPath, 'utf8');
@@ -45,6 +50,6 @@ app = app.replace(importAnchor, [
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
-  '<Route path="products" element={<LiveProducts />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
+  '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build copy from pinned HisabIQ_UI source with real backend auth + live Products, tracked POS and live Returns integration.');
+console.log('Prepared isolated React build: pinned original Products table + authenticated D1 controller + verified Mohim actions, real POS and Returns.');

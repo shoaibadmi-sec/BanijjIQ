@@ -7,6 +7,7 @@ import {
   createProduct,
   deleteProduct,
   getProductLots,
+  getProductHistory,
   getProductsBootstrap,
   setLookupStatus,
   setProductStatus,
@@ -102,6 +103,9 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
     const body = await readBody<{ delta?: number; note?: string }>(request);
     return adjustStockByDelta(db, decodeURIComponent(adjustMatch[1]), body.delta, cleanText(body.note));
   }
+
+  const historyMatch = path.match(/^\/api\/products\/([^/]+)\/history$/);
+  if (historyMatch && request.method === 'GET') return getProductHistory(db,decodeURIComponent(historyMatch[1]));
 
   const lotsMatch = path.match(/^\/api\/products\/([^/]+)\/lots$/);
   if (lotsMatch && request.method === 'GET') return getProductLots(db, decodeURIComponent(lotsMatch[1]));

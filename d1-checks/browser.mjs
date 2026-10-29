@@ -57,28 +57,91 @@ export async function runRealD1Browser(){
         checks.push('live D1 login and Products '+width);
 
         if(width===1440){
-          // The ORIGINAL HisabIQ full-page editor (not a synthetic API client).
-          await page.getByRole('button',{name:'Add Product'}).click();
-          await page.locator('[data-live-product-editor]').waitFor({timeout:12000});
-          await page.locator('#pf-name').fill('D1 Browser Socket');
-          await page.locator('#pf-buy').fill('95');
-          await page.locator('#pf-sell').fill('150');
-          await page.locator('#pf-opening').fill('3');
-          await page.locator('#pf-min').fill('1');
+          // Task 5 Mohim form in original HisabIQ components, posting to a REAL local D1.
+          await page.getByRole('button',{name:/Add product/i}).click();
+          await page.locator('[data-mohim-editor]').waitFor({timeout:12000});
+          const field=(name)=>page.locator('[data-mohim-editor] input[name="'+name+'"]');
+          await field('productName').fill('D1 Browser Socket');
+          await field('category').fill('Electrical');
+          await field('unit').fill('Pcs');
+          await field('purchasePrice').fill('95');
+          await field('sellingPrice').fill('150');
+          await field('currentStock').fill('3');
+          await field('minimumStock').fill('1');
           await shots(page,'product-create-form-1440');
-          await page.getByRole('button',{name:/Save product/}).click();
+          await page.getByRole('button',{name:'Save product',exact:true}).click();
           await page.locator('[data-live-products]').waitFor({timeout:20000});
           await page.getByText('D1 Browser Socket').first().waitFor({timeout:12000});
           checks.push('React full-page product create persisted to D1');
 
-          await page.getByRole('button',{name:'Edit D1 Browser Socket'}).click();
-          await page.locator('#pf-name').fill('D1 Browser Socket Updated');
-          await page.locator('#pf-sell').fill('175');
-          await page.getByRole('button',{name:/Save changes/}).click();
+          await page.getByRole('button',{name:'Actions for D1 Browser Socket'}).click();
+          await page.getByRole('menuitem',{name:/^Edit ·/}).click();
+          await page.locator('[data-mohim-editor]').waitFor({timeout:12000});
+          assert.equal(await field('currentStock').isEditable(),false,'Stock may not be silently edited');
+          await field('productName').fill('D1 Browser Socket Updated');
+          await field('sellingPrice').fill('175');
+          await page.getByRole('button',{name:'Save changes',exact:true}).click();
           await page.locator('[data-live-products]').waitFor({timeout:20000});
           await page.getByText('D1 Browser Socket Updated').first().waitFor({timeout:12000});
           await shots(page,'product-catalog-edit-1440');
           checks.push('React catalog edit saved price/name without stock changes');
+          // Task 7 acceptance: real React actions -> Hono -> migrated isolated D1.
+          const trigger=()=>page.getByRole('button',{name:'Actions for D1 Browser Socket Updated'});
+          await trigger().click();
+          const lotsResponse=page.waitForResponse(r=>r.url().includes('/api/products/')&&
+            new URL(r.url()).pathname.endsWith('/lots'));
+          await page.getByRole('menuitem',{name:/Stock lots/}).click();
+          const lotPayload=await (await lotsResponse).json();
+          assert.equal(lotPayload.ok,true);
+          assert.ok(lotPayload.lots.some(l=>l.remainingQuantity===3&&l.purchasePrice===95),
+            'Opening FIFO lot must reflect saved product cost and quantity');
+          await page.getByText(lotPayload.lots[0].lotId).waitFor();
+          await shots(page,'product-live-lots-1440');
+          await page.keyboard.press('Escape');
+          await trigger().click();
+          const historyResponse=page.waitForResponse(r=>r.url().includes('/api/products/')&&
+            new URL(r.url()).pathname.endsWith('/history'));
+          await page.getByRole('menuitem',{name:/Stock history/}).click();
+          const movementPayload=await (await historyResponse).json();
+          assert.equal(movementPayload.ok,true);
+          assert.ok(movementPayload.items.some(m=>m.quantityIn===3&&m.balanceAfter===3));
+          await page.getByText(movementPayload.items[0].movementId).waitFor();
+          await page.keyboard.press('Escape');
+          checks.push('React per-product lots and movement history match genuine D1 FIFO rows');
+
+          for(const delta of [1,-1]){
+            await trigger().click();
+            await page.getByRole('menuitem',{name:/Adjust stock/}).click();
+            await page.getByRole('spinbutton',{name:'Stock change'}).fill(String(delta));
+            await page.getByRole('textbox',{name:'Adjustment reason'}).fill('Task 7 real cycle count');
+            let confirmed='';
+            page.once('dialog',dialog=>{confirmed=dialog.message();void dialog.accept();});
+            const post=page.waitForResponse(r=>r.request().method()==='POST'&&
+              new URL(r.url()).pathname.endsWith('/adjust-stock'));
+            await page.getByRole('button',{name:'Review and save adjustment'}).click();
+            const result=await (await post).json();
+            assert.equal(result.ok,true);
+            assert.ok(confirmed.includes('Task 7 real cycle count'));
+            await page.getByText('Product updated · D1 Browser Socket Updated').waitFor();
+          }
+          const updatedBootstrap=await page.evaluate(async()=>{
+            const res=await fetch('/api/bootstrap',{headers:{Authorization:
+              'Bearer '+localStorage.getItem('shererp_auth_token')}});
+            return res.json();
+          });
+          assert.equal(updatedBootstrap.products.find(p=>p.productName==='D1 Browser Socket Updated').currentStock,3);
+          checks.push('React signed stock adjustments and old/new confirmation round-trip local D1');
+
+          for(const label of ['Deactivate','Activate']){
+            await trigger().click();
+            page.once('dialog',dialog=>void dialog.accept());
+            const statusResponse=page.waitForResponse(r=>r.request().method()==='PUT'&&
+              new URL(r.url()).pathname.endsWith('/status'));
+            await page.getByRole('menuitem',{name:new RegExp(label)}).click();
+            assert.equal((await (await statusResponse).json()).ok,true);
+            await page.getByText('Product updated · D1 Browser Socket Updated').waitFor();
+          }
+          checks.push('React deactivate and reactivate persist through original Products action menu');
         }
 
         await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
@@ -118,6 +181,15 @@ export async function runRealD1Browser(){
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          // A stale receipt/dialog close event must not erase the next sale.
+          await page.evaluate(() => new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+            'Starting the next sale must preserve its customer name');
+          assert.equal(await phone.inputValue(),'01000000124',
+            'Starting the next sale must preserve its phone');
+          assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40',
+            'Starting the next sale must preserve payment amount');
           const dueReady=page.getByRole('button',{name:'Review and post real sale',exact:true});
           if(await dueReady.isDisabled()){
             const warnings=await page.locator('[data-live-pos] [role="alert"]').allTextContents();

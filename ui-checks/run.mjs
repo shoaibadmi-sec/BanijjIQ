@@ -4,6 +4,8 @@
  * Screenshots, layout data, accessibility reports and browser errors go to ui-checks/output.
  */
 import assert from 'node:assert/strict';
+import { runProductsHybridChecks } from './products-hybrid.mjs';
+import { runFinalProductChecks } from './products-final.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -68,7 +70,9 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
-    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData});
+    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
+      categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
+      brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
       ok:true,products:posProducts,customers:[],bankAccounts:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
@@ -138,8 +142,8 @@ async function audit(page,label){
   results.accessibility.push({label,...report});
   // New screens should have no critical errors. Other detected issues are captured
   // as structured artifact findings instead of silently hidden or modifying the design.
-  const critical=report.violations.filter(x=>x.impact==='critical');
-  assert.equal(critical.length,0,label+' contains critical accessibility violations');
+  const serious=report.violations.filter(x=>['critical','serious'].includes(x.impact));
+  assert.equal(serious.length,0,label+' contains critical/serious accessibility violations: '+JSON.stringify(serious));
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
@@ -191,14 +195,14 @@ try{
         await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
         await inspectLayout(page,'products-'+width+'-'+theme);
         await screenshot(page,'products-'+width+'-'+theme);
+        await audit(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
-          await audit(page,'products-390-light');
-          const search=page.getByRole('textbox',{name:'Search real products'});
+          const search=page.getByRole('textbox',{name:'Search products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
-          await page.getByRole('button',{name:'Clear Search real products',exact:true}).click();
+          await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),3);
-          await page.getByRole('button',{name:'Add Product'}).click();
+          await page.getByRole('button',{name:/Add product/i}).click();
           await page.locator('[data-live-product-editor]').waitFor();
           await screenshot(page,'product-editor-390');
         }
@@ -207,6 +211,8 @@ try{
       });
     }
   }
+  await runProductsHybridChecks({browser,base,withCheck,results});
+  await runFinalProductChecks({browser,base,withCheck,results});
   for(const width of [390,768,1440]){
     await withCheck('pos '+width+' light',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:960},
