@@ -67,7 +67,18 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
   const [pr, cr, br, vr, session, settingsRows, profileRows] = await Promise.all([
     db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' ORDER BY product_name COLLATE NOCASE`).all<any>(),
-    db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT c.customer_id,c.customer_name,c.phone,c.father_name,c.address,c.current_due,
+      COALESCE((SELECT SUM(e.delta_cents) FROM customer_store_credit_entries e
+        WHERE e.customer_id=c.customer_id),0) AS store_credit_cents,
+      CASE WHEN c.current_due<0
+        OR EXISTS (SELECT 1 FROM customer_ledger cl
+          WHERE cl.customer_id=c.customer_id AND cl.type='Sales Return Credit')
+        OR EXISTS (SELECT 1 FROM store_credit_legacy_unreconciled old
+          JOIN sales_returns sr ON sr.return_id=old.return_id
+          WHERE sr.customer_id=c.customer_id OR sr.customer_phone=c.phone)
+      THEN 1 ELSE 0 END AS store_credit_blocked
+      FROM customers c WHERE c.is_deleted=0 AND c.status='Active'
+      ORDER BY c.customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
     getOpenCashSession(db),
@@ -89,7 +100,7 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
       trackSerial:!!p.track_serial,trackExpiry:!!p.track_expiry,trackWarranty:!!p.track_warranty,warrantyPeriodValue:Number(p.warranty_period_value||0),warrantyPeriodUnit:p.warranty_period_unit||'Months',
       unitProfilePreview:profiles.get(p.product_id)??null
     })),
-    customers:(cr.results||[]).map((c:any)=>({id:c.customer_id,name:c.customer_name,phone:c.phone,fatherName:c.father_name||'',address:c.address||'',currentDue:Number(c.current_due||0)})),
+    customers:(cr.results||[]).map((c:any)=>({id:c.customer_id,name:c.customer_name,phone:c.phone,fatherName:c.father_name||'',address:c.address||'',currentDue:Number(c.current_due||0),storeCreditCents:Number(c.store_credit_cents||0),storeCreditBlocked:Boolean(c.store_credit_blocked)})),
     bankAccounts:(br.results||[]).map((b:any)=>({id:b.bank_account_id,name:b.account_name,accountType:b.account_type||'Bank'})),
     vendors:vendorsAll.filter((v:any)=>v.status!=='Inactive'), vendorsAll,
     activeSession:session?{sessionId:session.session_id,openedAt:session.opened_at,openingCash:Number(session.opening_cash||0)}:null,
@@ -163,6 +174,37 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   const discount=Math.max(0,Number(input.discount||0)), grandTotal=Math.max(0,subtotal-discount); let paidAmount=0,dueAmount=0;
   if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
   const paymentStatus=dueAmount<=0?'Paid':paidAmount>0?'Partial':'Due', paymentMethod=paidAmount>0?(cleanText(input.paymentMethod)||'Cash'):''; let bankId='',bankName='';
+  if(paidAmount>0&&!['Cash','Bank','Mobile Banking','Store Credit'].includes(paymentMethod))
+    return error('Choose a supported payment method.',409);
+  const isCreditTender=paymentMethod==='Store Credit';
+  let creditBeforeCents=0,creditSpentCents=0;
+  if(isCreditTender){
+    if(input.paymentType!=='Cash'||dueAmount!==0||!cleanText(input.customerId)||
+       cleanText(input.bankAccountId)||paidAmount<=0)
+      return error('Store Credit requires a linked customer and one full non-cash payment. Split and due settlements are not enabled.',409);
+    creditSpentCents=Math.round(grandTotal*100);
+    if(!Number.isSafeInteger(creditSpentCents)||creditSpentCents<=0)
+      return error('Invalid Store Credit amount.',409);
+    const customer=await db.prepare('SELECT customer_id,phone,status,is_deleted,current_due FROM customers WHERE customer_id=?')
+      .bind(cleanText(input.customerId)).first<any>();
+    if(!customer||customer.phone!==customerPhone||customer.status!=='Active'||
+       Number(customer.is_deleted)!==0||Number(customer.current_due)<0)
+      return error('Store Credit customer is unavailable or does not match this invoice.',409);
+    if(await db.prepare(
+      "SELECT 1 x FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' LIMIT 1"
+    ).bind(customer.customer_id).first())return error('Legacy customer credit must be reconciled before redemption.',409);
+    if(await db.prepare(
+      "SELECT 1 x FROM store_credit_legacy_unreconciled old "+
+      "JOIN sales_returns sr ON sr.return_id=old.return_id "+
+      "WHERE sr.customer_id=? OR sr.customer_phone=? LIMIT 1"
+    ).bind(customer.customer_id,customer.phone).first())
+      return error('Historical Store Credit is not reconciled.',409);
+    const balance=await db.prepare('SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?')
+      .bind(customer.customer_id).first<any>();
+    creditBeforeCents=Number(balance?.available_cents||0);
+    if(!Number.isSafeInteger(creditBeforeCents)||creditBeforeCents<creditSpentCents)
+      return error('Insufficient Store Credit balance. Reload customer credit before payment.',409);
+  }
   if(paidAmount>0&&(paymentMethod==='Bank'||paymentMethod==='Mobile Banking')){bankId=cleanText(input.bankAccountId);if(!bankId)return error(paymentMethod==='Mobile Banking'?'Select a mobile banking account.':'Select a bank account.');const b=await db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active'`).bind(bankId).first<any>();if(!b)return error('Bank/mobile banking account not found.');const wantType=paymentMethod==='Mobile Banking'?'Mobile Banking':'Bank',actualType=cleanText(b.account_type)||'Bank';if(actualType!==wantType)return error(`Selected account is not a ${wantType} account.`);bankName=b.account_name;}
   const invoiceId=`INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`, stmts:SqlPreparedStatement[]=[];
   // Customer creation and contact edits must not escape a failed invoice batch.
@@ -226,6 +268,16 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
         "VALUES (?,?,?,?, 'Sale',?,?,0,?,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,0)"
       ).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,bankName,date,invoiceId,
         `POS sale to ${customerName}`,paidAmount,bankId,user.fullName));
+    }else if(isCreditTender){
+      // Not a cash receipt. Strict journal balance equality fails atomically
+      // if another checkout spent the same credit after the preflight read.
+      stmts.push(db.prepare(
+        "INSERT INTO customer_store_credit_entries "+
+        "(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,note,created_by) "+
+        "VALUES (?,?,'REDEEM','Sale',?,?,?,?,?)"
+      ).bind('SC-'+crypto.randomUUID().slice(0,12).toUpperCase(),customerId,invoiceId,
+        -creditSpentCents,creditBeforeCents-creditSpentCents,
+        'Non-cash credit tender for '+invoiceId,user.userId));
     }else stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Sale',?,?,0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,invoiceId,`POS sale to ${customerName}`,paidAmount));
   }
   if(dueAmount>0){stmts.push(db.prepare(`UPDATE customers SET current_due=current_due+?,updated_at=datetime('now') WHERE customer_id=?`).bind(dueAmount,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sale',?,?,0,(SELECT current_due FROM customers WHERE customer_id=?),'')`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,customerId,customerName,invoiceId,dueAmount,customerId));}
@@ -233,6 +285,10 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   try{await db.batch(stmts);}catch(err){
     // A concurrent duplicate request can lose the unique-index race.
     // The losing batch rolls back: return the committed invoice when available.
+    if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||
+       String(err).includes('STORE_CREDIT_REDEMPTION_REQUIRED')||
+       String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))
+      return error('Store Credit changed or the redemption was already posted. Reload and verify before retrying.',409);
     if(requestId){
       const prior=await db.prepare('SELECT payload_sha256,invoice_id FROM pos_sale_requests WHERE request_id=?')
         .bind(requestId).first<{payload_sha256:string;invoice_id:string}>();
@@ -613,6 +669,10 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   const backdatedDays=backdated?Math.max(0,daysSince(returnDate)):0;
   const dataResp=await getSaleReturnDataRoute(db,invoiceId),data:any=await dataResp.clone().json();if(!data.ok)return dataResp;
   const sale=data.sale,requested=Array.isArray(input.items)?input.items:[];if(!requested.length)return error('Select at least one product to return.');
+  const sourceTender=await db.prepare('SELECT payment_method FROM sales WHERE invoice_id=?')
+    .bind(invoiceId).first<{payment_method:string}>();
+  if(sourceTender?.payment_method==='Store Credit')
+    return error('Store Credit-funded invoices require a dedicated non-cash return reconciliation. Cash refunds are prohibited.',409);
   let total=0;const byId=new Map((sale.items||[]).map((i:any)=>[i.productId,i])),valid:any[]=[];
   for(const it of requested){
     const productId=cleanText(it.productId),q=Math.max(0,Math.round(Number(it.qty||0))),price=Number(it.unitPrice||0),av:any=byId.get(productId);
