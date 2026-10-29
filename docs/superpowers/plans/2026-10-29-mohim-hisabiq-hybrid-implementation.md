@@ -81,10 +81,10 @@ Do not add speculative framework dependencies, a parallel Products SPA, or a rep
 
 **Interfaces:** Produces the frozen set of original Products JSX structure markers and screenshots the subsequent tasks compare against. Consumes no new runtime APIs.
 
-- [ ] **Step 1: Write failing test.** Assert that the future generated Products main route renders the original Products JSX with original `PageHeader`, `MotionTabList`, `ProductColumnPicker`, `TableHead` set and `ProductActions`, and that the patcher would reject an upstream input missing `const [list, setList]`. Assert `#/app/live-products` still resolves to fallback; do not require a completed replacement yet.
-- [ ] **Step 2: Run RED.** `node --test react-integration/tests/products-source-parity.test.mjs` — expected FAIL because the original route presently points to `LiveProducts`.
-- [ ] **Step 3: Freeze source revision and baseline checklist.** Capture `Products.tsx` source marker hashes + reference DOM/screenshot evidence and build the mapping of original user actions to Mohim source actions; persist only the reproducible check harness (not production data). Reference labels: PageHeader, underline tabs, search/filter controls, table density, row More, stock value, Add form entry. Exclude original fixture data values from comparison.
-- [ ] **Step 4: Run the source-only assertions that are executable without runtime route cutover**; keep the main-route RED assertion as a guarded pending gate, **not** a green claim. 
+- [ ] **Step 1: Write failing reference test.** Check that `react-integration/tests/reference/products-baseline.json` is present and records original `Products.tsx` SHA/markers (`PageHeader`, `MotionTabList`, `ProductColumnPicker`, stock-value `TableHead`, row `ProductActions`) with Mohim form/action list, but do not yet demand the future route cutover.
+- [ ] **Step 2: Run RED.** `node --test react-integration/tests/products-source-parity.test.mjs` — expected FAIL because the reference manifest is not yet created.
+- [ ] **Step 3: Freeze source revision and baseline checklist.** Create the referenced JSON with source marker hashes, source commit, original-table DOM/screenshot checklist, and mapping of original user actions to Mohim source actions; persist reproducible checks, not live business data. Include PageHeader, underline tabs, search/filter controls, table density, row More, stock value and Add form entry. Exclude fixture values from comparison. Defer route expectations until Task 6.
+- [ ] **Step 4: Run GREEN.** `node --test react-integration/tests/products-source-parity.test.mjs` — expected PASS on the preserved reference manifest, with no requirement to switch the primary route now.
 - [ ] **Step 5: Commit** `test(products): freeze HisabIQ table and Mohim action references`.
 
 ### Task 2: Real product DTOs, prices and empty-state adapters
@@ -98,7 +98,7 @@ Do not add speculative framework dependencies, a parallel Products SPA, or a rep
 
 **Interfaces:** Produces:
 - `type ProductCatalogResponse = {ok:true;products:BackendProduct[];categories:Lookup[];brands:Lookup[];units:Lookup[]}` (server may expose additional fields).
-- `toProductView(row:BackendProduct): Product` (import `Product` from original `../types/erp` in generated overlay).
+- `toProductView(row:BackendProduct): Product` (import `Product` from original `../../types/erp` in generated overlay).
 - `loadProductCatalog():Promise<ProductCatalogResponse>`;
 - `createProduct(payload:BasicProductInput):Promise<{ok:true;productId:string}>`;
 - `editProduct(productId:string,payload:ProductCatalogEdit):Promise<{ok:true;productId:string}>`;
