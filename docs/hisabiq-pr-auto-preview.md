@@ -1,56 +1,56 @@
-# HisabIQ automatic GitHub PR preview (Cloudflare Workers Builds)
+# Automatic PR previews on the EXISTING HisabIQ React Cloudflare Worker
 
-**Status:** Repository configuration prepared for PR #10. Cloudflare dashboard connection, a dedicated D1 and preview administrator are still one-time external setup. A green GitHub CI run is NOT a Cloudflare deployment.
+**Existing stable deployment (leave it unchanged):** https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev/
 
-## Safety contract
+**Existing Worker:** `banijjiq-hisabiq-react-preview`  
+**Existing shared D1:** `banijjiq-hisabiq-react-preview-db`  
+**Production ERP (never touched):** `shererp-new` and `shererp-new-db`
 
-- GitHub: `shoaibadmi-sec/BanijjIQ`; PR #10 branch: `feat/hisabiq-products-task1-baseline`.
-- Cloudflare Worker: **`hisabiq-pr-preview`** (separate from production `shererp-new` and the existing manually controlled preview).
-- D1 database: **`hisabiq-pr-preview-db`**, freshly created with demo data only. Never copy production data, UUID, business credentials or API tokens.
-- Generated and ignored `wrangler.hisabiq-pr.generated.jsonc` has *no top-level D1 binding*. Only `previews.d1_databases` contains a D1 UUID verified different from production. No production routes or cron; no automatic D1 migrations on PR pushes.
-- **Cloudflare does not isolate account-level D1 automatically.** Different PR previews share this **single demo D1** in this basic setup. Do not put real customer/business records in it; if per-PR databases are required, add a separate provision/migrate/cleanup service later.
-- Preview URLs are public unless restricted: use **Cloudflare Access** for this Worker, and a unique Preview-only admin account and setup secret.
+This uses Cloudflare **Worker Previews** under the existing React Worker, not a new Worker, not a new database, not a GitHub Actions deployment that overwrites the stable preview. Each PR branch gets a **stable PR URL**, automatically updated with its latest pushed commit; open that URL with `/#/app/products`. The stable root URL above stays on its current deployed version.
 
-## One-time setup (Cloudflare dashboard)
+## One-time Cloudflare dashboard configuration
 
-1. **D1 → Create database:** name `hisabiq-pr-preview-db`, save its UUID. Apply existing BanijjIQ migrations **once**, after verifying the database name and UUID. From a trusted, Wrangler-authenticated operator terminal run `HISABIQ_PR_PREVIEW_D1_ID="REPLACE_WITH_NEW_DEMO_D1_UUID" node scripts/preview/build-pr-migrations-config.mjs`, inspect the generated config, then run `npx wrangler d1 migrations apply DEMO_DB --remote --config wrangler.hisabiq-pr-migrations.generated.jsonc`. The generator refuses the production database ID and never runs migrations itself. Do NOT run remote migrations with `wrangler.jsonc`: it targets production. Create a preview-only administrator using existing API setup flow and preview-only phone/password.
-2. **Workers & Pages → Create Worker:** choose name `hisabiq-pr-preview`. Enable `workers.dev` and connect GitHub repository `shoaibadmi-sec/BanijjIQ` under **Settings → Build**. Use a NEW Worker, not `shererp-new`. Ensure its GitHub connection can read the pinned `shuvodelux-commits/hisabiq_ui` submodule.
-3. **Settings → Build → Commands:** set root `/`, production branch `main`, and **Enable Preview Builds**.
+1. Open **Workers & Pages → banijjiq-hisabiq-react-preview → Settings → Build**. Connect GitHub repository `shoaibadmi-sec/BanijjIQ` if it is not already connected. If Cloudflare shows **Set up Worker Previews**, review the irreversible switch and select it; Cloudflare may use the older preview model for existing Workers. Do not change the production ERP Worker.
+2. Under **Branch control**, enable **Preview Builds** for non-production branches. Cloudflare needs to build the **branch's actual source** (do not use a prebuilt artifact from PR #9 or the live Worker). A PR whose source predates the React integration cannot produce this React UI: bring the pinned HisabIQ React integration and these configuration scripts into its branch first.
+3. Set the following **Build commands** for the **existing** React Worker:
 
-   | Cloudflare setting | Exact command |
+   | Setting | Value |
    | --- | --- |
-   | Build | `npm run preview:pr-build` |
-   | Deploy (production branch) | `npm run preview:pr-no-production` |
-   | Preview (other branches) | `npm run preview:pr-deploy` |
+   | Build command | `npm run preview:pr-build` |
+   | Preview command | `npm run preview:pr-deploy` |
+   | Production/main branch deploy command | `npm run preview:pr-no-production` |
+   | Root | `/` |
+   | Node version | `22` |
+   | Preview Builds | **Enabled** |
 
-   The production branch command is a deliberate no-op. Native Preview (not Version URL) runs only for non-main branches. For the build environment use Node.js 22 (set `NODE_VERSION=22` if necessary). The build installs the exact compatible `wrangler@4.135.0` **without modifying package-lock**, compiles the React UI and generates an isolated config. Do not use `npm run build` (old Vue UI) or `wrangler deploy` for preview.
-4. **Settings → Build → Variables:** set `HISABIQ_PR_PREVIEW_D1_ID` to the newly created D1 UUID. It must be a different ID from the production database ID. This is a Cloudflare build setting; never commit the UUID or paste credentials into chat.
-5. **Worker → Settings → Previews Base → Secrets:** set `SETUP_SECRET` (unique random value, at least 24 characters), used only for initial demo-user setup. Protect the Preview with **Cloudflare Access** and use separate demo credentials. If the preview uses no account yet, login cannot work until its D1 has migrations and a preview administrator.
+   `main` currently contains the legacy Vue ERP, **not** the React integration or these scripts. This is a draft PR configuration: to make *all future* React branches previewable, these scripts must be brought into their shared base branch. Until then, configure the build only for branches that already contain the React integration. The production/main command does **not** deploy or overwrite the existing stable React URL; even if the build is triggered, a failing legacy build cannot alter that live URL.
+4. In the **existing Worker's Build variables/secrets** set `HISABIQ_PREVIEW_D1_ID` to the UUID of **`banijjiq-hisabiq-react-preview-db`**. This is the SAME UUID already used by the manually deployed React preview, not the production ERP D1. Use the existing stored UUID from Cloudflare/GitHub settings; do not post it in chat or commit it to GitHub. The generator refuses the production D1 UUID.
+5. Under this Worker's **Settings → Previews Base**, use the same **preview-safe** setup secret as appropriate (`SETUP_SECRET`) or a distinct preview secret. Production-level secrets are **not inherited** by Worker Previews. Secure the preview hostnames with **Cloudflare Access** before using credentials or sharing links.
 
-**These account steps cannot be performed via the available GitHub connector. They need an authenticated Cloudflare owner once.** After setup, every PR push is automatic.
+**No fresh D1 creation, schema migrations or administrator setup are needed merely to reuse an already-working preview database.** The D1 schema and preview account already exist; do not reset or duplicate them. This automatic preview pipeline NEVER runs remote D1 migrations, never posts test sales, and never creates accounts.
 
-## Everyday workflow
+## What happens automatically
 
-- Push to PR #10 or any allowed non-main branch.
-- Cloudflare builds original pinned HisabIQ React and runs `wrangler preview`. The branch gets a **stable URL that updates on every push**, and the Cloudflare GitHub integration reports it to the PR.
-- Sign into that Preview with the demo account, then open `/#/app/products`.
-- GitHub Actions continues running Playwright, accessibility and isolated Worker/D1 tests before any merge.
+- You push a commit to a trusted branch used by PR #10 or another compatible React PR.
+- Cloudflare Workers Builds compiles the branch and runs `wrangler preview` against **`banijjiq-hisabiq-react-preview`**.
+- Cloudflare publishes a distinct branch URL in its **Previews** list and normally comments the URL on the corresponding GitHub PR. Each PR's URL keeps serving the newest deployment of that branch. The existing https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev/ remains unchanged.
+- All branch previews connect to **the same existing D1**, so they see the current product and login records. **Warning:** product edits, sales, returns and stock changes from ANY branch can change the same preview database for ALL branches. Use test inventory only and enable Cloudflare Access. Disable unsafe workflows before letting untrusted contributors run previews.
+- GitHub's independent Playwright/SQL CI checks still gate merges. A successful branch preview does NOT itself mean accounting/permission changes are safe.
 
-## Troubleshooting and rollback
+## Source-controlled safety
 
-- D1 UUID error: add the *new demo D1* to Cloudflare Build variables. **Never** reuse the ID in `wrangler.jsonc`.
-- API missing tables: apply migrations to `hisabiq-pr-preview-db` **once** and create the preview user. Do not make every unreviewed branch auto-migrate the shared DB.
-- Build cannot find React: check GitHub submodule access and `npm run react:build` logs.
-- Missing DB binding: check generated `previews.d1_databases` and that the new Worker uses the current Worker Previews model.
-- Wrong URL: use the **branch Preview** URL from the Cloudflare/GitHub check, not a Version URL.
-- To stop auto previews, disable **Preview Builds** or disconnect only this separate preview Worker. Do not touch production `shererp-new` or D1.
+`scripts/preview/build-pr-config.mjs` creates **ignored** `wrangler.hisabiq-pr.generated.jsonc`, with the **existing Worker name** and the existing D1 UUID bound **only** in `previews.d1_databases`. No top-level D1 is present: it cannot bind production ERP D1 by accident. The preview build does not apply migrations. The production branch deploy command is an explicit no-op. The original `wrangler.jsonc` and the manual-only workflow for the stable React preview have not changed.
 
-## Verification
+Verify locally or in GitHub Actions:
 
-`node --test tests/pr-preview.contract.test.mjs`
+```bash
+node --test tests/pr-preview.contract.test.mjs
+node --test tests/preview-deploy.contract.test.mjs
+npm run react:build
+```
 
-`npm run react:build`
+**Rollback:** Turn off Preview Builds for the existing React Worker. The existing deployed root URL, D1 records, original protected preview workflow and production ERP remain unchanged. Do not delete the Worker or its D1.
 
-GitHub CI also runs the existing manual-deployment safety contracts. Remote Cloudflare preview success and URL can only be verified after the Cloudflare GitHub connection is authorized.
+**Cloudflare account access is still required once** to connect/enable Preview Builds and set the existing D1 UUID in the Worker's build environment; the GitHub app cannot change that Cloudflare dashboard setting or confirm a live PR URL.
 
-Docs: https://developers.cloudflare.com/workers/previews/ ; https://developers.cloudflare.com/workers/previews/configuration/ ; https://developers.cloudflare.com/workers/previews/resources/ ; https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/
+Official docs: https://developers.cloudflare.com/workers/previews/ ; https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/ ; https://developers.cloudflare.com/workers/previews/resources/ .
