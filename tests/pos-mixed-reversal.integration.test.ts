@@ -171,7 +171,20 @@ test('full mixed-unit invoice reversal is atomic, audited, FIFO-correct and cann
   const otherCredit=await api('POST','/api/sales-returns',{
     invoiceId:creditId,refundMethod:'Store Credit',reason:'Store credit requested by buyer',
     items:[{productId:id,qty:20,unitPrice:0,unitQuantities:{Box:1}}]});
-  assert.equal(otherCredit.ok,true,JSON.stringify(otherCredit));
+  // Phase 3G2-A: the old handler must not post negative customer receivables
+  // before the independent Store Credit liability journal is wired.
+  assert.equal(otherCredit.status,409,JSON.stringify(otherCredit));
+  assert.match(otherCredit.error,/Store Credit/);
+  assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',creditId).n,0);
+  const creditCustomerId=row('SELECT customer_id FROM sales WHERE invoice_id=?',creditId).customer_id;
+  assert.equal(row('SELECT current_due FROM customers WHERE customer_id=?',creditCustomerId).current_due,0);
+  // Simulate a genuinely pre-migration legacy return: the planner must continue
+  // to deny full reversal, and G2A must surface it for explicit reconciliation.
+  db.native.prepare(
+    "INSERT INTO sales_returns (return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) "+
+    "VALUES ('LEGACY-STORE-CREDIT','2026-10-29',?,?, 'Credit Buyer','01000008159','Store Credit',180,'Historic unreconciled credit')"
+  ).run(creditId,creditCustomerId);
+  assert.equal(row("SELECT amount_cents FROM store_credit_legacy_unreconciled WHERE return_id='LEGACY-STORE-CREDIT'").amount_cents,18000);
   const blocked=await api('GET','/api/sales-management/'+creditId+'/reverse');
   assert.equal(blocked.preview.eligible,false);
   assert.match(blocked.preview.reason,/Store Credit/);
