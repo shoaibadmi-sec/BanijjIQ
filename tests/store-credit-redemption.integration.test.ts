@@ -64,6 +64,35 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
    paymentType:'Cash',paymentMethod:'Store Credit',bankAccountId:'',
    items:[{productId:id,qty:2,unitPrice:10}]
   };
+  // A failure in the final sale audit must undo the credit spend, invoice,
+  // FIFO stock consumption and request-key reservation as one transaction.
+  // Retrying the identical request key must then succeed exactly once.
+  const beforeAuditFailure={
+   sales:row('SELECT COUNT(*) n FROM sales').n,
+   stock:row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,
+   journal:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+   audits:row("SELECT COUNT(*) n FROM audit_logs WHERE action='CREATE_SALE'").n
+  };
+  db.native.exec(
+   "CREATE TRIGGER reject_credit_sale_audit BEFORE INSERT ON audit_logs "+
+   "WHEN NEW.action='CREATE_SALE' AND EXISTS ("+
+   "SELECT 1 FROM sales s WHERE s.invoice_id=NEW.entity_id AND s.payment_method='Store Credit') "+
+   "BEGIN SELECT RAISE(ABORT,'SIMULATED_CREDIT_SALE_AUDIT_FAILURE'); END"
+  );
+  const rolledBack=await api('POST','/api/pos/sales',saleInput);
+  assert.equal(rolledBack.status,500,JSON.stringify(rolledBack));
+  assert.match(String(rolledBack.error),/SIMULATED_CREDIT_SALE_AUDIT_FAILURE/);
+  assert.equal(row('SELECT COUNT(*) n FROM sales').n,beforeAuditFailure.sales);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,beforeAuditFailure.stock);
+  assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,beforeAuditFailure.journal);
+  assert.equal(row("SELECT COUNT(*) n FROM audit_logs WHERE action='CREATE_SALE'").n,beforeAuditFailure.audits);
+  assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,3000);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,books.bank);
+  assert.equal(row("SELECT current_due FROM customers WHERE customer_id='CR-CUSTOMER'").current_due,books.due);
+  assert.equal(row("SELECT COUNT(*) n FROM customer_ledger WHERE customer_id='CR-CUSTOMER'").n,books.ledger);
+  db.native.exec('DROP TRIGGER reject_credit_sale_audit');
+
   const spent=await api('POST','/api/pos/sales',saleInput);
   assert.equal(spent.ok,true,JSON.stringify(spent));
   assert.equal(spent.invoice.paymentMethod,'Store Credit');
