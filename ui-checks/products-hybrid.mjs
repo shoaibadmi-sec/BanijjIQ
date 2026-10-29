@@ -85,6 +85,8 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       await page.getByRole('button',{name:'Actions for Copper Cable'}).click();
       await page.getByRole('menuitem',{name:/Adjust stock/}).click();
       await page.getByRole('spinbutton',{name:'Stock change'}).fill('-1');
+      assert.equal(await page.getByRole('spinbutton',{name:'Stock change'}).evaluate(el=>el.checkValidity()),true,
+        'The shared NumericInput defaults to min=0; signed adjustment must override this.');
       await page.getByRole('textbox',{name:'Adjustment reason'}).fill('Damaged item');
       let confirmation='';
       page.once('dialog',d=>{confirmation=d.message();void d.accept();});
