@@ -58,7 +58,7 @@ export async function runRealD1Browser(){
 
         if(width===1440){
           // Task 5 Mohim form in original HisabIQ components, posting to a REAL local D1.
-          await page.getByRole('button',{name:'Add Product'}).click();
+          await page.getByRole('button',{name:/Add product/i}).click();
           await page.locator('[data-mohim-editor]').waitFor({timeout:12000});
           const field=(name)=>page.locator('[data-mohim-editor] input[name="'+name+'"]');
           await field('productName').fill('D1 Browser Socket');
