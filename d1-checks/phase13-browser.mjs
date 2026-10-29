@@ -97,3 +97,158 @@ async function add(page,name){
  await page.locator('[data-live-pos] button').filter({hasText:name}).first().click();
  await page.getByRole('spinbutton',{name:'Quantity for '+name}).waitFor();
 }
+
+async function refund(page,key,name,amount,serial){
+ await page.locator('[data-live-sales-returns]').waitFor({timeout:15000});
+ await page.getByRole('textbox',{name:'Search saved invoices'}).fill(invoices[key]);
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ await page.getByRole('button',{name:new RegExp(invoices[key])}).click();
+ await page.getByRole('spinbutton',{name:'Return quantity for '+name}).fill('1');
+ if(serial){await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+ await page.getByRole('button',{name:new RegExp(serial)}).click();
+ await page.getByRole('button',{name:'Use serials'}).click();}
+ await page.getByPlaceholder('Why was this returned?').fill('P13 verified test refund');
+ const b=page.getByRole('button',{name:'Review real return'});
+ assert.equal(await b.isEnabled(),true,'Return preflight blocked: '+(await page.locator('[role="alert"]').allTextContents()));
+ await b.click();
+ const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/sales-returns'&&r.request().method()==='POST');
+ await page.getByRole('button',{name:'Confirm & refund'}).click();
+ const r=await response,p=await r.json();assert.equal(p.ok,true,JSON.stringify(p));
+ assert.equal(p.totalReturnAmount,amount);
+ await page.getByText(p.returnId).waitFor();
+}
+try{
+ await check('only isolated local D1 migrations',async()=>{
+  const r=cli(['d1','migrations','apply','DB','--local','--persist-to',state]);
+  assert.match(r,/0032_sales_reversal_concurrency_guards/);
+ });
+ worker=spawn(process.execPath,[bin,'dev','--config',config,'--local','--persist-to',state,
+ '--ip','127.0.0.1','--port','8793','--var','SETUP_SECRET:'+secret],
+ {cwd:root,env,stdio:['ignore','pipe','pipe']});
+ for(const stream of [worker.stdout,worker.stderr])
+  stream.on('data',c=>{logs=(logs+String(c)).slice(-18000);});
+ await ready();
+ await check('setup synthetic administrator, cash session and tracked lots',async()=>{
+  const a=await api('POST','/api/setup/admin',
+   {fullName:'P13 Browser Admin',phone:'01000001300',password:'P13-Local-Password!'},true);
+  token=a.token;
+  await api('POST','/api/pos/cash-session/start',{openingCash:0});
+  await seed('A Serial',{currentStock:2,sellingPrice:120,trackSerial:true,
+    openingTracking:{serialNumbers:['P13-IMEI-A','P13-IMEI-B']}});
+  await seed('B Expiry',{currentStock:2,sellingPrice:80,trackExpiry:true,
+    openingTracking:{expiryBatches:[{batchNo:'OLD',expiryDate:'2020-01-01',quantity:1},
+      {batchNo:'VALID',expiryDate:'2099-12-31',quantity:1}]}});
+  await seed('C Negative',{currentStock:1,sellingPrice:50});
+  await seed('D Vendor',{currentStock:1,sellingPrice:70});
+ });
+ browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ await check('real 390px browser login + mobile POS accessibility',async()=>{
+  const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
+  const page=await ctx.newPage();page.on('pageerror',e=>report.errors.push(e.message));
+  try{
+   await page.goto(base+'/#/app/products');
+   await page.getByText('Sign in · BanijjIQ').waitFor({timeout:15000});
+   await page.getByLabel('Mobile number').fill('01000001300');
+   await page.getByLabel('Password').fill('P13-Local-Password!');
+   await page.getByRole('button',{name:/Sign in/}).click();
+   await page.locator('[data-live-products]').waitFor({timeout:16000});
+   await page.goto(base+'/#/app/pos');
+   await page.locator('[data-live-pos]').waitFor({timeout:16000});
+   await inspect(page,'mobile-pos-390','[data-live-pos]');
+  }finally{await ctx.close();}
+ });
+ await check('real 1440px React serial-picker sale to D1 (120)',async()=>{
+  const {page,ctx}=await open(1440,'/#/app/pos');
+  try{
+   await add(page,'P13 A Serial');
+   await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+   await page.getByRole('button',{name:/P13-IMEI-A/}).click();
+   await page.getByRole('button',{name:'Use serials'}).click();
+   await inspect(page,'serial-pos-1440','[data-live-pos]');
+   await sale(page,'serial',120,'01000001301');
+  }finally{await ctx.close();}
+ });
+ await check('real 768px React expiry FEFO sale to D1 (80)',async()=>{
+  const {page,ctx}=await open(768,'/#/app/pos');
+  try{await add(page,'P13 B Expiry');await inspect(page,'expiry-pos-768','[data-live-pos]');
+   await sale(page,'expiry',80,'01000001302');}finally{await ctx.close();}
+ });
+ await check('real 390px React negative-stock choice to D1 (150)',async()=>{
+  const {page,ctx}=await open(390,'/#/app/pos');
+  try{
+   await add(page,'P13 C Negative');
+   await page.getByRole('spinbutton',{name:'Quantity for P13 C Negative'}).fill('3');
+   await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+   await page.getByRole('radio',{name:/Negative Sale/}).click();
+   await page.getByRole('button',{name:'Allow negative sale'}).click();
+   await inspect(page,'negative-pos-390','[data-live-pos]');
+   await sale(page,'negative',150,'01000001303');
+  }finally{await ctx.close();}
+ });
+ await check('real 1024px React vendor quick-add and sourced sale to D1 (210)',async()=>{
+  const {page,ctx}=await open(1024,'/#/app/pos');
+  try{
+   await add(page,'P13 D Vendor');
+   await page.getByRole('spinbutton',{name:'Quantity for P13 D Vendor'}).fill('3');
+   await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+   await page.getByRole('radio',{name:/Vendor/}).click();
+   await page.getByRole('textbox',{name:'New vendor name'}).fill('P13 Test Vendor');
+   await page.getByRole('textbox',{name:'New vendor phone'}).fill('01000001310');
+   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/pos/vendors'&&r.request().method()==='POST');
+   await page.getByRole('button',{name:'+ Add & select vendor'}).click();
+   const r=await response,v=(await r.json()).vendor;
+   assert.equal(r.status(),200);ids.vendorAccount=v.id;
+   assert.equal(await page.getByRole('combobox',{name:'Select live vendor'}).inputValue(),v.id);
+   await page.getByRole('spinbutton',{name:'Vendor unit cost'}).fill('35');
+   await page.getByRole('button',{name:'Use vendor'}).click();
+   await inspect(page,'vendor-pos-1024','[data-live-pos]');
+   await sale(page,'vendor',210,'01000001304');
+  }finally{await ctx.close();}
+ });
+ await check('real 390px React serial return posts D1 cash refund (120)',async()=>{
+  const {page,ctx}=await open(390,'/#/app/live-sales-returns');
+  try{await refund(page,'serial','P13 A Serial',120,'P13-IMEI-A');
+   await inspect(page,'serial-return-390','[data-live-sales-returns]');}finally{await ctx.close();}
+ });
+ await check('real 768px React expiry return posts D1 cash refund (80)',async()=>{
+  const {page,ctx}=await open(768,'/#/app/live-sales-returns');
+  try{await refund(page,'expiry','P13 B Expiry',80);
+   await inspect(page,'expiry-return-768','[data-live-sales-returns]');}finally{await ctx.close();}
+ });
+ assert.equal(report.errors.length,0,'browser errors: '+report.errors.join('; '));
+}catch(e){report.failed.push({name:'runner',error:String(e?.stack||e)});}
+finally{
+ try{await browser?.close();}catch{}
+ if(worker){worker.kill('SIGTERM');await Promise.race([new Promise(r=>worker.once('exit',r)),
+ new Promise(r=>setTimeout(r,6000))]);if(worker.exitCode===null)worker.kill('SIGKILL');}
+ try{await check('post-browser SQL reconciliation of stock, serials, vendor liability, refunds',async()=>{
+  assert.deepEqual(Object.keys(invoices).sort(),['expiry','negative','serial','vendor']);
+  function count(key){return one("SELECT current_stock n FROM products WHERE product_id='"+esc(ids[key])+"'").n;}
+  for(const [key,n] of [['A Serial',2],['B Expiry',2],['C Negative',-2],['D Vendor',0]])
+   assert.equal(count(key),n,key);
+  assert.equal(one("SELECT remaining_quantity n FROM stock_lots WHERE product_id='"+
+   esc(ids['C Negative'])+"' AND source_type='OVERSOLD'").n,-2);
+  assert.equal(one("SELECT COUNT(*) n FROM product_serials WHERE product_id='"+
+   esc(ids['A Serial'])+"' AND status='In Stock'").n,2);
+  assert.equal(one("SELECT COALESCE(SUM(remaining_quantity),0) n FROM stock_expiry_batches WHERE product_id='"+
+   esc(ids['B Expiry'])+"' AND expiry_date='2099-12-31'").n,1);
+  assert.equal(one("SELECT COALESCE(SUM(remaining_quantity),0) n FROM stock_expiry_batches WHERE product_id='"+
+   esc(ids['B Expiry'])+"' AND expiry_date='2020-01-01'").n,1);
+  assert.equal(one("SELECT current_due n FROM vendors WHERE vendor_id='"+esc(ids.vendorAccount)+"'").n,70);
+  assert.equal(one("SELECT COALESCE(SUM(total_cost),0) n FROM vendor_sourcing WHERE invoice_id='"+
+   esc(invoices.vendor)+"'").n,70);
+  assert.equal(one("SELECT COUNT(*) n FROM sales").n,4);
+  assert.equal(one("SELECT COUNT(*) n FROM sales_returns").n,2);
+  assert.equal(one("SELECT COUNT(*) n FROM pos_sale_requests").n,4);
+  assert.equal(one("SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE type='Sale' AND is_deleted=0").n,560);
+  assert.equal(one("SELECT COALESCE(SUM(debit),0) n FROM cash_book WHERE type='Sales Return' AND is_deleted=0").n,200);
+  assert.equal(one("SELECT COALESCE(SUM(due_amount),0) n FROM sales").n,0);
+  report.audit={sales:4,returns:2,saleCash:560,refundCash:200,netCash:360,
+   vendorDue:70,negativeStock:-2,serialsRestored:2,expiryBatchRestored:true};
+ });}catch(e){report.failed.push({name:'SQL reconciliation',error:String(e?.stack||e)});}
+ writeFileSync(join(out,'phase13-real-browser-results.json'),JSON.stringify(report,null,2));
+ writeFileSync(join(out,'phase13-worker.log'),logs.replaceAll(secret,'[redacted]').slice(-12000));
+ rmSync(state,{recursive:true,force:true});
+}
+console.log('Phase13 Real Browser/D1: '+report.passed.length+' passed; '+report.failed.length+' failed');
+if(report.failed.length)process.exitCode=1;
