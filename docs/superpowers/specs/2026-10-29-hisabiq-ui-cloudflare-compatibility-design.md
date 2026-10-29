@@ -1,3 +1,5 @@
+> **SUPERSEDED — scope correction (2026-10-29):** The user clarified that **Mohim_ERP is the functional specification**, not all features in the HisabIQ_UI design/demo application. The product should be a **simple, low-literacy-friendly HisabIQ-styled version of Mohim ERP**. Reuse the original HisabIQ_UI **Dashboard, POS, combined Party ledger, ledger visual patterns, and Products table**; for remaining modules preserve Mohim's business workflows and simplify with consistent HisabIQ components. Do **not** expand the feature set based solely on additional features appearing in HisabIQ_UI demos. This prior proposal is retained only as an audit reference and **must not be implemented as written**. A revised Superpowers design is pending discussion and approval.
+
 # HisabIQ_UI React ↔ BanijjIQ Cloudflare compatibility
 **Superpowers design proposal — awaiting user approval, NOT an implementation/release authorization**
 **Date:** 2026-10-29
