@@ -14,6 +14,7 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       sellingPrice:30,currentStock:5,sellableStock:5,stockValue:100,minimumStock:1,
       trackSerial:0,trackExpiry:0,trackWarranty:0,status:'Active',updatedAt:'REV-UI-1'
     }];
+    let unitRevision=0,unitProfile=null;
     const json=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     try {
       await context.route('**/api/**',async route=>{
@@ -36,6 +37,26 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
             trackSerial:0,trackExpiry:0,trackWarranty:0,stockValue:60,
             sellableStock:3,updatedAt:'REV-UI-2'});
           return json(route,{ok:true,productId:'PRD-UI-2'});
+        }
+        if(path==='/api/products/PRD-UI-1/unit-profile'){
+          if(req.method()==='GET')return json(route,{ok:true,productId:'PRD-UI-1',
+            revision:unitRevision,profile:unitProfile,postingEnabled:true});
+          if(req.method()==='PUT'){
+            const b=req.postDataJSON();
+            assert.equal(b.expectedRevision,unitRevision);
+            assert.equal(b.units.length,3);
+            assert.deepEqual(b.units.map(x=>x.unit),['Carton','Box','Pcs']);
+            assert.deepEqual(b.units.slice(0,2).map(x=>x.containsNext),[12,20]);
+            assert.deepEqual(b.units.map(x=>x.symbol),['CT','BOX','PCS']);
+            unitRevision++;
+            const factors=[240,20,1];
+            unitProfile={baseUnit:'Pcs',units:b.units.map((x,i)=>({
+              unit:x.unit,symbol:x.symbol,containsNext:i===2?null:x.containsNext,
+              factor:factors[i],sellingPrice:x.sellingPrice??30*factors[i]
+            }))};
+            return json(route,{ok:true,revision:unitRevision,productId:'PRD-UI-1',
+              profile:unitProfile,postingEnabled:true});
+          }
         }
         if(path==='/api/products/PRD-UI-1/adjust-stock'&&req.method()==='POST'){
           const {delta,note}=req.postDataJSON();
@@ -76,6 +97,23 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       await page.getByText('Product saved to BanijjIQ').waitFor({timeout:10000});
       assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/products').length,1);
       await page.getByText('New Product').first().waitFor();
+      await page.getByRole('button',{name:'Actions for Copper Cable'}).click();
+      await page.getByRole('menuitem',{name:/Edit ·/}).click();
+      await page.locator('[data-live-unit-settings] button[aria-expanded]').click();
+      await page.getByRole('combobox',{name:'Unit 1'}).fill('Box');
+      await page.getByRole('textbox',{name:'Short symbol 1'}).fill('BOX');
+      await page.getByRole('spinbutton',{name:'Contains next 1'}).fill('20');
+      await page.getByRole('spinbutton',{name:'Selling price for Box'}).fill('580');
+      await page.getByRole('button',{name:/Add larger unit/}).click();
+      await page.getByRole('combobox',{name:'Unit 1'}).fill('Carton');
+      await page.getByRole('textbox',{name:'Short symbol 1'}).fill('CT');
+      await page.getByRole('spinbutton',{name:'Contains next 1'}).fill('12');
+      await page.getByRole('spinbutton',{name:'Selling price for Carton'}).fill('6900');
+      await page.getByRole('button',{name:/Save units/}).click();
+      await page.getByText('Unit chain saved').waitFor({timeout:6000});
+      assert.equal(unitRevision,1);
+      assert.equal(calls.filter(x=>x.method==='PUT'&&x.path.endsWith('/unit-profile')).length,1);
+      await page.getByRole('button',{name:/Back to products/}).click();
       await page.getByRole('button',{name:'Actions for Copper Cable'}).click();
       await page.getByRole('menuitem',{name:/Stock history/}).click();
       await page.getByText('MOV-A').waitFor();

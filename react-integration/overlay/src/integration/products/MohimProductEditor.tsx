@@ -7,6 +7,7 @@ import type { BackendProduct, BasicProductInput, ProductCatalogEdit } from '../b
 import { BackendRequestError } from '../banijjApi';
 import type { Lookup } from './productContracts';
 import { createPayload, draftFromProduct, editPayload, type ProductDraft, type ProductField } from './productForm';
+import { LiveProductUnitSettings } from './LiveProductUnitSettings';
 
 type Lookups={categories:Lookup[];brands:Lookup[];units:Lookup[]};
 type Props={
@@ -102,11 +103,11 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
           </label>;
         })}
       </div>
-      {product&&<p className="mt-3 text-xs text-ink-500">
+            {product&&<p className="mt-3 text-xs text-ink-500">
         Editing prices never changes existing stock lots or sale history.
       </p>}
       <p className="mt-3 text-xs text-ink-500">
-        Single-unit stock products only. Bundle, warranty, serial and expiry setup are not available in this form.
+        Multiple selling units are configured below after saving the product. Bundle, warranty, serial and expiry setup are not available in this form.
       </p>
       {error&&<div role="alert" className="mt-3 rounded-lg border border-danger/20 bg-danger-bg p-2.5 text-sm text-danger">{error}</div>}
       <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
@@ -117,5 +118,8 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
         </Button>
       </div>
     </form>
+    {product
+      ? <LiveProductUnitSettings product={product} units={lookups.units}/>
+      : <p className="text-xs text-ink-500">Save the product first, then open Edit Product to configure 2–4 selling units.</p>}
   </section>;
 }
