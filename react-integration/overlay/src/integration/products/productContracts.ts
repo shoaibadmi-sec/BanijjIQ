@@ -1,7 +1,7 @@
 import { BackendRequestError, type BackendProduct } from '../banijjApi';
 import type { Product } from '../../types/erp';
 
-export interface Lookup { id: string; name: string }
+export interface Lookup { id: string; name: string; symbol?: string }
 export interface ProductCatalogResponse {
   ok: true;
   products: BackendProduct[];

@@ -72,6 +72,17 @@ export const getBootstrap = () =>
   request<{ ok: true; products: BackendProduct[] }>('/api/bootstrap');
 
 export interface PosUnitEntry { unit:string; symbol:string; factor:number; containsNext:number|null; sellingPrice:number }
+export interface ProductUnitProfile {baseUnit:string;units:PosUnitEntry[]}
+export interface UnitProfileDraft {expectedRevision:number;units:Array<{
+  unit:string;symbol:string;containsNext?:number;sellingPrice?:number
+}>}
+export const getProductUnitProfile=(id:string)=>
+  request<{ok:true;productId:string;revision:number;profile:ProductUnitProfile|null;postingEnabled:boolean}>(
+    '/api/products/'+encodeURIComponent(id)+'/unit-profile');
+export const updateProductUnitProfile=(id:string,input:UnitProfileDraft)=>
+  request<{ok:true;productId:string;revision:number;profile:ProductUnitProfile;postingEnabled:boolean}>(
+    '/api/products/'+encodeURIComponent(id)+'/unit-profile',{method:'PUT',body:JSON.stringify(input)});
+
 export interface PosUnitProfile { baseUnit:string; units:PosUnitEntry[] }
 export interface PosProfilePreview extends PosUnitProfile { revision:number; postingEnabled:boolean }
 export interface PosProduct {
