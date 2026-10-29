@@ -195,8 +195,8 @@ try{
         await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
         await inspectLayout(page,'products-'+width+'-'+theme);
         await screenshot(page,'products-'+width+'-'+theme);
+        await audit(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
-          await audit(page,'products-390-light');
           const search=page.getByRole('textbox',{name:'Search products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
