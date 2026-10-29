@@ -30,7 +30,8 @@ test('real backend authentication and read-only bootstrap use existing BanijjIQ 
 
 test('main HisabIQ Products and POS routes are replaced, demos remain explicitly separate', () => {
   const prep=read('../scripts/prepare-hisabiq-react.mjs');
-  assert.ok(prep.includes('<Route path="products" element={<LiveProducts />} />'));
+  assert.ok(prep.includes('<Route path="products" element={<Products />} />'));
+  assert.ok(prep.includes('patchLiveProducts('));
   assert.ok(prep.includes('<Route path="pos" element={<LivePos />} />'));
   assert.ok(prep.includes('pos-design-preview'));
   assert.ok(prep.includes('products-design-preview'));
