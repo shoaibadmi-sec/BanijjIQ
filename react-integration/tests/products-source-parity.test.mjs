@@ -50,8 +50,8 @@ test('Mohim reference and visual review checklist preserve the agreed product wo
     'Edit', 'Adjust Stock', 'View Lots', 'Activate / Deactivate', 'Delete'
   ]);
   assert.deepEqual(baseline.mohim.formEntrySelectors, [
-    'prodName', 'prodType', 'prodCategory', 'prodUnit', 'prodPurchasePrice',
-    'prodSellPrice', 'prodStock', 'prodMinStock'
+    'prodName', 'prodType', 'prodBrand', 'prodCategory', 'prodUnit',
+    'prodPurchasePrice', 'prodSellingPrice', 'prodStock', 'prodMinStock', 'prodBarcode'
   ]);
   assert.deepEqual(baseline.visualReview.viewports, [390, 768, 1024, 1440]);
   assert.deepEqual(baseline.visualReview.themes, ['light', 'dark']);
