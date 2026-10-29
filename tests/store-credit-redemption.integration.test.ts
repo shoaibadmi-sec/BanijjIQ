@@ -112,6 +112,20 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   assert.equal(retry.ok,true,JSON.stringify(retry));
   assert.equal(retry.invoice.invoiceId,saleId);
   assert.equal(row("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE entry_type='REDEEM'").n,1);
+  // A successful idempotent retry may only replay the exact original sale.
+  // Reusing the same key with a smaller cart must not return the old invoice
+  // as if the new amount was paid, or consume another liability entry.
+  const conflictingReplay=await api('POST','/api/pos/sales',{
+   ...saleInput,items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(conflictingReplay.status,409,JSON.stringify(conflictingReplay));
+  assert.match(String(conflictingReplay.error),/already used for different sale details/);
+  assert.equal(row('SELECT COUNT(*) n FROM sales').n,beforeAuditFailure.sales+1);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,beforeAuditFailure.stock-2);
+  assert.equal(row("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE entry_type='REDEEM'").n,1);
+  assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,1000);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,books.bank);
   const excessive=await api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-overdraw-0002'});
   assert.equal(excessive.status,409,JSON.stringify(excessive));
   const mismatch=await api('POST','/api/pos/sales',{...saleInput,
