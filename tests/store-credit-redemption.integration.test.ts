@@ -144,6 +144,30 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
   assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,1000);
   assert.equal(row('SELECT COUNT(*) n FROM audit_logs WHERE action=\'CREATE_SALE\' AND entity_id=?',saleId).n,1);
+  // A historical negative receivable must never be interpreted as Store Credit.
+  // Even with a valid positive liability balance, both the read-only account
+  // and checkout must fail closed until the legacy due is reconciled.
+  db.native.prepare("UPDATE customers SET current_due=-5 WHERE customer_id='CR-CUSTOMER'").run();
+  const legacyAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
+  assert.equal(legacyAccount.ok,true,JSON.stringify(legacyAccount));
+  assert.equal(legacyAccount.due,-5);
+  assert.equal(legacyAccount.availableCents,1000);
+  assert.equal(legacyAccount.blocked,true);
+  const stockBeforeLegacyAttempt=row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock;
+  const legacyAttempt=await api('POST','/api/pos/sales',{
+   ...saleInput,clientRequestId:'credit-negative-due-denial-0001',
+   items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(legacyAttempt.status,409,JSON.stringify(legacyAttempt));
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,stockBeforeLegacyAttempt);
+  assert.equal(row("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE entry_type='REDEEM'").n,1);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,books.bank);
+  assert.equal(row("SELECT current_due FROM customers WHERE customer_id='CR-CUSTOMER'").current_due,-5);
+  db.native.prepare("UPDATE customers SET current_due=0 WHERE customer_id='CR-CUSTOMER'").run();
+  const reconciledAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
+  assert.equal(reconciledAccount.blocked,false);
+  assert.equal(reconciledAccount.availableCents,1000);
   // Two concurrent one-item checkouts cannot each spend the same last ৳10.
   const contenders=await Promise.all([
    api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-race-checkout-0001',
