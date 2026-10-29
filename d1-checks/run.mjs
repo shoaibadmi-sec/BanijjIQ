@@ -180,7 +180,7 @@ try{
   await check('real React browser signs in, reads D1 products, posts POS sale and fetches receipt',async()=>{
     // No API mocking. Uses Wrangler's real assets + Hono + this test D1.
     report.realBrowser=await runRealD1Browser();
-    assert.equal(report.realBrowser.checks.length,10);
+    assert.equal(report.realBrowser.checks.length,13,'Include real D1 product lots, stock adjustments and status');
   });
   await check('independent simultaneous buyers cannot double-consume one FIFO unit',async()=>{
     for(let i=0;i<4;i++){
