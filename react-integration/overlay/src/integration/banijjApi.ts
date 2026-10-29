@@ -5,7 +5,7 @@ export interface BackendUser {
   phone: string;
   role: string;
   allowedModules?: string[] | null;
-  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean }> | null;
+  permissions?: Record<string, { view: boolean; add: boolean; edit: boolean; delete?: boolean | string }> | null;
 }
 export interface BackendProduct {
   productId: string;
@@ -196,5 +196,18 @@ export const postSalesReturn = (payload:SalesReturnPayload) =>
   request<{ok:true;returnId:string;totalReturnAmount:number}>('/api/sales-returns',{
     method:'POST',body:JSON.stringify(payload)
   });
+export interface MixedReversalPreview {
+  eligible:boolean;reason:string;invoiceId:string;refundAmount:number;
+  items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>;
+}
+export const getMixedReversalPreview = (id:string)=>
+  request<{ok:true;preview:MixedReversalPreview}>(
+    '/api/sales-management/'+encodeURIComponent(id)+'/reverse');
+export const postMixedReversal = (id:string,reason:string)=>
+  request<{ok:true;returnId:string;totalReturnAmount:number}>(
+    '/api/sales-management/'+encodeURIComponent(id)+'/reverse',{
+      method:'POST',body:JSON.stringify({reason})
+    });
+
 export const getSalesReturnHistory = () =>
   request<{ok:true;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>}>('/api/sales-returns');

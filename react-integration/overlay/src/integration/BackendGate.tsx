@@ -4,8 +4,11 @@ import { clearToken, getMe, login, logout, readToken, storeToken, type BackendUs
 type GateState = 'loading' | 'signed-out' | 'signed-in';
 export const BackendSessionContext = createContext<BackendUser | null>(null);
 export const useBackendSession = () => useContext(BackendSessionContext);
-export const canUseModule = (user: BackendUser | null, module: string, action: 'view' | 'add' | 'edit' = 'view') =>
-  Boolean(user && (user.role === 'admin' || user.permissions?.[module]?.[action] === true));
+export const canUseModule = (user: BackendUser | null, module: string, action: 'view' | 'add' | 'edit' | 'delete' = 'view') =>
+  Boolean(user && (user.role === 'admin' || (action==='delete'
+    ? (()=>{const value=user.permissions?.[module]?.delete;
+        return value===true || (typeof value==='string'&&value!==''&&value!=='disabled');})()
+    : user.permissions?.[module]?.[action] === true)));
 
 export function BackendGate({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<GateState>('loading');

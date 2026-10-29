@@ -110,6 +110,16 @@ function startMocking(context,calls){
       return respond({ok:true,matches:[{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
         customerName:'Unit Return Buyer',customerPhone:'01000000011',grandTotal:2490,
         paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(path==='/api/sales-management/UI-E2E-MIXED/reverse'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-MIXED',
+        refundAmount:2490,items:[{productId:'PRD-MIXED-E2E',qty:283,unitPrice:0,
+          unitQuantities:{Carton:1,Box:2,Pcs:3}}]}});
+    if(path==='/api/sales-management/UI-E2E-MIXED/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,returnId:'SRT-UI-REVERSE-0001',totalReturnAmount:2490});
+    }
     if(path==='/api/sales-returns/UI-E2E-MIXED/data'&&request.method()==='GET')
       return respond({ok:true,sale:{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
         customerId:'CUS-MIXED',customerName:'Unit Return Buyer',customerPhone:'01000000011',
@@ -434,6 +444,31 @@ try{
       results.apiCalls.push(...api);await ctx.close();
     });
   }
+  await withCheck('mixed full invoice reversal requires preview, reason, explicit cashier confirmation',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    page.on('dialog',d=>void d.accept());
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor();
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('MIXED');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-E2E-MIXED/}).click();
+    await page.locator('[data-mixed-full-reversal]').waitFor();
+    await page.getByRole('button',{name:'Check full reversal'}).click();
+    await page.getByText('Eligible: 1 lines').waitFor();
+    const reversalButton=page.getByRole('button',{name:'Review and reverse entire invoice'});
+    assert.equal(await reversalButton.isDisabled(),true);
+    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Original customer requested a corrected sale');
+    await screenshot(page,'phase3d-full-invoice-reversal');
+    await reversalButton.click();
+    await page.getByText('SRT-UI-REVERSE-0001').waitFor({timeout:12000});
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
+    assert.equal(api.filter(x=>x.method==='ASSERT'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
+    results.apiCalls.push(...api);await ctx.close();
+  });
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
     const api=[];await startMocking(ctx,api);
