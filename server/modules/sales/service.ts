@@ -298,6 +298,43 @@ async function restoreSaleLotsPlan(db:SherDatabase,invoiceId:string,only?:Map<st
   return balances;
 }
 
+/** FIFO lot restoration for mixed-unit returns: deduct allocations from prior returns,
+ * not from the original sale repeatedly. An atomic INSERT trigger verifies each take. */
+async function restoreMixedUnitLots(db:SherDatabase,invoiceId:string,needed:Map<string,number>) {
+  const rows=await db.prepare(
+    'SELECT sil.id,sil.product_id,sil.lot_id,sil.quantity,sl.original_quantity,sl.remaining_quantity,sl.source_type '+
+    'FROM sale_item_lots sil JOIN stock_lots sl ON sl.lot_id=sil.lot_id '+
+    'WHERE sil.invoice_id=? ORDER BY sil.id DESC'
+  ).bind(invoiceId).all<any>();
+  const previous=await db.prepare(
+    'SELECT product_id,lot_id,SUM(quantity) total FROM sales_return_item_lots WHERE invoice_id=? GROUP BY product_id,lot_id'
+  ).bind(invoiceId).all<any>();
+  const restored=new Map((previous.results||[]).map((x:any)=>[x.product_id+'|'+x.lot_id,Number(x.total||0)]));
+  const plan=new Map<string,{productId:string;lotId:string;current:number;original:number;sourceType:string;restore:number}>();
+  const allocations:Array<{productId:string;lotId:string;quantity:number}>=[];
+  const remaining=new Map(needed);
+  for(const row of rows.results||[]) {
+    let need=Number(remaining.get(row.product_id)||0);
+    if(need<=0)continue;
+    if(row.source_type==='OVERSOLD')throw new Error('Mixed-unit negative-sale lot cannot be partially returned in this workflow.');
+    const already=restored.get(row.product_id+'|'+row.lot_id)||0;
+    const capacity=Math.max(0,Number(row.quantity||0)-already);
+    const take=Math.min(need,capacity);
+    if(take<=0)continue;
+    const key=String(row.lot_id);
+    const entry=plan.get(key)||{
+      productId:String(row.product_id),lotId:key,current:Number(row.remaining_quantity||0),
+      original:Number(row.original_quantity||0),sourceType:String(row.source_type||''),restore:0
+    };
+    entry.restore+=take;plan.set(key,entry);
+    allocations.push({productId:String(row.product_id),lotId:key,quantity:take});
+    remaining.set(row.product_id,need-take);
+  }
+  for(const [productId,need] of remaining)if(need>0)
+    throw new Error('Return stock lot history is incomplete for '+productId+'.');
+  return{plan,allocations};
+}
+
 export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start your cash session in POS before receiving customer payments.');
   const customerId=cleanText(input.customerId),amount=Number(input.amount||0),method=cleanText(input.method)||'Cash';if(!customerId||!Number.isFinite(amount)||amount<=0)return error('Enter a valid payment amount.');
@@ -313,11 +350,21 @@ export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user
 export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<Response>{
   const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();
   if(!s)return error('Invoice not found.',404);
-  const [items,ret,vend]=await Promise.all([
+  const [items,ret,vend,unitSnapshots,priorUnitReturns]=await Promise.all([
     db.prepare(`SELECT product_id,product_name,SUM(quantity) sold_qty,MAX(unit_price) unit_price FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>(),
     db.prepare(`SELECT product_id,SUM(return_quantity) qty FROM sales_return_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>(),
-    db.prepare(`SELECT product_id,SUM(quantity) qty FROM vendor_sourcing WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>()
+    db.prepare(`SELECT product_id,SUM(quantity) qty FROM vendor_sourcing WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>(),
+    db.prepare('SELECT product_id,profile_json,quantities_json,description FROM sale_item_unit_snapshots WHERE invoice_id=?').bind(id).all<any>(),
+    db.prepare('SELECT product_id,quantities_json FROM sales_return_item_units WHERE invoice_id=?').bind(id).all<any>()
   ]);
+  const snapshots=new Map((unitSnapshots.results||[]).map((x:any)=>[x.product_id,x]));
+  const returnedUnits=new Map<string,Record<string,number>>();
+  for(const x of priorUnitReturns.results||[]){
+    const data=returnedUnits.get(x.product_id)||{};
+    for(const [name,q] of Object.entries(JSON.parse(x.quantities_json) as Record<string,number>))
+      data[name]=(data[name]||0)+Number(q);
+    returnedUnits.set(x.product_id,data);
+  }
   const rm=new Map((ret.results||[]).map((r:any)=>[r.product_id,Number(r.qty||0)]));
   const vm=new Map((vend.results||[]).map((r:any)=>[r.product_id,Number(r.qty||0)]));
   const pr=await db.prepare(`SELECT COALESCE(SUM(total_return_amount),0) amount FROM sales_returns WHERE invoice_id=?`).bind(id).first<any>();
@@ -331,7 +378,16 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
       const sr=await db.prepare(`SELECT sit.serial_number AS serialNumber FROM sale_item_tracking sit WHERE sit.invoice_id=? AND sit.product_id=? AND sit.serial_id IS NOT NULL AND sit.returned_quantity<sit.quantity ORDER BY sit.id`).bind(id,i.product_id).all<any>();
       availableSerials=(sr.results||[]).map((r:any)=>String(r.serialNumber)); availableQty=Math.min(availableQty,availableSerials.length);
     }
-    mapped.push({productId:i.product_id,name:i.product_name,soldQty:sold,vendorQty:vendor,previouslyReturnedQty:already,availableQty,unitPrice:Number(i.unit_price||0),...p,availableSerials});
+    const frozen:any=snapshots.get(i.product_id);
+    const mixedUnit=frozen?(()=>{
+      const original=JSON.parse(frozen.quantities_json) as Record<string,number>;
+      const returned=returnedUnits.get(i.product_id)||{};
+      const available=Object.fromEntries(Object.entries(original).map(([name,count])=>[name,Math.max(0,count-(returned[name]||0))]));
+      return{profile:JSON.parse(frozen.profile_json) as UnitProfile,
+        originalQuantities:original,availableQuantities:available,
+        description:frozen.description,netPriceFactor:Number(s.grand_total||0)/(Number(s.subtotal)>0?Number(s.subtotal):1)};
+    })():null;
+    mapped.push({productId:i.product_id,name:i.product_name,soldQty:sold,vendorQty:vendor,previouslyReturnedQty:already,availableQty,unitPrice:Number(i.unit_price||0),...p,availableSerials,mixedUnit});
   }
   return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
 }
@@ -340,8 +396,6 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   if(!(await getOpenCashSession(db)))return error('Start your cash session first before recording a Sales Return.');
   const invoiceId=cleanText(input.invoiceId),refundMethod=cleanText(input.refundMethod),reason=cleanText(input.reason);
   if(!invoiceId)return error('No invoice selected.');
-  if(await db.prepare('SELECT 1 AS x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1').bind(invoiceId).first())
-    return error('Mixed-unit invoice returns need unit-aware allocation. Use the full invoice cancellation workflow until multi-unit returns are enabled.',409);
   if(refundMethod!=='Cash'&&refundMethod!=='Store Credit')return error('Choose a refund method.');
   const returnDate=/^\d{4}-\d{2}-\d{2}$/.test(cleanText(input.date))?cleanText(input.date):todayDate(),backdated=returnDate<todayDate(),backdatedReason=cleanText(input.backdatedReason);
   if(backdated&&!backdatedReason)return error('A reason is required when dating a return in the past.');
@@ -351,19 +405,65 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   let total=0;const byId=new Map((sale.items||[]).map((i:any)=>[i.productId,i])),valid:any[]=[];
   for(const it of requested){
     const productId=cleanText(it.productId),q=Math.max(0,Math.round(Number(it.qty||0))),price=Number(it.unitPrice||0),av:any=byId.get(productId);
-    if(!av)return error(`${cleanText(it.name)||'Product'} was not part of this invoice.`);if(q<=0)return error(`${av.name}: return quantity must be greater than zero.`);if(q>Number(av.availableQty||0))return error(`${av.name}: only ${av.availableQty} available to return.`);if(!Number.isFinite(price)||price<0)return error(`${av.name}: invalid return price.`);
+    if(!av)return error((cleanText(it.name)||'Product')+' was not part of this invoice.');
+    if(!Number.isSafeInteger(Number(it.qty))||Number(it.qty)<=0)return error(av.name+': enter a whole-number return quantity.');
+    if(q>Number(av.availableQty||0))return error(av.name+': only '+av.availableQty+' available to return.');
+    let mixedReturn:null|{quantities:Record<string,number>;amount:number}=null;
+    if(av.mixedUnit){
+      if(av.trackSerial||av.trackExpiry)return error(av.name+': tracked mixed-unit returns need serial/expiry allocation and remain unavailable.',409);
+      if(!it.unitQuantities||typeof it.unitQuantities!=='object'||Array.isArray(it.unitQuantities))
+        return error(av.name+': choose quantities in the originally sold units.',409);
+      let quote:ReturnType<typeof quoteUnitQuantities>;
+      try{quote=quoteUnitQuantities(av.mixedUnit.profile,it.unitQuantities);}
+      catch(e){return error(av.name+': '+(e instanceof Error?e.message:'invalid unit quantity'));}
+      if(quote.baseQuantity!==q)return error(av.name+': base return quantity differs from selected units.');
+      for(const [name,count] of Object.entries(it.unitQuantities as Record<string,number>)){
+        if(count>Number(av.mixedUnit.availableQuantities[name]||0))
+          return error(av.name+': insufficient original '+name+' available to return.',409);
+      }
+      const factor=Number(av.mixedUnit.netPriceFactor||0);
+      if(!Number.isFinite(factor)||factor<0||factor>1.000001)return error('Invoice net price factor is invalid.');
+      const amount=Math.round(quote.lineTotal*factor*100)/100;
+      mixedReturn={quantities:it.unitQuantities,amount};
+    }else if(it.unitQuantities!==undefined)return error(av.name+': this invoice has no mixed-unit snapshot.');
+    if(!Number.isFinite(price)||price<0)return error(av.name+': invalid return price.');
     const serialNumbers=Array.from(new Set((Array.isArray(it.serialNumbers)?it.serialNumbers:[]).map((x:any)=>cleanText(x)).filter(Boolean)));
     if(Number(av.trackSerial||0)&&serialNumbers.length!==q)return error(`${av.name}: select exactly ${q} Serial / IMEI number(s) being returned.`);
-    valid.push({productId,name:av.name,q,price,serialNumbers,trackSerial:!!av.trackSerial,trackExpiry:!!av.trackExpiry,trackWarranty:!!av.trackWarranty});total+=q*price;
+    const amount=mixedReturn?mixedReturn.amount:Math.round(q*price*100)/100;
+    valid.push({productId,name:av.name,q,price:mixedReturn?amount/q:price,amount,mixedReturn,serialNumbers,
+      trackSerial:!!av.trackSerial,trackExpiry:!!av.trackExpiry,trackWarranty:!!av.trackWarranty});
+    total+=amount;
   }
+  total=Math.round(total*100)/100;
+  if(total<=0)return error('Return amount must be greater than zero.');
+  if(total>Number(sale.netSale||0)+0.000001)return error('Refund exceeds the remaining net invoice amount.',409);
   let customerId=cleanText(sale.customerId);
   if(refundMethod==='Store Credit'&&!customerId){const phone=cleanText(sale.customerPhone);if(!phone)return error('Store Credit requires a customer phone number.');const existing=await db.prepare(`SELECT customer_id FROM customers WHERE phone=? AND is_deleted=0 LIMIT 1`).bind(phone).first<any>();if(existing)customerId=existing.customer_id;else{customerId=`CUS-${crypto.randomUUID().slice(0,8).toUpperCase()}`;await db.prepare(`INSERT INTO customers (customer_id,customer_name,phone,current_due,status,is_deleted) VALUES (?,?,?,0,'Active',0)`).bind(customerId,cleanText(sale.customerName)||'Customer',phone).run();}}
-  const returnId=`SRT-${crypto.randomUUID().slice(0,10).toUpperCase()}`,ordinaryNeed=new Map<string,number>();for(const v of valid)if(!v.trackSerial&&!v.trackExpiry)ordinaryNeed.set(v.productId,v.q);
+  const returnId='SRT-'+crypto.randomUUID().slice(0,10).toUpperCase();
+  const ordinaryNeed=new Map<string,number>(),mixedNeed=new Map<string,number>();
+  for(const v of valid)if(!v.trackSerial&&!v.trackExpiry) {
+    if(v.mixedReturn)mixedNeed.set(v.productId,v.q);
+    else ordinaryNeed.set(v.productId,v.q);
+  }
   const ordinaryRestore=ordinaryNeed.size?await restoreSaleLotsPlan(db,invoiceId,ordinaryNeed):new Map<string,any>();
+  let mixedLots:{plan:Map<string,any>;allocations:Array<{productId:string;lotId:string;quantity:number}>}={
+    plan:new Map(),allocations:[]
+  };
+  if(mixedNeed.size){
+    try{mixedLots=await restoreMixedUnitLots(db,invoiceId,mixedNeed);}
+    catch(e){return error(e instanceof Error?e.message:'Invalid mixed return lots.',409);}
+  }
+  for(const [lotId,item] of mixedLots.plan){
+    if(ordinaryRestore.has(lotId))return error('Mixed and ordinary returns share an ambiguous inventory lot.',409);
+    ordinaryRestore.set(lotId,item);
+  }
   const stmts:SqlPreparedStatement[]=[];
   stmts.push(db.prepare(`INSERT INTO sales_returns (return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason,notes,processed_by,is_backdated,backdated_days,backdated_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(returnId,returnDate,invoiceId,customerId,cleanText(sale.customerName),cleanText(sale.customerPhone),refundMethod,total,reason,cleanText(input.notes),user.fullName,backdated?1:0,backdatedDays,backdatedReason));
   for(const v of valid){
-    stmts.push(db.prepare(`INSERT INTO sales_return_items (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES (?,?,?,?,?,?,?)`).bind(returnId,invoiceId,v.productId,v.name,v.q,v.price,v.q*v.price));
+    stmts.push(db.prepare(`INSERT INTO sales_return_items (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES (?,?,?,?,?,?,?)`).bind(returnId,invoiceId,v.productId,v.name,v.q,v.price,v.amount));
+    if(v.mixedReturn)stmts.push(db.prepare(
+      'INSERT INTO sales_return_item_units (return_id,invoice_id,product_id,quantities_json,base_quantity,line_total_cents) VALUES (?,?,?,?,?,?)'
+    ).bind(returnId,invoiceId,v.productId,JSON.stringify(v.mixedReturn.quantities),v.q,Math.round(v.amount*100)));
     const prod=await db.prepare(`SELECT current_stock FROM products WHERE product_id=?`).bind(v.productId).first<any>(),newStock=Number(prod?.current_stock||0)+v.q;
     stmts.push(db.prepare(`UPDATE products SET current_stock=?,updated_at=datetime('now') WHERE product_id=?`).bind(newStock,v.productId));
     stmts.push(db.prepare(`INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?, 'Sales Return',?,0,?,?,NULL)`).bind(`SM-${crypto.randomUUID().slice(0,10).toUpperCase()}`,v.productId,v.q,newStock,returnId));
@@ -383,10 +483,13 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
       stmts.push(db.prepare(`UPDATE warranty_records SET remaining_quantity=MAX(0,remaining_quantity-?),status=CASE WHEN remaining_quantity-?<=0 THEN 'Returned' ELSE status END,updated_at=datetime('now') WHERE invoice_id=? AND product_id=? AND serial_id IS NULL`).bind(v.q,v.q,invoiceId,v.productId));
     }
   }
+  for(const alloc of mixedLots.allocations)stmts.push(db.prepare(
+    'INSERT INTO sales_return_item_lots (return_id,invoice_id,product_id,lot_id,quantity) VALUES (?,?,?,?,?)'
+  ).bind(returnId,invoiceId,alloc.productId,alloc.lotId,alloc.quantity));
   for(const x of ordinaryRestore.values()){let next=x.current+x.restore;if(x.sourceType==='OVERSOLD')next=Math.min(0,next);else next=Math.min(x.original,next);stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=?,updated_at=datetime('now'),status=CASE WHEN ?>0 THEN 'Active' WHEN source_type='OVERSOLD' AND ?<0 THEN 'Oversold' ELSE 'Depleted' END WHERE lot_id=?`).bind(next,next,next,x.lotId));}
   if(refundMethod==='Cash')stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Sales Return',?,?,?,0,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,returnId,`Cash refund for ${invoiceId}`,total));
   else{const c=await db.prepare(`SELECT customer_name,current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(c?.current_due||0)-total;stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sales Return Credit',?,0,?,?,?)`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,customerId,c?.customer_name||sale.customerName,returnId,total,newDue,`Store credit for return ${returnId}`));}
-  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));try{await db.batch(stmts);}catch(err){if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
+  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));try{await db.batch(stmts);}catch(err){if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
 }
 
 export async function getSalesReturnHistoryRoute(db:SherDatabase):Promise<Response>{

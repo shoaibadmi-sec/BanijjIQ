@@ -106,6 +106,20 @@ function startMocking(context,calls){
     if(path==='/api/pos/vendors'&&request.method()==='POST')
       return respond({ok:true,vendor:{id:'VEN-UI-2',name:request.postDataJSON().name,
         phone:request.postDataJSON().phone,currentDue:0,status:'Active'}});
+    if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('MIXED'))
+      return respond({ok:true,matches:[{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
+        customerName:'Unit Return Buyer',customerPhone:'01000000011',grandTotal:2490,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(path==='/api/sales-returns/UI-E2E-MIXED/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
+        customerId:'CUS-MIXED',customerName:'Unit Return Buyer',customerPhone:'01000000011',
+        grandTotal:2490,paidAmount:2490,dueAmount:0,previouslyReturnedAmount:0,netSale:2490,
+        items:[{productId:'PRD-MIXED-E2E',name:'Carton Test Cable',soldQty:283,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:283,unitPrice:2490/283,
+          trackSerial:false,trackExpiry:false,trackWarranty:false,availableSerials:[],
+          mixedUnit:{description:'1 CT 2 BOX 3 PCS',netPriceFactor:1,
+            originalQuantities:{Carton:1,Box:2,Pcs:3},availableQuantities:{Carton:1,Box:2,Pcs:3},
+            profile:posMixedProduct.unitProfilePreview}}]}} );
     if(path==='/api/sales-returns/search'&&request.method()==='GET')
       return respond({ok:true,matches:[{invoiceId:'UI-E2E-RET-INVOICE',date:'2026-10-28',
         customerName:'UI Return Buyer',customerPhone:'01000000001',grandTotal:700,
@@ -119,6 +133,12 @@ function startMocking(context,calls){
           trackSerial:true,trackExpiry:false,trackWarranty:true,availableSerials:['SN-UI-001']}]}} );
     if(path==='/api/sales-returns'&&request.method()==='POST'){
       const payload=request.postDataJSON();
+      if(payload.invoiceId==='UI-E2E-MIXED'){
+        assert.equal(payload.items[0].qty,21);
+        assert.deepEqual(payload.items[0].unitQuantities,{Box:1,Pcs:1});
+        calls.push({method:'ASSERT',path:'/api/sales-returns',payload});
+        return respond({ok:true,returnId:'SRT-UI-MIXED-001',totalReturnAmount:190});
+      }
       assert.equal(payload.invoiceId,'UI-E2E-RET-INVOICE');
       assert.deepEqual(payload.items[0].serialNumbers,['SN-UI-001']);
       calls.push({method:'ASSERT',path:'/api/sales-returns',payload});
@@ -391,6 +411,29 @@ try{
     results.apiCalls.push(...api);await screenshot(page,'phase13-pos-vendor-1024');
     await ctx.close();
   });
+  for(const width of [390,768,1440]){
+    await withCheck('mixed-unit partial return '+width+' historical prices and compact UI',async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:960},reducedMotion:'reduce'});
+      const api=[];await startMocking(ctx,api);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();page.on('dialog',dialog=>void dialog.accept());
+      await page.goto(base+'/#/app/live-sales-returns');await page.locator('[data-live-sales-returns]').waitFor();
+      await page.getByRole('textbox',{name:'Search saved invoices'}).fill('MIXED');
+      await page.getByRole('button',{name:'Search',exact:true}).click();
+      await page.getByRole('button',{name:/UI-E2E-MIXED/}).click();
+      await page.getByRole('spinbutton',{name:'Return Box for Carton Test Cable'}).fill('1');
+      await page.getByRole('spinbutton',{name:'Return Pcs for Carton Test Cable'}).fill('1');
+      const panel=page.locator('[data-live-sales-returns]');
+      assert.ok((await panel.innerText()).includes('190'),'exact original Box+Pcs historical refund');
+      await screenshot(page,'phase3c-mixed-unit-return-'+width);
+      await page.getByPlaceholder('Why was this returned?').fill('Partial return');
+      await page.getByRole('button',{name:'Review real return'}).click();
+      await page.getByRole('button',{name:'Confirm & refund'}).click();
+      await page.getByText('SRT-UI-MIXED-001').waitFor({timeout:12000});
+      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,1);
+      results.apiCalls.push(...api);await ctx.close();
+    });
+  }
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
     const api=[];await startMocking(ctx,api);
