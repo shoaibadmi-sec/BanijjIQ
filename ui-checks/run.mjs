@@ -5,6 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { runProductsHybridChecks } from './products-hybrid.mjs';
+import { runFinalProductChecks } from './products-final.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -211,6 +212,7 @@ try{
     }
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
+  await runFinalProductChecks({browser,base,withCheck,results});
   for(const width of [390,768,1440]){
     await withCheck('pos '+width+' light',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:960},
