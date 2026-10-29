@@ -61,6 +61,7 @@ jobs:
           npm ci
           npm run backend:build
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts
+          node --import tsx --test react-integration/tests/products-contract.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
       - name: Verify source submodule stays clean
