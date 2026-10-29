@@ -108,6 +108,7 @@ test('authenticated D1 profile settings are revisioned and never change cash/sto
     assert.equal((await api('GET','/api/units')).items.find((x:any)=>x.id===pcs.id).symbol,'PCS');
     assert.equal((await api('PUT','/api/units/'+pcs.id+'/symbol',{symbol:'P C S'})).ok,false);
     assert.equal((await api('POST','/api/pos/cash-session/start',{openingCash:0})).ok,true);
+    const cashBefore=(db.native.prepare('SELECT count(*) n FROM cash_book').get() as any).n;
     const rejected=await api('POST','/api/pos/sales',{
       clientRequestId:'unit-posting-not-enabled-0001',customerName:'No posting',customerPhone:'01000009222',
       paymentType:'Cash',discount:0,items:[{productId:id,qty:283,unitPrice:10,
@@ -115,7 +116,7 @@ test('authenticated D1 profile settings are revisioned and never change cash/sto
     });
     assert.equal(rejected.ok,false);assert.match(rejected.error,/mixed-unit/i);
     assert.equal((db.native.prepare('SELECT count(*) n FROM sales').get() as any).n,0);
-    assert.equal((db.native.prepare('SELECT count(*) n FROM cash_book').get() as any).n,0);
+    assert.equal((db.native.prepare('SELECT count(*) n FROM cash_book').get() as any).n,cashBefore);
     assert.equal((db.native.prepare('SELECT count(*) n FROM sale_item_lots').get() as any).n,0);
     assert.equal((db.native.prepare('SELECT current_stock FROM products WHERE product_id=?').get(id) as any).current_stock,before.current_stock);
     assert.equal((db.native.prepare('SELECT count(*) n FROM stock_movements WHERE product_id=?').get(id) as any).n,moves.n);
