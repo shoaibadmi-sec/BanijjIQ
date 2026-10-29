@@ -3,7 +3,7 @@
 **Existing stable deployment (leave it unchanged):** https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev/
 
 **Existing Worker:** `banijjiq-hisabiq-react-preview`  
-**Existing shared D1:** `banijjiq-hisabiq-react-preview-db`  
+**Existing shared D1 (existing database):** `banijjiq-hisabiq-react-preview-db`  
 **Production ERP (never touched):** `shererp-new` and `shererp-new-db`
 
 This uses Cloudflare **Worker Previews** under the existing React Worker, not a new Worker, not a new database, not a GitHub Actions deployment that overwrites the stable preview. Each PR branch gets a **stable PR URL**, automatically updated with its latest pushed commit; open that URL with `/#/app/products`. The stable root URL above stays on its current deployed version.
