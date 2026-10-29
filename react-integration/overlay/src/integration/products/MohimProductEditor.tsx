@@ -29,6 +29,7 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
   const [draft,setDraft]=useState<ProductDraft>(()=>draftFromProduct(product));
   const [error,setError]=useState('');
   const [saving,setSaving]=useState(false);
+  const [outcomeUnknown,setOutcomeUnknown]=useState(false);
   const savingRef=useRef(false);
   const original=useRef(draftFromProduct(product));
   const dirty=JSON.stringify(original.current)!==JSON.stringify(draft);
@@ -45,7 +46,7 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
   };
   const submit=async(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault();
-    if(savingRef.current)return;
+    if(savingRef.current||outcomeUnknown)return;
     let input:BasicProductInput|ProductCatalogEdit;
     try{input=product?editPayload(product,draft):createPayload(draft);}
     catch(err){setError(err instanceof Error?err.message:'Check product fields');return;}
@@ -59,9 +60,11 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
       onSaved(result.productId);
     } catch(err){
       let message=err instanceof Error?err.message:'Could not save product.';
-      if(err instanceof BackendRequestError&&(err.status===null||err.status>=500))
-        message='Save status unknown. Refresh the product list before trying again. '+message;
-      if(err instanceof BackendRequestError&&err.status===409)
+      if(err instanceof BackendRequestError&&(err.status===null||err.status>=500)){
+        setOutcomeUnknown(true);
+        message='Save status unknown. Return to Products and check for this record before any new save. '+message;
+      }
+      if(product&&err instanceof BackendRequestError&&err.status===409)
         message='Another change was saved. Refresh the product before editing. '+message;
       setError(message);
     }finally{savingRef.current=false;setSaving(false);}
@@ -108,7 +111,7 @@ export function MohimProductEditor({product,lookups,onCancel,onSaved,onCreate,on
       {error&&<div role="alert" className="mt-3 rounded-lg border border-danger/20 bg-danger-bg p-2.5 text-sm text-danger">{error}</div>}
       <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-border pt-4">
         <Button type="button" variant="outline" disabled={saving} onClick={cancel}>Cancel</Button>
-        <Button type="submit" disabled={saving} aria-label={product?'Save changes':'Save product'}>
+        <Button type="submit" disabled={saving||outcomeUnknown} aria-label={product?'Save changes':'Save product'}>
           {saving?<Loader2 className="size-4 animate-spin"/>:<Save className="size-4"/>}
           {saving?'Saving…':product?'Save changes':'Save product'}
         </Button>
