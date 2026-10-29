@@ -57,24 +57,30 @@ export async function runRealD1Browser(){
         checks.push('live D1 login and Products '+width);
 
         if(width===1440){
-          // The ORIGINAL HisabIQ full-page editor (not a synthetic API client).
+          // Task 5 Mohim form in original HisabIQ components, posting to a REAL local D1.
           await page.getByRole('button',{name:'Add Product'}).click();
-          await page.locator('[data-live-product-editor]').waitFor({timeout:12000});
-          await page.locator('#pf-name').fill('D1 Browser Socket');
-          await page.locator('#pf-buy').fill('95');
-          await page.locator('#pf-sell').fill('150');
-          await page.locator('#pf-opening').fill('3');
-          await page.locator('#pf-min').fill('1');
+          await page.locator('[data-mohim-editor]').waitFor({timeout:12000});
+          const field=(name)=>page.locator('[data-mohim-editor] input[name="'+name+'"]');
+          await field('productName').fill('D1 Browser Socket');
+          await field('category').fill('Electrical');
+          await field('unit').fill('Pcs');
+          await field('purchasePrice').fill('95');
+          await field('sellingPrice').fill('150');
+          await field('currentStock').fill('3');
+          await field('minimumStock').fill('1');
           await shots(page,'product-create-form-1440');
-          await page.getByRole('button',{name:/Save product/}).click();
+          await page.getByRole('button',{name:'Save product',exact:true}).click();
           await page.locator('[data-live-products]').waitFor({timeout:20000});
           await page.getByText('D1 Browser Socket').first().waitFor({timeout:12000});
           checks.push('React full-page product create persisted to D1');
 
-          await page.getByRole('button',{name:'Edit D1 Browser Socket'}).click();
-          await page.locator('#pf-name').fill('D1 Browser Socket Updated');
-          await page.locator('#pf-sell').fill('175');
-          await page.getByRole('button',{name:/Save changes/}).click();
+          await page.getByRole('button',{name:'Actions for D1 Browser Socket'}).click();
+          await page.getByRole('menuitem',{name:/^Edit ·/}).click();
+          await page.locator('[data-mohim-editor]').waitFor({timeout:12000});
+          assert.equal(await field('currentStock').isEditable(),false,'Stock may not be silently edited');
+          await field('productName').fill('D1 Browser Socket Updated');
+          await field('sellingPrice').fill('175');
+          await page.getByRole('button',{name:'Save changes',exact:true}).click();
           await page.locator('[data-live-products]').waitFor({timeout:20000});
           await page.getByText('D1 Browser Socket Updated').first().waitFor({timeout:12000});
           await shots(page,'product-catalog-edit-1440');
