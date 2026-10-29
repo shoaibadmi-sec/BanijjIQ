@@ -107,7 +107,7 @@ export function patchLiveProducts(source) {
   const actionStart=source.indexOf('function ProductActions(');
   const pageStart=source.indexOf('export function Products() {');
   const jsxStart=source.indexOf('  return (\n    <div className="mx-auto max-w-[1440px] space-y-4">',pageStart);
-  const afterList=source.indexOf("\n       {view === 'lots'",jsxStart);
+  const afterList=source.indexOf("\n      {view === 'lots'",jsxStart);
   if([blockStart,actionStart,pageStart,jsxStart,afterList].some(n=>n<0)
      ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList))
     throw new Error('Pinned Products source JSX anchors changed');
