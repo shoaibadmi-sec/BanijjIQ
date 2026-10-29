@@ -57,6 +57,7 @@ jobs:
         run: |
           node scripts/preview/build-config.mjs --self-test
           node --test tests/preview-deploy.contract.test.mjs
+          node --test tests/pr-preview.contract.test.mjs
       - name: Typecheck BanijjIQ backend
         run: |
           npm ci
