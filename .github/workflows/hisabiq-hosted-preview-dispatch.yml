@@ -74,8 +74,11 @@ jobs:
           npx playwright install --with-deps chromium
           cd ../..
           node ui-checks/run.mjs
-      - name: Real Cloudflare Worker with disposable local D1
-        run: node d1-checks/run.mjs
+      - name: Real Cloudflare Worker, Phase 12 concurrency and Phase 13 Chromium with disposable local D1
+        run: |
+          node d1-checks/run.mjs
+          node d1-checks/phase12.mjs
+          node d1-checks/phase13-browser.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: hisabiq-reviewed-react-dist
@@ -163,6 +166,50 @@ jobs:
         if: always()
         with:
           name: hisabiq-hosted-preview-smoke
+          path: preview-checks/output
+          retention-days: 14
+          if-no-files-found: warn
+
+  accept-hosted-preview:
+    # Read-only acceptance is allowed ONLY after an explicitly authorized and
+    # successful isolated hosted deployment. Never runs from pull_request.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && github.ref == 'refs/heads/main' }}
+    needs: deploy-isolated-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    environment:
+      name: hisabiq-react-preview
+    concurrency:
+      group: hisabiq-react-preview-read-only-acceptance
+      cancel-in-progress: false
+    env:
+      CI: 'true'
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      HISABIQ_PREVIEW_ADMIN_PHONE: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PHONE }}
+      HISABIQ_PREVIEW_ADMIN_PASSWORD: ${{ secrets.HISABIQ_PREVIEW_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.reviewed_commit_sha }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned React build and Playwright dependencies
+        run: |
+          npm ci
+          npm run react:build
+          cd .generated/hisabiq-web
+          npx playwright install --with-deps chromium
+      - name: Test real isolated preview in read-only Chromium
+        run: node scripts/preview/browser-acceptance.mjs --remote
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hisabiq-hosted-read-only-acceptance
           path: preview-checks/output
           retention-days: 14
           if-no-files-found: warn
