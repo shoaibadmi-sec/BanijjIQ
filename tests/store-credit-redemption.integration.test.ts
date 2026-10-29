@@ -91,6 +91,21 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   const part=await api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-partial-00001',
    paymentType:'Partial',paidAmount:5,items:[{productId:id,qty:1,unitPrice:10}]});
   assert.equal(part.status,409,JSON.stringify(part));
+  const edited=await api('PUT','/api/sales-management/'+saleId,
+   {reason:'No unaudited edit of credit-paid sale',items:[]});
+  assert.equal(edited.status,409,JSON.stringify(edited));
+  const deleted=await api('DELETE','/api/sales-management/'+saleId,
+   {reason:'No unaudited delete of credit-paid sale'});
+  assert.equal(deleted.status,409,JSON.stringify(deleted));
+  const noRequestKey=await api('POST','/api/pos/sales',{
+   ...saleInput,clientRequestId:'',items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(noRequestKey.status,409,JSON.stringify(noRequestKey));
+  const creditDue=await api('POST','/api/pos/sales',{
+   ...saleInput,clientRequestId:'credit-due-denial-0001',paymentType:'Due',
+   items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(creditDue.status,409,JSON.stringify(creditDue));
   const cashRefund=await api('POST','/api/sales-returns',{
    invoiceId:saleId,refundMethod:'Cash',reason:'No cash refund for store credit tender',
    items:[{productId:id,qty:1,unitPrice:10}]
