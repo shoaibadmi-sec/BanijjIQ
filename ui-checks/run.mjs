@@ -228,6 +228,18 @@ try{
       await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
       await page.locator('[data-live-pos]').waitFor({timeout:10000});
       await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
+      // Source: pinned HisabIQ src/components/pos/CartTable.tsx.
+      // The original seven-column header and product picker share one grid.
+      const sourceCart=page.locator('[data-live-pos] [data-cart-kind="sale"]');
+      assert.equal(await sourceCart.locator('[data-cart-header]').count(),1,
+        'Restore the original HisabIQ cart header instead of a detached toolbar');
+      assert.equal(await sourceCart.locator('[data-testid="pos-cart"]').count(),1);
+      assert.equal(await sourceCart.locator('[data-testid="pos-add-row"]').count(),1,
+        'Product search belongs in the original HisabIQ add-row');
+      assert.equal(await sourceCart.locator('[data-cart-header] > *').count(),7,
+        'Original cart has #, Product, Quantity, Price In, Price, Total, Remove');
+      assert.equal(await sourceCart.locator('[data-testid="pos-add-row"] input').count(),1,
+        'One embedded product search, not a second detached form');
       await inspectLayout(page,'pos-'+width+'-light');
       await screenshot(page,'pos-'+width+'-light');
       if(width===390)await audit(page,'pos-390-light');
@@ -238,6 +250,8 @@ try{
       const quick=page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first();
       await quick.click();
       await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
+      assert.equal(await page.locator('[data-testid="pos-cart"] [data-pos-line]').count(),1,
+        'Live selected product renders in the original HisabIQ cart grid');
       await screenshot(page,'pos-cart-'+width);
       if(width===1440){
         const [name,phone]=[
