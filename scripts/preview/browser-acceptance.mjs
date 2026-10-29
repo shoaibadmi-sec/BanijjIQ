@@ -115,7 +115,9 @@ export async function runBrowserAcceptance({
           await page.getByLabel('Password').fill(password);
           await page.getByRole('button',{name:/Sign in/}).click();
           await page.locator('[data-live-pos]').waitFor({timeout:20000});
-          assert.ok(await page.getByText('Cash session:').count()>0);
+          // The POS section mounts before its asynchronous /api/pos/bootstrap read.
+          // Wait for the cash-session strip instead of checking its count immediately.
+          await page.locator('[data-live-pos]').getByText(/Cash session:/).first().waitFor({timeout:30000});
         });
         await verify('read-only POS, keyboard and accessibility '+width+'px',async()=>{
           await layout(page,'pos-'+width,'[data-live-pos]');
