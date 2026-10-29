@@ -172,10 +172,12 @@ export interface ReturnInvoiceMatch {
   invoiceId:string;date:string;customerName:string;customerPhone:string;
   grandTotal:number;paymentStatus:string;returnStatus:string;
 }
+export interface ReturnMixedUnit {profile:PosUnitProfile;originalQuantities:Record<string,number>;
+  availableQuantities:Record<string,number>;description:string;netPriceFactor:number}
 export interface ReturnableLine {
   productId:string;name:string;soldQty:number;vendorQty:number;previouslyReturnedQty:number;
   availableQty:number;unitPrice:number;trackSerial:boolean|number;trackExpiry:boolean|number;
-  trackWarranty:boolean|number;availableSerials:string[];
+  trackWarranty:boolean|number;availableSerials:string[];mixedUnit?:ReturnMixedUnit|null;
 }
 export interface ReturnableInvoice {
   invoiceId:string;date:string;customerId:string;customerName:string;customerPhone:string;
@@ -184,7 +186,7 @@ export interface ReturnableInvoice {
 }
 export interface SalesReturnPayload {
   invoiceId:string;refundMethod:'Cash'|'Store Credit';reason:string;
-  items:Array<{productId:string;qty:number;unitPrice:number;serialNumbers?:string[]}>;
+  items:Array<{productId:string;qty:number;unitPrice:number;serialNumbers?:string[];unitQuantities?:Record<string,number>}>;
 }
 export const searchReturnInvoices = (query:string) =>
   request<{ok:true;matches:ReturnInvoiceMatch[]}>('/api/sales-returns/search?q='+encodeURIComponent(query));

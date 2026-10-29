@@ -9,11 +9,13 @@ import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
 import { canUseModule, useBackendSession } from './BackendGate';
 import {
   BackendRequestError, searchReturnInvoices, getReturnableInvoice, postSalesReturn,
-  getSalesReturnHistory, type ReturnInvoiceMatch, type ReturnableInvoice, type SalesReturnPayload
+  getSalesReturnHistory, type ReturnInvoiceMatch, type ReturnableInvoice, type SalesReturnPayload,
+  type ReturnMixedUnit
 } from './banijjApi';
 import type { Product } from '../types/erp';
 
-type Item = { productId:string;qty:number;unitPrice:number;serialNumbers:string[] };
+type Item = { productId:string;qty:number;unitPrice:number;serialNumbers:string[];
+  unitQuantities?:Record<string,number>;lineTotal?:number };
 const money=(n:number)=>'৳'+Number(n||0).toLocaleString('en-BD',{maximumFractionDigits:2});
 const emptySerials:string[]=[];
 
@@ -39,7 +41,7 @@ export function LiveSalesReturnsPage(){
   const activeLine=sale?.items.find(x=>x.productId===picker);
   const activeItem=items.find(x=>x.productId===picker);
   const selected=items.filter(x=>x.qty>0);
-  const total=selected.reduce((a,b)=>a+b.qty*b.unitPrice,0);
+  const total=Math.round(selected.reduce((a,b)=>a+(b.lineTotal??b.qty*b.unitPrice),0)*100)/100;
   const remainingPaid=sale?Math.max(0,sale.paidAmount-sale.previouslyReturnedAmount):0;
   const problems:string[]=[];
   if(!canPost)problems.push('You cannot post Sales Returns.');
@@ -54,7 +56,10 @@ export function LiveSalesReturnsPage(){
   if(sale?.items.some(line=>{
     const item=items.find(x=>x.productId===line.productId);
     return !!item&&(item.qty<0||!Number.isInteger(item.qty)||item.qty>line.availableQty||
-      (item.qty>0&&item.unitPrice>line.unitPrice));
+      (!line.mixedUnit&&item.qty>0&&item.unitPrice>line.unitPrice)||
+      (Boolean(line.mixedUnit)&&(!item.unitQuantities||
+        Object.entries(item.unitQuantities).some(([unit,count])=>
+          !Number.isSafeInteger(count)||count<0||count>Number(line.mixedUnit?.availableQuantities[unit]||0)))));
   }))problems.push('Return quantity/price exceeds the eligible saved invoice amount.');
   if(sale?.items.some(line=>Boolean(line.trackSerial)&&
     (items.find(i=>i.productId===line.productId)?.qty||0)>0&&
@@ -75,7 +80,8 @@ export function LiveSalesReturnsPage(){
     try{
       const result=await getReturnableInvoice(id);
       setSale(result.sale);
-      setItems(result.sale.items.map(x=>({productId:x.productId,qty:0,unitPrice:x.unitPrice,serialNumbers:[]})));
+      setItems(result.sale.items.map(x=>({productId:x.productId,qty:0,unitPrice:x.unitPrice,serialNumbers:[],
+        ...(x.mixedUnit?{unitQuantities:{},lineTotal:0}:{})})));
       setRefundMethod('Cash');
       setMatches([]);
     }catch(e){setError(e instanceof Error?e.message:'Could not read invoice.');}
@@ -85,6 +91,22 @@ export function LiveSalesReturnsPage(){
     setItems(old=>old.map(x=>x.productId===id?{...x,...patch,
       ...(patch.qty!==undefined?{serialNumbers:[]}:{} )}:x));
   };
+  const changeMixed=(id:string,unit:string,value:number)=>{
+    const line=sale?.items.find(x=>x.productId===id),mixed=line?.mixedUnit;
+    if(!mixed)return;
+    setItems(current=>current.map(item=>{
+      if(item.productId!==id)return item;
+      const quantities={...item.unitQuantities,[unit]:value};
+      let base=0,cents=0;
+      for(const u of mixed.profile.units){
+        const count=quantities[u.unit]||0;
+        base+=count*u.factor;
+        cents+=count*Math.round(u.sellingPrice*100);
+      }
+      const amount=Math.round(cents*mixed.netPriceFactor)/100;
+      return{...item,unitQuantities:quantities,qty:base,unitPrice:base?amount/base:0,lineTotal:amount,serialNumbers:[]};
+    }));
+  };
   const post=async()=>{
     if(posting||problems.length){setError(problems[0]||'Cannot return this sale.');return;}
     if(!window.confirm('Post a REAL sales return for '+money(total)+'? This changes stock and cash/customer ledger.'))return;
@@ -92,6 +114,7 @@ export function LiveSalesReturnsPage(){
     const payload:SalesReturnPayload={
       invoiceId:sale!.invoiceId,refundMethod,reason:reason.trim(),
       items:selected.map(i=>({productId:i.productId,qty:i.qty,unitPrice:i.unitPrice,
+        ...(i.unitQuantities?{unitQuantities:i.unitQuantities}:{}),
         ...(sale!.items.find(x=>x.productId===i.productId)?.trackSerial?{serialNumbers:i.serialNumbers}:{})}))
     };
     try{
@@ -121,7 +144,7 @@ export function LiveSalesReturnsPage(){
         <ArrowLeft className="size-4"/> Back to POS
       </Link>}/>
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
-      Real invoice returns only. Use exact serial numbers for tracked products; vendor-sourced quantities are not returnable as own stock.
+      Mixed-unit returns use original saved unit quantities and their historical discounted net prices. Tracked mixed-unit returns and vendor-sourced quantities remain unavailable here.
       Store Credit, batch multi-invoice returns and refund-price adjustments above historic net price remain unavailable here.
     </p>
     {error&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
@@ -178,17 +201,30 @@ export function LiveSalesReturnsPage(){
                 Serial / IMEI · {item.serialNumbers.length}/{item.qty} selected
               </button>}
           </div>
-          <label className="text-[11px] text-ink-500">Return qty
-            <Input className="mt-1 h-9 w-20 text-right" type="number" min="0" max={line.availableQty} step="1"
-              aria-label={'Return quantity for '+line.name} value={item.qty}
-              onChange={e=>change(line.productId,{qty:Number(e.target.value)})}/>
-          </label>
-          <label className="text-[11px] text-ink-500">Refund / unit
-            <Input className="mt-1 h-9 w-28 text-right" type="number" min="0" max={line.unitPrice} step="0.01"
-              aria-label={'Return unit price for '+line.name} value={item.unitPrice}
-              onChange={e=>change(line.productId,{unitPrice:Number(e.target.value)})}/>
-          </label>
-          <strong className="w-20 text-right text-[13px]">{money(item.qty*item.unitPrice)}</strong>
+          {line.mixedUnit ? <div data-mixed-return-quantities className="flex min-w-[200px] max-w-full flex-1 flex-wrap items-end gap-1.5">
+            {line.mixedUnit.profile.units.filter(u=>(line.mixedUnit?.originalQuantities[u.unit]||0)>0)
+              .map(u=><label key={u.unit} className="min-w-0 text-[10px] text-ink-600">
+                {u.symbol} · {line.mixedUnit?.availableQuantities[u.unit]||0} left
+                <Input className="mt-1 h-9 w-[65px] px-1 text-right text-[12px]" type="number"
+                  min="0" max={line.mixedUnit?.availableQuantities[u.unit]||0} step="1" inputMode="numeric"
+                  aria-label={'Return '+u.unit+' for '+line.name}
+                  value={item.unitQuantities?.[u.unit]||0}
+                  onChange={e=>changeMixed(line.productId,u.unit,Number(e.target.value))}/>
+              </label>)}
+            <p className="w-full text-[10px] text-ink-500">Return in originally sold units only · Net unit prices preserved</p>
+          </div> : <>
+            <label className="text-[11px] text-ink-500">Return qty
+              <Input className="mt-1 h-9 w-20 text-right" type="number" min="0" max={line.availableQty} step="1"
+                aria-label={'Return quantity for '+line.name} value={item.qty}
+                onChange={e=>change(line.productId,{qty:Number(e.target.value)})}/>
+            </label>
+            <label className="text-[11px] text-ink-500">Refund / unit
+              <Input className="mt-1 h-9 w-28 text-right" type="number" min="0" max={line.unitPrice} step="0.01"
+                aria-label={'Return unit price for '+line.name} value={item.unitPrice}
+                onChange={e=>change(line.productId,{unitPrice:Number(e.target.value)})}/>
+            </label>
+          </>}
+          <strong className="w-20 text-right text-[13px]">{money(item.lineTotal??item.qty*item.unitPrice)}</strong>
         </div>;
       })}
       <div className="grid gap-3 sm:grid-cols-2">

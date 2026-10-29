@@ -64,7 +64,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
-          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts
+          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
