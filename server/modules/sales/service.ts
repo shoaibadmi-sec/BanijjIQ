@@ -593,6 +593,9 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   if(!invoiceId)return error('No invoice selected.');
   const isBankRefund=refundMethod==='Bank'||refundMethod==='Mobile Banking';
   const isDueAdjustment=refundMethod==='Due Adjustment';
+  // G2-A: the legacy Store Credit path subtracts from customer due instead of
+  // issuing a liability; fail closed until the audited issuance batch is ready.
+  if(refundMethod==='Store Credit')return error('Store Credit is temporarily unavailable until liability reconciliation is completed.',409);
   if(!['Cash','Store Credit','Bank','Mobile Banking','Due Adjustment'].includes(refundMethod))
     return error('Choose a refund method.');
   if((isBankRefund||isDueAdjustment)&&!authorizedReversal)
