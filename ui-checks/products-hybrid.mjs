@@ -57,7 +57,7 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       await context.addInitScript(()=>localStorage.setItem('shererp_auth_token','synthetic-browser-only'));
       const page=await context.newPage();
       await page.goto(base+'/#/app/products');
-      await page.getByRole('button',{name:'Add Product'}).click();
+      await page.getByRole('button',{name:/Add product/i}).click();
       await page.locator('[data-mohim-editor]').waitFor();
       const sequence=await page.locator('[data-mohim-editor] input[name]').evaluateAll(nodes=>nodes.map(n=>n.name));
       assert.deepEqual(sequence,['productName','brand','category','unit','purchasePrice',
@@ -123,7 +123,7 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       const page=await context.newPage();
       await page.goto(base+'/#/app/products');
       await page.getByText('Readonly Cable').waitFor();
-      assert.equal(await page.getByRole('button',{name:'Add Product'}).count(),0);
+      assert.equal(await page.getByRole('button',{name:/Add product/i}).count(),0);
       await page.getByRole('button',{name:'Actions for Readonly Cable'}).click();
       assert.equal(await page.getByRole('menuitem',{name:/^Edit ·/}).isDisabled(),true);
       assert.equal(await page.getByRole('menuitem',{name:/Adjust stock/}).isDisabled(),true);
