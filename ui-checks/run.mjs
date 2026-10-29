@@ -603,8 +603,8 @@ try{
     await page.goto(base+'/#/app/pos');
     await page.locator('[data-live-pos]').waitFor();
     await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
-    await page.getByRole('textbox',{name:'Customer name'}).fill('Credit UI Buyer');
-    await page.getByRole('textbox',{name:'Customer phone'}).fill('01000009801');
+    await page.getByRole('combobox',{name:'Customer name'}).fill('Credit UI Buyer');
+    await page.getByRole('combobox',{name:'Customer phone'}).fill('01000009801');
     await page.getByRole('combobox',{name:'Payment method'}).selectOption('Store Credit');
     await page.locator('[data-pos-store-credit-balance]').waitFor();
     assert.match(await page.locator('[data-pos-store-credit-balance]').innerText(),/150/);
