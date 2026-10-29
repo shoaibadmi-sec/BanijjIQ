@@ -321,59 +321,82 @@ export function LivePosPage() {
       </div>}
       <div className="pos-columns grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_370px]" data-pos-layout>
         <div className="min-w-0 space-y-3">
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card" data-cart-kind="sale">
-            <header className="flex items-center justify-between border-b border-border px-3 py-2.5">
-              <h2 className="text-sm font-semibold text-ink">Products <span className="font-bn font-normal text-xs text-ink-500">· বিক্রির তালিকা</span></h2>
-              <span className="text-xs text-ink-500">{lines.length} lines</span>
-            </header>
-            <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Sales cart rows — scroll horizontally with keyboard">
-              <div className="grid min-w-[670px] grid-cols-[28px_minmax(160px,1fr)_82px_110px_110px_28px] gap-2 border-b border-border bg-ink-50 px-3 py-2 text-[11px] font-medium uppercase text-ink-500">
-                <span>#</span><span>Product</span><span className="text-right">Qty</span>
-                <span className="text-right">Price</span><span className="text-right">Total</span><span></span>
-              </div>
-              {lines.map((line,index) => <div key={line.product.id}
-                className="grid min-w-[670px] grid-cols-[28px_minmax(160px,1fr)_82px_110px_110px_28px] items-center gap-2 border-b border-border px-3 py-2">
-                <span className="text-right text-xs text-ink-400">{index+1}.</span>
+          {/* Original HisabIQ CartTable.tsx grid and inline search structure,
+              with live BanijjIQ product records and persisted accounting actions. */}
+          <div data-cart-kind="sale" className="min-w-0 overflow-x-auto rounded-xl border border-border bg-card shadow-card"
+            tabIndex={0} role="region" aria-label="Sales cart rows — scroll horizontally with keyboard">
+            <div data-cart-header className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-ink-400`}>
+              <span className="text-right">#</span>
+              <span>Product · পণ্য</span>
+              <span className="text-right">Quantity · পরিমাণ</span>
+              <span>Price in · একক</span>
+              <span className="text-right">Price · দাম</span>
+              <span className="text-right">Total · মোট</span>
+              <span className="sr-only">Remove</span>
+            </div>
+            <div data-testid="pos-cart" className="divide-y divide-border">
+              {lines.map((line,index) => <div data-pos-line key={line.product.id}
+                className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 px-3 py-2`}>
+                <span className="pr-1 text-right text-xs text-ink-400">{index+1}.</span>
                 <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-ink">{line.product.name}</p>
-                  <p className="text-[11px] text-ink-500">{line.product.unit} · {line.product.stock} sellable</p>
+                  <p className="truncate text-[13px] font-medium text-ink" title={line.product.name}>{line.product.name}</p>
+                  <p className="truncate text-[11px] text-ink-500">{line.product.stock} {line.product.unit} sellable</p>
                   {line.product.trackSerial&&<button type="button" disabled={loadingTracking||saving}
-                    onClick={()=>void openSerialPicker(line.product.id)} className="text-[11px] font-medium text-teal-700 hover:underline">
+                    onClick={()=>void openSerialPicker(line.product.id)}
+                    className="block max-w-full truncate text-left text-[11px] font-medium text-teal-700 hover:underline">
                     Serial / IMEI · {line.serialNumbers.length}/{line.qty} selected
                   </button>}
-                  {(line.product.trackSerial||line.product.trackExpiry) && <span className="ml-2 text-[10px] text-ink-500">Tracked stock</span>}
+                  {(line.product.trackSerial||line.product.trackExpiry) &&
+                    <span className="block truncate text-[10px] text-ink-500">Tracked stock</span>}
                   {!line.product.trackSerial&&!line.product.trackExpiry&&line.qty>line.product.stock&&
                     <button type="button" onClick={()=>setShortageId(line.product.id)}
-                      className="block text-[11px] font-medium text-warning hover:underline">
+                      className="block max-w-full truncate text-left text-[11px] font-medium text-warning hover:underline">
                       {line.source.mode==='own'?'Resolve stock shortage':line.source.mode==='vendor'?'Vendor sourcing selected':'Negative sale selected'}
                     </button>}
                 </div>
-                <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
-                  type="number" min="1" step="1" value={line.qty}
-                  aria-label={'Quantity for '+line.product.name}
-                  onChange={e => patchLine(line.product.id,{qty:Number(e.target.value)})}
-                  onKeyDown={e => { if(e.key === 'Enter'){e.preventDefault();productRef.current?.focus();} }}
-                  className="h-9 w-full text-right" />
-                <Input type="number" min="0" step="0.01" value={line.price}
-                  aria-label={'Price for '+line.product.name}
-                  onChange={e => patchLine(line.product.id,{price:Number(e.target.value)})}
-                  className="h-9 w-full text-right"/>
-                <strong className="text-right text-[13px] font-semibold">{taka(line.qty*line.price)}</strong>
-                <button type="button" className="rounded p-1 text-ink-400 hover:bg-danger-bg hover:text-danger"
+                <div className="flex min-w-0 items-center justify-end gap-1">
+                  <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
+                    type="number" min="1" step="1" value={line.qty}
+                    aria-label={'Quantity for '+line.product.name}
+                    onChange={e => patchLine(line.product.id,{qty:Number(e.target.value)})}
+                    onKeyDown={e => { if(e.key === 'Enter'){e.preventDefault();productRef.current?.focus();} }}
+                    className="h-9 min-w-0 w-[106px] text-right" />
+                  <span className="w-[44px] shrink-0 truncate text-right text-[11px] text-ink-500" title={line.product.unit}>
+                    {line.product.unit}
+                  </span>
+                </div>
+                <span className="truncate text-xs text-ink-600" title={'Price per '+line.product.unit}>
+                  {line.product.unit}
+                </span>
+                <div className="flex min-w-0 items-center gap-1">
+                  <span className="shrink-0 text-xs text-ink-500">৳</span>
+                  <Input type="number" min="0" step="0.01" value={line.price}
+                    aria-label={'Price for '+line.product.name}
+                    onChange={e => patchLine(line.product.id,{price:Number(e.target.value)})}
+                    className="h-9 min-w-0 w-full text-right"/>
+                </div>
+                <strong className="text-right text-[13px] font-semibold text-ink">{taka(line.qty*line.price)}</strong>
+                <button type="button" className="flex size-8 items-center justify-center rounded-md text-ink-400 hover:bg-danger-bg hover:text-danger"
                   aria-label={'Remove '+line.product.name}
                   onClick={() => setLines(old => old.filter(l => l.product.id !== line.product.id))}>
                   <Trash2 className="size-4"/>
                 </button>
               </div>)}
-              {!lines.length && <div className="p-6 text-center text-sm text-ink-500">
-                No products added · <span className="font-bn">পণ্য যোগ করুন</span>
-              </div>}
+              <div data-testid="pos-add-row" data-cart-add
+                className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 border-t border-border bg-teal-50/35 px-3 py-2`}>
+                <span className="pr-1 text-right text-sm text-teal-600">{lines.length+1}.</span>
+                <ProductCombobox ref={productRef} products={selectable} onSelect={addProduct}
+                  ariaLabel="Add real BanijjIQ product" disabled={saving}/>
+                <span className="pr-2 text-right text-sm text-ink-400">Qty</span>
+                <span className="px-2 text-xs text-ink-400">Unit</span>
+                <span className="pr-2 text-right text-sm text-ink-400">Price</span>
+                <span className="text-right text-sm text-ink-400">Total</span>
+                <span aria-hidden="true" />
+              </div>
             </div>
-            <div className="border-t border-border px-3 py-3">
-              <label className="mb-1.5 block text-xs font-medium text-ink-700">Add product · <span className="font-bn">পণ্য যোগ করুন</span></label>
-              <ProductCombobox ref={productRef} products={selectable} onSelect={addProduct}
-                ariaLabel="Add real BanijjIQ product" disabled={saving}/>
-            </div>
+            {!lines.length && <p className="border-t border-border px-4 py-6 text-center text-sm text-ink-500">
+              No products added · <span className="font-bn">পণ্য যোগ করুন</span>
+            </p>}
           </div>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
