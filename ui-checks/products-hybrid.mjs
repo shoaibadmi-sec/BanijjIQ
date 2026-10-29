@@ -37,6 +37,13 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
             sellableStock:3,updatedAt:'REV-UI-2'});
           return json(route,{ok:true,productId:'PRD-UI-2'});
         }
+        if(path==='/api/products/PRD-UI-1/adjust-stock'&&req.method()==='POST'){
+          const {delta,note}=req.postDataJSON();
+          assert.deepEqual({delta,note},{delta:-1,note:'Damaged item'});
+          const old=products.find(p=>p.productId==='PRD-UI-1');
+          old.currentStock+=delta;old.sellableStock+=delta;
+          return json(route,{ok:true});
+        }
         if(path==='/api/products/PRD-UI-1/lots')return json(route,{ok:true,lots:[
           {lotId:'LOT-A',purchaseId:'OPENING',supplierName:null,purchaseDate:'2026-10-29',
            purchasePrice:20,originalQuantity:5,remainingQuantity:5}
@@ -75,6 +82,17 @@ export async function runProductsHybridChecks({browser,base,withCheck,results}) 
       assert.equal(calls.filter(x=>x.path==='/api/products/PRD-UI-1/history').length,1);
       await page.keyboard.press('Escape');
       assert.equal(await page.locator('[role="dialog"]').count(),0);
+      await page.getByRole('button',{name:'Actions for Copper Cable'}).click();
+      await page.getByRole('menuitem',{name:/Adjust stock/}).click();
+      await page.getByRole('spinbutton',{name:'Stock change'}).fill('-1');
+      await page.getByRole('textbox',{name:'Adjustment reason'}).fill('Damaged item');
+      let confirmation='';
+      page.once('dialog',d=>{confirmation=d.message();void d.accept();});
+      await page.getByRole('button',{name:'Review and save adjustment'}).click();
+      await page.getByText('Product updated · Copper Cable').waitFor({timeout:8000});
+      assert.match(confirmation,/5.*4/,'confirmation must show old and new quantity');
+      assert.ok(confirmation.includes('Damaged item'),'confirmation must show entered reason');
+      assert.equal(calls.filter(x=>x.path==='/api/products/PRD-UI-1/adjust-stock'&&x.method==='POST').length,1);
       results.apiCalls.push(...calls);
     } finally {await context.close();}
   });
