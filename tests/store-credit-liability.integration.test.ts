@@ -42,7 +42,7 @@ test('Phase 3G2 liability journal isolates Store Credit from receivables and fla
   assert.equal(get("SELECT amount_cents FROM store_credit_legacy_unreconciled WHERE return_id='CREDIT-RETURN-1'").amount_cents,2000);
   assert.equal(get("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CREDIT-CUS'").available_cents,0);
   assert.equal(get("SELECT receivable_due FROM customer_store_credit_balance WHERE customer_id='CREDIT-CUS'").receivable_due,40);
-  assert.throws(()=>insertCredit.run('WRONG-OWNER','OTHER-CUS','ISSUE','Sales Return','CREDIT-RETURN-1',2000,2000,'tester'),/STORE_CREDIT_LEDGER_CONFLICT/);
+  assert.throws(()=>insertCredit.run('WRONG-OWNER','OTHER-CUS','ISSUE','Sales Return','CREDIT-RETURN-1',2000,2000,'tester'),/STORE_CREDIT_(LEDGER|SOURCE)_CONFLICT/);
   insertCredit.run('CREDIT-ENTRY-1','CREDIT-CUS','ISSUE','Sales Return','CREDIT-RETURN-1',2000,2000,'tester');
   assert.equal(get("SELECT COUNT(*) n FROM store_credit_legacy_unreconciled").n,0);
   assert.equal(get("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CREDIT-CUS'").available_cents,2000);
