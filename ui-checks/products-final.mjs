@@ -68,9 +68,10 @@ export async function runFinalProductChecks({browser,base,withCheck,results}){
       const purchase=page.getByRole('menuitemcheckbox',{name:/Purchase/});
       await purchase.click();
       assert.equal(await page.locator('thead').getByText('Purchase').count(),0);
-      // Restore column using the same persistent source picker.
-      await page.getByRole('button',{name:/Columns/}).click();
+      // Source FloatingPanel stays OPEN when a column checkbox toggles.
+      // Clicking Columns here would close it; restore directly in that panel.
       await page.getByRole('menuitemcheckbox',{name:/Purchase/}).click();
+      await page.keyboard.press('Escape');
       await page.getByRole('radio',{name:/^Low/}).click();
       assert.equal(await page.locator('tbody tr').count(),1);
       assert.ok(await page.getByText('PVC Pipe').count()>=1);
