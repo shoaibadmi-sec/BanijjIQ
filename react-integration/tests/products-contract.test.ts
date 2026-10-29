@@ -56,6 +56,11 @@ test('empty authenticated D1 catalog stays empty with zero counters; no demo fal
   assert.deepEqual(view.categories, [{ id: 'c', name: 'Pipe' }]);
 });
 
+test('authorized negative on-hand stock is preserved for oversold products', () => {
+  const mapped = toProductView({ ...backendRow, currentStock: -2 });
+  assert.equal(mapped.stock, -2, 'Negative inventory must not be silently clamped to zero');
+});
+
 test('invalid nonfinite D1 amounts are rejected rather than fabricated', () => {
   assert.throws(() => toProductView({ ...backendRow, sellingPrice: Number.NaN }), /sellingPrice/i);
   assert.throws(() => toProductView({ ...backendRow, currentStock: Infinity }), /currentStock/i);
