@@ -56,15 +56,23 @@ use existing production D1, merge PR #9, or change the pinned HisabIQ source.
 4. `tests/preview-deploy.contract.test.mjs` asserts the hostname restriction,
    read-only request policy and guarded workflow dependency.
 
-### Default-branch registration blocker
+### Default-branch launcher synchronized (2026-10-29)
 
-The manual `workflow_dispatch` launcher that GitHub currently offers on
-`main` is an **older independent copy**. Updating the file in draft PR #9
-does **not** update GitHub's default-branch launcher. Until that manually
-maintained launcher is separately reviewed and synchronized, **do not
-authorize or dispatch hosted deployment using the older default-branch
-workflow**. This PR deliberately does not merge itself into `main` or alter
-production to work around that gate.
+The manual `workflow_dispatch` launcher on `main` was updated independently
+in **commit `e8eb0b18b521fd96e59c011b82d362f8e0039c6d`**, without merging
+draft PR #9. GitHub's commit comparison confirms the **only changed file** on
+`main` was `.github/workflows/hisabiq-hosted-preview-dispatch.yml`.
+Its blob SHA `9bbd55a644956dba0148200faaf7fc331f021cde` matches the reviewed
+PR-branch workflow exactly. There are still no push/pull_request deployment
+triggers and production `wrangler.jsonc` is untouched.
+
+**Launcher synchronization is complete, but hosted deployment is NOT
+authorized or performed.** Before manual dispatch, an authorized operator
+must confirm the dedicated Cloudflare D1 database, a scoped API token,
+the six GitHub **environment** secrets, reviewer/deployment protection, and
+the new exact 40-character PR #9 head SHA (which changes whenever PR #9
+receives a commit). GitHub/Cloudflare environment credentials and setup cannot
+be inferred from source code or local regression results.
 
 ## Acceptance/release hold
 
