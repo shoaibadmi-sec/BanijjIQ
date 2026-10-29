@@ -67,6 +67,30 @@ test('Phase 3G2 cash-funded mixed-unit returns issue separate atomic customer li
   assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,0);
   assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',productId).current_stock,77);
 
+  // Force the last audit write to fail after the return, FIFO restoration and
+  // liability issuance have been queued. D1/SQLite batches must roll back all
+  // earlier statements instead of leaving spendable orphan credit or stock.
+  db.native.exec(
+   "CREATE TRIGGER reject_credit_return_audit BEFORE INSERT ON audit_logs "+
+   "WHEN NEW.action='CREATE_SALES_RETURN' BEGIN "+
+   "SELECT RAISE(ABORT,'SIMULATED_AUDIT_WRITE_FAILURE'); END"
+  );
+  const rolledBack=await api('POST','/api/sales-returns',{
+   invoiceId:id,refundMethod:'Store Credit',reason:'Three pieces returned for credit',
+   items:[{productId,qty:3,unitPrice:0,unitQuantities:{Pcs:3}}]
+  });
+  assert.equal(rolledBack.status,500,JSON.stringify(rolledBack));
+  assert.match(String(rolledBack.error),/SIMULATED_AUDIT_WRITE_FAILURE/);
+  assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,0);
+  assert.equal(row('SELECT COUNT(*) n FROM sales_return_items').n,0);
+  assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,0);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',productId).current_stock,77);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+  assert.equal(row('SELECT current_due FROM customers WHERE customer_id=?','CREDIT-LINKED').current_due,before.balance);
+  assert.equal(row("SELECT COUNT(*) n FROM audit_logs WHERE action='CREATE_SALES_RETURN'").n,0);
+  db.native.exec('DROP TRIGGER reject_credit_return_audit');
+
   const creditOne=await api('POST','/api/sales-returns',{
    invoiceId:id,refundMethod:'Store Credit',reason:'Three pieces returned for credit',
    items:[{productId,qty:3,unitPrice:0,unitQuantities:{Pcs:3}}]
