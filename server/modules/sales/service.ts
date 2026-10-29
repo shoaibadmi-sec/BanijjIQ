@@ -64,14 +64,16 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 }
 
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
-  const [pr, cr, br, vr, session, settingsRows] = await Promise.all([
+  const [pr, cr, br, vr, session, settingsRows, profileRows] = await Promise.all([
     db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' ORDER BY product_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
     getOpenCashSession(db),
-    db.prepare(`SELECT setting_key,setting_value FROM app_settings`).all<{setting_key:string;setting_value:string}>()
+    db.prepare(`SELECT setting_key,setting_value FROM app_settings`).all<{setting_key:string;setting_value:string}>(),
+    db.prepare('SELECT product_id,profile_json,revision FROM product_unit_profiles').all<{product_id:string;profile_json:string;revision:number}>()
   ]);
+  const profiles=new Map((profileRows.results||[]).map(row=>[row.product_id,{...JSON.parse(row.profile_json),revision:row.revision,postingEnabled:false}]));
   const settings:Record<string,string>={};
   for(const row of settingsRows.results||[]) settings[row.setting_key]=row.setting_value||'';
   const showPurchasePrice = String(settings['POS Show Purchase Price'] || '').trim().toLowerCase() === 'true' && await hasModulePermission(db,user,'posCost','view');
@@ -83,7 +85,8 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
       ...(showPurchasePrice?{purchasePrice:Number(p.purchase_price||0)}:{}),
       sellingPrice:Number(p.selling_price||0),stock:availability.get(String(p.product_id))?.sellable??Number(p.current_stock||0),totalStock:Number(p.current_stock||0),
       pendingTracking:availability.get(String(p.product_id))?.pending??0,expiredStock:availability.get(String(p.product_id))?.expired??0,minimumStock:Number(p.minimum_stock||0),
-      trackSerial:!!p.track_serial,trackExpiry:!!p.track_expiry,trackWarranty:!!p.track_warranty,warrantyPeriodValue:Number(p.warranty_period_value||0),warrantyPeriodUnit:p.warranty_period_unit||'Months'
+      trackSerial:!!p.track_serial,trackExpiry:!!p.track_expiry,trackWarranty:!!p.track_warranty,warrantyPeriodValue:Number(p.warranty_period_value||0),warrantyPeriodUnit:p.warranty_period_unit||'Months',
+      unitProfilePreview:profiles.get(p.product_id)??null
     })),
     customers:(cr.results||[]).map((c:any)=>({id:c.customer_id,name:c.customer_name,phone:c.phone,fatherName:c.father_name||'',address:c.address||'',currentDue:Number(c.current_due||0)})),
     bankAccounts:(br.results||[]).map((b:any)=>({id:b.bank_account_id,name:b.account_name,accountType:b.account_type||'Bank'})),
