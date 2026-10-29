@@ -66,3 +66,48 @@ test('manual default-branch launcher pins reviewed PR #9 and prevents accidental
   assert.ok(!launcher.includes('\n  pull_request:'));
   assert.ok(!launcher.includes('wrangler deploy --config wrangler.jsonc'));
 });
+
+
+test('Phase 14 hosted browser acceptance is read-only, scoped and locally rehearsed',()=>{
+  const browser=read('scripts/preview/browser-acceptance.mjs');
+  const local=read('d1-checks/phase13-browser.mjs');
+  for(const marker of [
+    "const workerName='banijjiq-hisabiq-react-preview'",
+    'https:',
+    'workers\\.dev',
+    '127.0.0.1:8793',
+    "method==='GET'",
+    "method==='POST'&&uri.pathname==='/api/auth/login'",
+    "await route.abort('blockedbyclient')",
+    "assert.equal(result.blockedWrites.length,0",
+    "assert.equal(result.browserErrors.length,0",
+    "await page.getByText('Sign in · BanijjIQ').waitFor",
+    "await page.keyboard.press('F2')",
+    "await window.axe.run",
+    "for(const width of [390,768,1440])"
+  ])assert.ok(browser.includes(marker),marker);
+  assert.ok(!browser.includes("fetch(base+'/api/pos/sales'"),'Preview acceptance may not write sales');
+  assert.ok(!browser.includes("fetch(base+'/api/sales-returns'"),'Preview acceptance may not write refunds');
+  assert.ok(local.includes('runBrowserAcceptance({'));
+  assert.ok(local.includes('allowLocal:true'));
+  assert.ok(local.includes("assert.equal(r.passed.length,15)"));
+});
+
+test('Phase 14 read-only hosted acceptance cannot run on PR or without protected deploy',()=>{
+  const launcher=read('.github/workflows/hisabiq-hosted-preview-dispatch.yml');
+  const branch=read('.github/workflows/hisabiq-react-build.yml');
+  for(const workflow of [launcher,branch]){
+    assert.ok(workflow.includes('  accept-hosted-preview:\n'));
+    assert.ok(workflow.includes('name: hisabiq-react-preview'));
+    assert.ok(workflow.includes('node scripts/preview/browser-acceptance.mjs --remote'));
+    assert.ok(workflow.includes('submodules: recursive'));
+    assert.ok(workflow.includes('hisabiq-hosted-read-only-acceptance'));
+    assert.ok(workflow.includes("inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY'"));
+    assert.ok(workflow.includes('npx playwright install --with-deps chromium'));
+  }
+  assert.ok(launcher.includes('needs: deploy-isolated-preview'));
+  assert.ok(branch.includes('needs: deploy-hosted-preview'));
+  assert.ok(launcher.includes('node d1-checks/phase12.mjs'));
+  assert.ok(launcher.includes('node d1-checks/phase13-browser.mjs'));
+  assert.ok(branch.includes('node d1-checks/phase13-browser.mjs'));
+});
