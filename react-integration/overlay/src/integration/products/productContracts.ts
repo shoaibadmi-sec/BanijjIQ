@@ -34,7 +34,7 @@ export type ProductFailureState =
 
 function requiredAmount(row: BackendProduct, key: 'currentStock' | 'minimumStock' | 'sellingPrice' | 'purchasePrice'): number {
   const value = row[key];
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || (key !== 'currentStock' && value < 0)) {
     throw new Error('Invalid D1 product ' + key + ' for ' + String(row.productId));
   }
   return value;
