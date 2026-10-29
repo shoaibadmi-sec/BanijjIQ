@@ -76,6 +76,7 @@ Do not add speculative framework dependencies, a parallel Products SPA, or a rep
 
 **Files:**
 - Create: `react-integration/tests/products-source-parity.test.mjs`
+- Create: `react-integration/tests/reference/products-baseline.json`
 - Test: `react-integration/tests/products-source-parity.test.mjs`
 - Reference: pinned `apps/hisabiq-web/src/pages/Products.tsx`; Mohim `products.html`
 
