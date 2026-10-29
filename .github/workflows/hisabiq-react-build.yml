@@ -51,6 +51,7 @@ jobs:
         run: |
           git submodule status
           node --test react-integration/tests/contract.test.mjs
+          node --test react-integration/tests/products-source-parity.test.mjs
       - name: Check hosted-preview isolation (dry run, no Cloudflare credentials)
         run: |
           node scripts/preview/build-config.mjs --self-test
