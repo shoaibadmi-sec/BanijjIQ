@@ -24,6 +24,10 @@ export interface BackendProduct {
   updatedAt: string;
   currentStock: number;
   sellableStock?: number;
+  stockValue?: number;
+  pendingTracking?: number;
+  expiredStock?: number;
+  productType?: 'Standard' | 'Bundle';
   status: string;
 }
 const tokenKey = 'shererp_auth_token';
@@ -38,7 +42,7 @@ export class BackendRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!path.startsWith('/api/')) throw new Error('API requests must use a relative /api/ path');
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
