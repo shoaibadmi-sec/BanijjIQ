@@ -120,7 +120,10 @@ export function patchLiveProducts(source) {
   jsx=replaceOnce(jsx,
     '      <PageHeader',
     `      {notice&&<p role="status" className="rounded-lg bg-success-bg p-2 text-xs text-success">{notice}</p>}
-      {error&&<p role="alert" className="rounded-lg bg-danger-bg p-2 text-xs text-danger">{error}</p>}
+      {error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-bg p-2 text-xs text-danger">
+          <span>{error} · Showing no unverified inventory.</span>
+          <Button size="sm" variant="outline" disabled={loading} onClick={()=>void refresh().catch(()=>{})}>Retry products</Button>
+        </div>}
       {loading&&<p role="status" className="p-2 text-xs text-ink-500">Loading live products…</p>}
       <PageHeader`,'live fetch state');
   jsx=replaceOnce(jsx,
