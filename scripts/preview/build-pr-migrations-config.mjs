@@ -8,7 +8,8 @@ import {resolve} from 'node:path';
 
 const prod=JSON.parse(readFileSync(resolve('wrangler.jsonc'),'utf8'));
 const raw=(process.env.HISABIQ_PR_PREVIEW_D1_ID||'').trim();
-assert.match(raw,/^[a-f0-9]{8}-[a-f0-9-]{27,}$/i,'Provide demo-only HISABIQ_PR_PREVIEW_D1_ID');
+assert.match(raw,/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i,
+  'Provide a valid demo-only HISABIQ_PR_PREVIEW_D1_ID');
 assert.equal(prod.d1_databases?.length,1,'Review current production D1 settings before migration');
 assert.notEqual(raw.toLowerCase(),prod.d1_databases[0].database_id.toLowerCase(),
   'REFUSING: cannot generate migrations config for production D1');
