@@ -412,7 +412,7 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     if(av.mixedUnit){
       if(av.trackSerial||av.trackExpiry)return error(av.name+': tracked mixed-unit returns need serial/expiry allocation and remain unavailable.',409);
       if(!it.unitQuantities||typeof it.unitQuantities!=='object'||Array.isArray(it.unitQuantities))
-        return error(av.name+': choose quantities in the originally sold units.');
+        return error(av.name+': choose quantities in the originally sold units.',409);
       let quote:ReturnType<typeof quoteUnitQuantities>;
       try{quote=quoteUnitQuantities(av.mixedUnit.profile,it.unitQuantities);}
       catch(e){return error(av.name+': '+(e instanceof Error?e.message:'invalid unit quantity'));}
