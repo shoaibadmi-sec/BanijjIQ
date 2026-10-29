@@ -23,7 +23,6 @@ type Line = { product: PosProduct; qty: number; price: number; serialNumbers: st
   source: ShortageSelection };
 const noSerials: string[] = [];
 const taka = (n: number) => '৳' + Number(n || 0).toLocaleString('en-BD', { maximumFractionDigits: 2 });
-const asNumber = (n: unknown) => Number.isFinite(Number(n)) ? Number(n) : 0;
 const supported = (p: PosProduct) => p.stock > 0 || (!p.trackSerial && !p.trackExpiry);
 
 export function LivePosPage() {

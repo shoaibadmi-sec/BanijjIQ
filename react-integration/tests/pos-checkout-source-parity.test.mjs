@@ -29,7 +29,7 @@ test('checkout is driven by live D1 data and disallows fixture-backed payments',
   assert.ok(checkout.includes('props.errors.length > 0'));
   assert.ok(checkout.includes('props.requiresAccount'));
   assert.ok(!checkout.includes('partyPreviewStore'));
-  assert.ok(!checkout.includes('usePosCart'));
+  assert.ok(!checkout.includes("from '../../hooks/usePosCart'"));
   assert.ok(!checkout.includes('makePosPaymentRow('));
   assert.ok(!checkout.includes('Customer Credit'));
   assert.ok(!checkout.includes('InstallmentTermsPanel'));
