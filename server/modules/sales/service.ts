@@ -593,7 +593,7 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
     })():null;
     mapped.push({productId:i.product_id,name:i.product_name,soldQty:sold,vendorQty:vendor,previouslyReturnedQty:already,availableQty,unitPrice:Number(i.unit_price||0),...p,availableSerials,mixedUnit});
   }
-  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
+  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
 }
 
 export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser,authorizedReversal=false):Promise<Response>{
@@ -641,6 +641,13 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     const serialNumbers=Array.from(new Set((Array.isArray(it.serialNumbers)?it.serialNumbers:[]).map((x:any)=>cleanText(x)).filter(Boolean)));
     if(Number(av.trackSerial||0)&&serialNumbers.length!==q)return error(`${av.name}: select exactly ${q} Serial / IMEI number(s) being returned.`);
     const amount=mixedReturn?mixedReturn.amount:Math.round(q*price*100)/100;
+    if(isStoreCredit&&!mixedReturn){
+      // Do not mint arbitrary spendable credit via an editable return price.
+      const subtotal=Number(sale.subtotal||0),grand=Number(sale.grandTotal||0);
+      const historicalCents=subtotal>0?Math.round(q*Number(av.unitPrice||0)*grand/subtotal*100):0;
+      if(!Number.isSafeInteger(historicalCents)||Math.round(amount*100)!==historicalCents)
+        return error('Store Credit must use the original discounted net refund price.',409);
+    }
     valid.push({productId,name:av.name,q,price:mixedReturn?amount/q:price,amount,mixedReturn,serialNumbers,
       trackSerial:!!av.trackSerial,trackExpiry:!!av.trackExpiry,trackWarranty:!!av.trackWarranty});
     total+=amount;
@@ -837,7 +844,7 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'REVERSE_MIXED_SALE','SALE',?,?)")
       .bind(user.userId,invoiceId,'Return '+returnId+'; '+(isDueAdjustment?'due cancelled ':refundMethod+' refund ')+total+'; reason '+reason));
   }
-try{await db.batch(stmts);}catch(err){if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))return error('Customer Store Credit or original settlement changed. Reload and reconcile before retrying.',409);if(String(err).includes('DUE_REVERSAL_CONFLICT'))return error('Customer due or ledger changed. Reload before trying to cancel.',409);if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund or due-settlement ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
+try{await db.batch(stmts);}catch(err){if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||String(err).includes('STORE_CREDIT_SOURCE_CONFLICT')||String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))return error('Customer Store Credit or original settlement changed. Reload and reconcile before retrying.',409);if(String(err).includes('DUE_REVERSAL_CONFLICT'))return error('Customer due or ledger changed. Reload before trying to cancel.',409);if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund or due-settlement ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
 }
 
 export async function getSalesReturnHistoryRoute(db:SherDatabase):Promise<Response>{
