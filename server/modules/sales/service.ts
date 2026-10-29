@@ -378,8 +378,8 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   if(String(sale.created_at||'')<String(cash.opened_at||''))
     return no('Only invoices from this open cash session can be reversed. Use Sales Return for older invoices.');
   const isDueAdjustment=sale.payment_type==='Due';
-  const refundMethod=(isDueAdjustment?'Due Adjustment':cleanText(sale.payment_method))
-    as 'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment';
+  const refundMethod=(isDueAdjustment?'Due Adjustment':cleanText(sale.payment_method)) as
+    'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment';
   const bankRefund=refundMethod==='Bank'||refundMethod==='Mobile Banking';
   if(isDueAdjustment){
     if(Number(sale.paid_amount||0)!==0||Number(sale.due_amount||0)!==Number(sale.grand_total||0)||
