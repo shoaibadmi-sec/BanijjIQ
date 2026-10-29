@@ -30,9 +30,20 @@ a gitignored file at the repository root. Never modify the production
    \`banijjiq-hisabiq-react-preview-db\`. Via a locally authenticated Wrangler:
    \`npx wrangler d1 create banijjiq-hisabiq-react-preview-db --location apac\`
    (or create it in the Cloudflare dashboard). Keep the new database UUID.
-2. Create a Cloudflare API token scoped to that account with Workers Scripts
-   deployment permission and D1 database read/write capability. Do not use a
-   global API key. Prefer the least privilege allowed by Cloudflare.
+2. For the narrowest Cloudflare token permissions, **create a blank Worker**
+   named `banijjiq-hisabiq-react-preview` in the Cloudflare dashboard first
+   (separate from `shererp-new`). Enable its `workers.dev` endpoint. Then
+   create a Cloudflare **API token**, not a Global API Key, with **Workers Editor**
+   on this individual preview Worker and **D1 Edit/Write** for the dedicated
+   preview database (plus any account-level D1 metadata/read and Workers
+   subdomain read permissions required by the preview preflight and smoke
+   endpoints). Prefer database-level scoping if your account offers it.
+   If you do not precreate the Worker, initial creation requires **Workers
+   product-level Admin** rather than per-Worker Editor. Never grant a
+   production Worker deployment permission merely to simplify preview setup.
+   Official permission references:
+   https://developers.cloudflare.com/workers/authorization/workers/
+   and https://developers.cloudflare.com/fundamentals/api/reference/permissions/.
 3. In GitHub **Settings → Environments**, create
    \`hisabiq-react-preview\`, configure reviewer approval and deployment
    restrictions where available. Add the following as **environment secrets**
@@ -63,8 +74,10 @@ its environment-protected deployment step. It runs only with all of these:
 - valid environment secrets and any configured environment reviewer approval
 
 **Default-branch manual launcher is registered:** `.github/workflows/hisabiq-hosted-preview-dispatch.yml`
-was committed to `main` at `2607bc729c121d288e3a32996cf68da94be1269d`,
-without merging PR #9 or deploying the ERP. In GitHub **Actions →
+was **synchronized on `main` at `e8eb0b18b521fd96e59c011b82d362f8e0039c6d`**,
+without merging PR #9 or deploying the ERP. GitHub verified the commit
+changes only the manual launcher and its contents exactly match the
+PR branch's protected Phase 12/13/14 workflow. In GitHub **Actions →
 Authorize isolated HisabIQ React preview → Run workflow**, select `main`,
 enter the current reviewed full **40-character PR #9 head SHA** as
 `reviewed_commit_sha`, and enter `ISOLATED-PREVIEW-ONLY` as
@@ -115,20 +128,22 @@ without Cloudflare credentials. The existing \`d1-checks/run.mjs\` tests the
 real Worker against **local** D1. Only the guarded hosted-preview job uses
 remote D1 commands.
 
-## Phase 14 security review — dispatch remains blocked
+## Phase 14 security review — launcher synchronized, credentials unverified
 
-The copy of `.github/workflows/hisabiq-hosted-preview-dispatch.yml`
-on the **draft PR branch** now runs all baseline, Phase 12 and Phase 13
-real-Worker/D1 regressions before deploying. A separate
-`accept-hosted-preview` job depends on the authorized isolated
-deployment and uses the protected `hisabiq-react-preview` environment.
+Both the draft PR #9 workflow and the registered manual launcher on `main`
+now run baseline, Phase 12 and Phase 13 real Worker/D1 checks **before**
+any protected deploy. The independent `accept-hosted-preview` job requires
+a successful isolated deploy, uses a separate protected environment gate,
+and performs read-only Chromium authentication, POS, Products, Sales Returns,
+responsive/keyboard and accessibility acceptance.
 
-**Important:** the independently registered manual launcher on default
-branch `main` remains the **older version**; updating the PR-branch
-workflow does not update GitHub's manual Actions launcher. **Do not run
-the old default-branch manual preview deployment until its contents are
-explicitly reviewed and synchronized.** This step cannot be accomplished
-by merging PR #9 without violating the production release hold.
+**Verified:** the manual-only launcher on `main` is the same blob as the
+reviewed PR workflow. **Not verified:** whether Cloudflare's preview D1
+exists, the API token has required roles, or the GitHub environment has all
+six secrets and reviewer/deployment protections. Those settings are not
+readable through the available connected GitHub tools; the operator must
+check them in the Cloudflare and GitHub dashboards. Never dispatch until
+they are configured.
 
 The additional `scripts/preview/browser-acceptance.mjs` acceptance suite
 is read-only and enforces the exact dedicated `workers.dev` hostname. It
@@ -145,3 +160,12 @@ The same acceptance function runs locally as part of
 A local success does not establish hosted Cloudflare permissions or
 remote D1 readiness. Refer to `docs/hisabiq-react-phase14.md` before
 any preview authorization. Production remains untouched.
+
+## Exact minimal operator steps
+
+1. Cloudflare dashboard: create dedicated D1 database `banijjiq-hisabiq-react-preview-db`; record its **UUID**, not its name. Create the dedicated Worker `banijjiq-hisabiq-react-preview` and enable its workers.dev endpoint. Create a narrow Cloudflare API token as above.
+2. GitHub repository **Settings → Environments → hisabiq-react-preview**: add a required reviewer if available, set **deployment branches = selected branches → main**, then store the **six environment secrets** listed above. Do not add secrets to repository source or chat.
+3. Open https://github.com/shoaibadmi-sec/BanijjIQ/actions/workflows/hisabiq-hosted-preview-dispatch.yml and **Run workflow** on `main`. Copy the **current** full 40-character PR #9 head SHA from GitHub into `reviewed_commit_sha`, and enter `ISOLATED-PREVIEW-ONLY` as confirmation. Approve the environment protection request only after reviewing the verified commit.
+4. After jobs `verify-reviewed-commit`, `deploy-isolated-preview` and `accept-hosted-preview` succeed, open the actual preview URL shown in the **HTTPS smoke** job summary/artifact. Login using the preview-only phone/password secret values. Use only test data. The smoke/acceptance jobs never create sales or returns remotely.
+
+If a job fails, inspect GitHub Actions logs; never substitute the production D1 UUID or reuse production passwords to bypass preflight. This launches a **separate** React preview; the existing Vue Worker remains the live ERP. No PR merge or production cutover is included.
