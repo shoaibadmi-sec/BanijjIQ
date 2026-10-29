@@ -8,7 +8,7 @@ import type { LiveLot, StockMovement } from './productApi';
 import { toCatalogView, type Lookup } from './productContracts';
 
 type PendingOperation='create'|'edit'|'adjust'|'status'|null;
-export function useLiveProducts() {
+export function useLiveProducts(enabled=true) {
   const [items,setItems]=useState<BackendProduct[]>([]);
   const [lookups,setLookups]=useState<{categories:Lookup[];brands:Lookup[];units:Lookup[]}>({
     categories:[],brands:[],units:[]
@@ -39,7 +39,7 @@ export function useLiveProducts() {
       if(requestId===generation.current)setLoading(false);
     }
   },[]);
-  useEffect(()=>{void refresh().catch(()=>{});return()=>{generation.current++;};},[refresh]);
+  useEffect(()=>{if(enabled)void refresh().catch(()=>{});return()=>{generation.current++;};},[refresh,enabled]);
   const runWrite=useCallback(async<T,>(operation:Exclude<PendingOperation,null>,write:()=>Promise<T>):Promise<T>=>{
     if(pendingRef.current)throw new Error('A product operation is already in progress.');
     pendingRef.current=true;
