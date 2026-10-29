@@ -181,6 +181,15 @@ export async function runRealD1Browser(){
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          // A stale receipt/dialog close event must not erase the next sale.
+          await page.evaluate(() => new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+            'Starting the next sale must preserve its customer name');
+          assert.equal(await phone.inputValue(),'01000000124',
+            'Starting the next sale must preserve its phone');
+          assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40',
+            'Starting the next sale must preserve payment amount');
           const dueReady=page.getByRole('button',{name:'Review and post real sale',exact:true});
           if(await dueReady.isDisabled()){
             const warnings=await page.locator('[data-live-pos] [role="alert"]').allTextContents();
