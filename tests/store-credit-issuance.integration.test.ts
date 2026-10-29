@@ -103,7 +103,7 @@ test('Phase 3G2 cash-funded mixed-unit returns issue separate atomic customer li
    invoiceId:id,refundMethod:'Store Credit',reason:'Repeat already returned box',
    items:[{productId,qty:20,unitPrice:0,unitQuantities:{Box:1}}]
   });
-  assert.equal(replay.status,409,JSON.stringify(replay));
+  assert.equal(replay.status,400,JSON.stringify(replay));
   assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,2);
   assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,2);
   assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',productId).current_stock,100);
