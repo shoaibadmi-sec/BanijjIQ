@@ -6,6 +6,7 @@ import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {runBrowserAcceptance} from '../scripts/preview/browser-acceptance.mjs';
 const root=resolve(process.cwd()),web=join(root,'.generated/hisabiq-web');
 const require=createRequire(pathToFileURL(join(web,'package.json')));
 const {chromium}=require('playwright');
@@ -142,6 +143,17 @@ try{
   await seed('D Vendor',{currentStock:1,sellingPrice:70});
  });
  browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ await check('Phase 14 preview browser acceptance rehearsal on isolated local Worker/D1',async()=>{
+  const r=await runBrowserAcceptance({
+   baseUrl:base,phone:'01000001300',password:'P13-Local-Password!',
+   browser,allowLocal:true,outputDir:out
+  });
+  assert.equal(r.passed.length,15);
+  assert.equal(r.blockedWrites.length,0);
+  assert.equal(r.browserErrors.length,0);
+  report.previewAcceptance={mode:r.mode,checks:r.passed.length,screenshots:r.screenshots.length,
+   wcagAudits:r.accessibility.length,blockedBusinessWrites:r.blockedWrites.length};
+ });
  await check('real 390px browser login + mobile POS accessibility',async()=>{
   const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
   const page=await ctx.newPage();page.on('pageerror',e=>report.errors.push(e.message));
