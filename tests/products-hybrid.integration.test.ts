@@ -174,5 +174,24 @@ test('Products Tasks 3–4: transactional D1 semantics and genuine Mohim actions
       assert.equal(lots.lots.reduce((n:number,l:any)=>n+l.remainingQuantity,0),6);
       assert.ok(lots.lots.every((l:any)=>Number.isFinite(l.purchasePrice)));
     });
+    await t.test('a real POS sale updates the same FIFO lots and history without synthetic IDs',async()=>{
+      assert.equal((await api('PUT','/api/products/'+productId+'/status',{status:'Active'})).status,200);
+      const opened=await api('POST','/api/pos/cash-session/start',{openingCash:100});
+      assert.equal(opened.status,200,JSON.stringify(opened));
+      const posted=await api('POST','/api/pos/sales',{
+        clientRequestId:'hybrid-products-sale-00001',
+        customerName:'Hybrid Test Buyer',customerPhone:'01000006666',
+        discount:0,paymentType:'Cash',paidAmount:0,paymentMethod:'Cash',
+        items:[{productId,name:'Hybrid Cable Updated',qty:1,unitPrice:35,fulfillmentMode:'own'}]
+      });
+      assert.equal(posted.status,200,JSON.stringify(posted));
+      assert.equal(sql('SELECT current_stock n FROM products WHERE product_id=?',productId).n,5);
+      const history=await api('GET','/api/products/'+productId+'/history');
+      assert.equal(history.status,200);
+      const persisted=list('SELECT movement_id FROM stock_movements WHERE product_id=? ORDER BY created_at DESC,id DESC',productId);
+      assert.deepEqual(history.items.map((x:any)=>x.movementId),persisted.map(x=>x.movement_id));
+      const lots=await api('GET','/api/products/'+productId+'/lots');
+      assert.equal(lots.lots.reduce((sum:number,x:any)=>sum+x.remainingQuantity,0),5);
+    });
   } finally { db.close(); }
 });
