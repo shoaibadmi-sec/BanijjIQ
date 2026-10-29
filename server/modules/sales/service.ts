@@ -347,9 +347,84 @@ export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user
   stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'RECEIVE_CUSTOMER_PAYMENT','CUSTOMER',?,?)`).bind(user.userId,customerId,`Amount ${amount}`));await db.batch(stmts);return json({ok:true,newDue});
 }
 
+/**
+ * Full invoice reversal uses the existing atomic sales-return FIFO engine.
+ * Only fully paid cash sales of untracked, own-stock mixed-unit lines are safe.
+ * The original invoice/snapshots remain immutable for audit.
+ */
+async function planMixedSaleReversal(db:SherDatabase,id:string){
+  const no=(reason:string)=>({eligible:false,reason,invoiceId:id,refundAmount:0,
+    items:[] as Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>});
+  const sale=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0')
+    .bind(id).first<any>();
+  if(!sale)return no('Invoice not found.');
+  if(sale.status!=='Completed')return no('Only completed and unreversed invoices are eligible.');
+  const cash=await getOpenCashSession(db);
+  if(!cash)return no('Start a cash session first.');
+  if(String(sale.created_at||'')<String(cash.opened_at||''))
+    return no('Only invoices from this open cash session can be reversed. Use Sales Return for older invoices.');
+  if(sale.payment_type!=='Cash'||sale.payment_method!=='Cash'||Number(sale.due_amount||0)!==0||
+      Math.abs(Number(sale.paid_amount||0)-Number(sale.grand_total||0))>0.001)
+    return no('Full reversal requires a fully paid cash invoice with no due or bank transaction.');
+  if(await db.prepare('SELECT 1 AS x FROM sales_returns WHERE invoice_id=? LIMIT 1').bind(id).first())
+    return no('Partial returns already exist. Use the existing returns workflow.');
+  if(await db.prepare('SELECT 1 AS x FROM vendor_sourcing WHERE invoice_id=? LIMIT 1').bind(id).first())
+    return no('Vendor-sourced invoices require specialist settlement.');
+  if(await db.prepare(
+    'SELECT 1 AS x FROM sale_items i JOIN products p ON p.product_id=i.product_id '+
+    'WHERE i.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1 OR p.track_warranty=1) LIMIT 1'
+  ).bind(id).first())return no('Serial, expiry or warranty-tracked items require specialist returns.');
+  if(await db.prepare(
+    "SELECT 1 AS x FROM sale_item_lots sil JOIN stock_lots sl ON sl.lot_id=sil.lot_id "+
+    "WHERE sil.invoice_id=? AND sl.source_type='OVERSOLD' LIMIT 1"
+  ).bind(id).first())return no('Negative-stock invoice reversal is not supported.');
+  const received=await db.prepare(
+    "SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE reference=? AND type='Sale' AND is_deleted=0"
+  ).bind(id).first<{n:number}>();
+  if(Math.abs(Number(received?.n||0)-Number(sale.paid_amount||0))>0.001)
+    return no('Original cash ledger cannot be reconciled.');
+  const dataResponse=await getSaleReturnDataRoute(db,id);
+  const data=await dataResponse.json() as any;
+  if(!data.ok)return no('Invoice return history could not be read.');
+  if(!data.sale.items?.length)return no('No sale items found.');
+  const subtotal=Number(sale.subtotal||0),grand=Number(sale.grand_total||0);
+  if(subtotal<=0||grand<=0)return no('This invoice has no positive amount to reverse.');
+  let refundCents=0;
+  const items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>=[];
+  for(const line of data.sale.items){
+    if(!line.mixedUnit)return no('All items must have a saved mixed-unit snapshot.');
+    if(Number(line.availableQty)!==Number(line.soldQty))
+      return no('Original quantities are not fully available for reversal.');
+    const quantities=line.mixedUnit.originalQuantities as Record<string,number>;
+    const quote=quoteUnitQuantities(line.mixedUnit.profile as UnitProfile,quantities);
+    if(quote.baseQuantity!==Number(line.soldQty))return no('Saved conversion quantities are inconsistent.');
+    refundCents+=Math.round(quote.lineTotal*grand/subtotal*100);
+    items.push({productId:line.productId,qty:quote.baseQuantity,unitPrice:0,unitQuantities:quantities});
+  }
+  if(refundCents!==Math.round(grand*100))
+    return no('Discount rounding needs review; no automatic full reversal can be posted.');
+  return {eligible:true,reason:'',invoiceId:id,refundAmount:grand,items};
+}
+export async function getMixedSaleReversalPreviewRoute(db:SherDatabase,id:string):Promise<Response>{
+  const preview=await planMixedSaleReversal(db,id);
+  return preview.reason==='Invoice not found.'?error(preview.reason,404):json({ok:true,preview});
+}
+export async function reverseMixedSaleRoute(db:SherDatabase,id:string,input:any,user:AuthUser):Promise<Response>{
+  if(!(await hasModulePermission(db,user,'returns','add')))
+    return error('Sales Returns permission is required to reverse an invoice.',403);
+  const reason=cleanText(input?.reason);
+  if(reason.length<8||reason.length>500)return error('Enter an 8–500 character reason for reversal.');
+  const preview=await planMixedSaleReversal(db,id);
+  if(!preview.eligible)return error(preview.reason||'Not eligible for full reversal.',409);
+  return completeSalesReturnRoute(db,{
+    invoiceId:id,refundMethod:'Cash',reason,items:preview.items
+  },user,true);
+}
+
 export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<Response>{
   const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();
   if(!s)return error('Invoice not found.',404);
+  if(s.status==='Reversed')return error('Invoice is already fully reversed.',409);
   const [items,ret,vend,unitSnapshots,priorUnitReturns]=await Promise.all([
     db.prepare(`SELECT product_id,product_name,SUM(quantity) sold_qty,MAX(unit_price) unit_price FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>(),
     db.prepare(`SELECT product_id,SUM(return_quantity) qty FROM sales_return_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>(),
@@ -392,7 +467,7 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
   return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
 }
 
-export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser):Promise<Response>{
+export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser,authorizedReversal=false):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start your cash session first before recording a Sales Return.');
   const invoiceId=cleanText(input.invoiceId),refundMethod=cleanText(input.refundMethod),reason=cleanText(input.reason);
   if(!invoiceId)return error('No invoice selected.');
@@ -489,7 +564,15 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   for(const x of ordinaryRestore.values()){let next=x.current+x.restore;if(x.sourceType==='OVERSOLD')next=Math.min(0,next);else next=Math.min(x.original,next);stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=?,updated_at=datetime('now'),status=CASE WHEN ?>0 THEN 'Active' WHEN source_type='OVERSOLD' AND ?<0 THEN 'Oversold' ELSE 'Depleted' END WHERE lot_id=?`).bind(next,next,next,x.lotId));}
   if(refundMethod==='Cash')stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Sales Return',?,?,?,0,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,returnId,`Cash refund for ${invoiceId}`,total));
   else{const c=await db.prepare(`SELECT customer_name,current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(c?.current_due||0)-total;stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sales Return Credit',?,0,?,?,?)`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,customerId,c?.customer_name||sale.customerName,returnId,total,newDue,`Store credit for return ${returnId}`));}
-  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));try{await db.batch(stmts);}catch(err){if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
+  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));
+  if(authorizedReversal){
+    stmts.push(db.prepare('INSERT INTO sale_reversal_logs (invoice_id,return_id,refund_amount_cents,reason,reversed_by) VALUES (?,?,?,?,?)')
+      .bind(invoiceId,returnId,Math.round(total*100),reason,user.userId));
+    stmts.push(db.prepare("UPDATE sales SET status='Reversed',updated_at=datetime('now') WHERE invoice_id=? AND status='Completed' AND is_deleted=0").bind(invoiceId));
+    stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'REVERSE_MIXED_SALE','SALE',?,?)")
+      .bind(user.userId,invoiceId,'Return '+returnId+'; cash refund '+total+'; reason '+reason));
+  }
+try{await db.batch(stmts);}catch(err){if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
 }
 
 export async function getSalesReturnHistoryRoute(db:SherDatabase):Promise<Response>{

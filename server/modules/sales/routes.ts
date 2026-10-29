@@ -6,7 +6,8 @@ import {
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
   getSaleReturnDataRoute, getSalesByPhoneRoute, getSalesManagementRoute, getSalesReturnDetailRoute,
   getSalesReturnHistoryRoute, getSaleUpdateDataRoute, receiveCustomerPaymentRoute,
-  searchSalesInvoicesForReturnRoute, startCashSessionRoute, updateSaleRoute
+  searchSalesInvoicesForReturnRoute, startCashSessionRoute, updateSaleRoute,
+  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute
 } from './service.js';
 
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
@@ -38,6 +39,11 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   const salesReturnDataMatch = path.match(/^\/api\/sales-returns\/([^/]+)\/data$/);
   if (salesReturnDataMatch && request.method === 'GET') return getSaleReturnDataRoute(db, decodeURIComponent(salesReturnDataMatch[1]));
+
+  const reverseMatch=path.match(/^\/api\/sales-management\/([^/]+)\/reverse$/);
+  if(reverseMatch && request.method==='GET')return getMixedSaleReversalPreviewRoute(db,decodeURIComponent(reverseMatch[1]));
+  if(reverseMatch && request.method==='POST')return reverseMixedSaleRoute(
+    db,decodeURIComponent(reverseMatch[1]),await readBody<any>(request),user);
 
   const salesUpdateDataMatch = path.match(/^\/api\/sales-management\/([^/]+)\/update-data$/);
   if (salesUpdateDataMatch && request.method === 'GET') return getSaleUpdateDataRoute(db, decodeURIComponent(salesUpdateDataMatch[1]));

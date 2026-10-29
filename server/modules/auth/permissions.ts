@@ -81,7 +81,7 @@ async function requireDeleteWindow(db:SherDatabase,user:AuthUser,moduleKey:strin
 
 async function resolveDeleteRecordDate(db:SherDatabase,path:string,moduleKey:string):Promise<string>{
   let m:RegExpMatchArray|null;
-  if(moduleKey==='sales' && (m=path.match(/^\/api\/sales-management\/([^/]+)$/))) return (await db.prepare(`SELECT sale_date d FROM sales WHERE invoice_id=?`).bind(decodeURIComponent(m[1])).first<any>())?.d||'';
+  if(moduleKey==='sales' && (m=path.match(/^\/api\/sales-management\/([^/]+)(?:\/reverse)?$/))) return (await db.prepare(`SELECT sale_date d FROM sales WHERE invoice_id=?`).bind(decodeURIComponent(m[1])).first<any>())?.d||'';
   if(moduleKey==='purchase' && (m=path.match(/^\/api\/purchases\/([^/]+)$/))) return (await db.prepare(`SELECT purchase_date d FROM purchases WHERE purchase_id=?`).bind(decodeURIComponent(m[1])).first<any>())?.d||'';
   if(moduleKey==='products' && (m=path.match(/^\/api\/products\/([^/]+)$/))) return (await db.prepare(`SELECT substr(created_at,1,10) d FROM products WHERE product_id=?`).bind(decodeURIComponent(m[1])).first<any>())?.d||'';
   if(moduleKey==='customers' && (m=path.match(/^\/api\/customers\/([^/]+)$/))) return (await db.prepare(`SELECT substr(created_at,1,10) d FROM customers WHERE customer_id=?`).bind(decodeURIComponent(m[1])).first<any>())?.d||'';
@@ -105,6 +105,7 @@ function permissionRouteInfo(path:string,method:string):{moduleKey:string;action
   const found=rules.find(([re])=>re.test(path)); if(!found)return null;
   let action:'view'|'add'|'edit'|'delete'=method==='GET'?'view':method==='PUT'?'edit':method==='DELETE'?'delete':'add';
   if(/\/reset-password$/.test(path)||/\/status$/.test(path)||/\/adjust-stock$/.test(path)||/\/cancel$/.test(path)||/\/reverse$/.test(path)||/\/purchases\/planner\/plans\/[^/]+\/(approve|reject)$/.test(path))action='edit';
+  if(/^\/api\/sales-management\/[^/]+\/reverse$/.test(path)&&method==='POST')action='delete';
   if(/\/payments$/.test(path)&&method==='POST')action='edit';
   if(/^\/api\/vendors\/[^/]+\/(pay|return-products|give-products|receive-payment|receive-products)$/.test(path)&&method==='POST')action='edit';
   if(path==='/api/settings/invoice-logo'&&(method==='POST'||method==='DELETE'))action='edit';

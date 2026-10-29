@@ -10,6 +10,7 @@ import { canUseModule, useBackendSession } from './BackendGate';
 import {
   BackendRequestError, searchReturnInvoices, getReturnableInvoice, postSalesReturn,
   getSalesReturnHistory, type ReturnInvoiceMatch, type ReturnableInvoice, type SalesReturnPayload,
+  getMixedReversalPreview,postMixedReversal,type MixedReversalPreview,
   type ReturnMixedUnit
 } from './banijjApi';
 import type { Product } from '../types/erp';
@@ -23,6 +24,7 @@ export function LiveSalesReturnsPage(){
   const user=useBackendSession();
   const canView=canUseModule(user,'returns','view');
   const canPost=canUseModule(user,'returns','add');
+  const canReverse=canPost&&canUseModule(user,'sales','delete');
   const [search,setSearch]=useState('');
   const [matches,setMatches]=useState<ReturnInvoiceMatch[]>([]);
   const [sale,setSale]=useState<ReturnableInvoice|null>(null);
@@ -37,6 +39,10 @@ export function LiveSalesReturnsPage(){
   const [history,setHistory]=useState<Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>>([]);
   const [historyChecked,setHistoryChecked]=useState(false);
   const [review,setReview]=useState(false);
+  const [reversalPreview,setReversalPreview]=useState<MixedReversalPreview|null>(null);
+  const [reversalReason,setReversalReason]=useState('');
+  const [reversalLoading,setReversalLoading]=useState(false);
+  const [reversalPosted,setReversalPosted]=useState<{id:string;amount:number}|null>(null);
   const [posting,setPosting]=useState(false);
   const activeLine=sale?.items.find(x=>x.productId===picker);
   const activeItem=items.find(x=>x.productId===picker);
@@ -70,13 +76,13 @@ export function LiveSalesReturnsPage(){
 
   const find=async()=>{
     if(!search.trim())return;
-    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setMatches([]);
+    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setMatches([]);setReversalPreview(null);setReversalPosted(null);
     try{const result=await searchReturnInvoices(search.trim());setMatches(result.matches);}
     catch(e){setError(e instanceof Error?e.message:'Could not search invoices.');}
     finally{setBusy(false);}
   };
   const choose=async(id:string)=>{
-    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);
+    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setReversalPreview(null);setReversalPosted(null);
     try{
       const result=await getReturnableInvoice(id);
       setSale(result.sale);
@@ -128,6 +134,30 @@ export function LiveSalesReturnsPage(){
       else setError(e instanceof Error?e.message:'Return rejected.');
     }finally{setPosting(false);}
   };
+  const previewFullReversal=async()=>{
+    if(!canReverse||!sale||reversalLoading||posting||unknown)return;
+    setReversalLoading(true);setError('');setReversalPreview(null);
+    try{setReversalPreview((await getMixedReversalPreview(sale.invoiceId)).preview);}
+    catch(e){setError(e instanceof Error?e.message:'Could not verify full reversal eligibility.');}
+    finally{setReversalLoading(false);}
+  };
+  const submitFullReversal=async()=>{
+    if(!canReverse||!sale||!reversalPreview?.eligible||reversalReason.trim().length<8||posting||unknown)return;
+    if(!window.confirm('Reverse the ENTIRE original invoice '+sale.invoiceId+
+      ' and issue a real cash refund of '+money(reversalPreview.refundAmount)+
+      '? This preserves the original invoice and creates a permanent reversal journal.'))return;
+    setPosting(true);setError('');
+    try{
+      const saved=await postMixedReversal(sale.invoiceId,reversalReason.trim());
+      setReversalPosted({id:saved.returnId,amount:saved.totalReturnAmount});
+      setReversalPreview(null);setSale(null);setItems([]);setReason('');setReversalReason('');
+    }catch(e){
+      const uncertain=!(e instanceof BackendRequestError)||e.status===null||e.status>=500;
+      if(uncertain){
+        setUnknown(true);setError('Reversal outcome is uncertain. Verify the original invoice and Return History before trying again.');
+      }else setError(e instanceof Error?e.message:'Full reversal was rejected.');
+    }finally{setPosting(false);}
+  };
   const checkHistory=async()=>{
     setBusy(true);setError('');setHistoryChecked(false);
     try{setHistory((await getSalesReturnHistory()).returns.slice(0,30));setHistoryChecked(true);}
@@ -158,6 +188,11 @@ export function LiveSalesReturnsPage(){
         setUnknown(false);setSale(null);setItems([]);setHistory([]);setHistoryChecked(false);setError('');
       }}>I verified the invoice and return ledger — start a fresh search</Button>}
     </div>}
+    {reversalPosted&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
+      <CheckCircle2 className="mr-2 inline size-4 text-success"/>
+      Full invoice reversed: <strong>{reversalPosted.id}</strong> · Cash refund {money(reversalPosted.amount)}.
+      Original invoice remains visible for audit. <Link to="/app/pos" className="ml-2 font-semibold text-teal-700 underline">Create corrected sale</Link>
+    </div>}
     {success&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
       <CheckCircle2 className="mr-2 inline size-4 text-success"/>
       Return posted: <strong>{success.id}</strong> · {money(success.amount)}
@@ -186,6 +221,32 @@ export function LiveSalesReturnsPage(){
         <span><strong>{sale.invoiceId}</strong> · {sale.customerName}</span>
         <strong>Remaining {money(sale.netSale)}</strong>
       </div>
+      {canReverse&&sale.items.some(line=>Boolean(line.mixedUnit))&&
+        <div data-mixed-full-reversal className="space-y-2 rounded-lg border border-border bg-ink-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-medium text-ink-700">Full invoice reversal · সম্পূর্ণ চালান বাতিল</span>
+            <Button type="button" size="sm" variant="outline" disabled={busy||posting||reversalLoading||unknown}
+              onClick={()=>void previewFullReversal()}>
+              {reversalLoading?'Checking…':'Check full reversal'}
+            </Button>
+          </div>
+          <p className="text-[11px] text-ink-500">A full refund cancels all items through an audited Sales Return. The original invoice and prices stay unchanged.</p>
+          {reversalPreview&&!reversalPreview.eligible&&
+            <p role="alert" className="rounded-md bg-warning-bg p-2 text-xs text-warning">{reversalPreview.reason}</p>}
+          {reversalPreview?.eligible&&<>
+            <p className="text-xs text-ink-700">Eligible: {reversalPreview.items.length} lines · Cash refund <strong>{money(reversalPreview.refundAmount)}</strong></p>
+            <label className="block text-[11px] text-ink-600">Reversal reason · বাতিলের কারণ
+              <Input className="mt-1 h-9" value={reversalReason} maxLength={500}
+                aria-label="Full invoice reversal reason"
+                placeholder="Why is this entire invoice being reversed?"
+                onChange={e=>setReversalReason(e.target.value)}/>
+            </label>
+            <Button type="button" disabled={posting||unknown||reversalReason.trim().length<8}
+              onClick={()=>void submitFullReversal()}>
+              {posting?'Reversing…':'Review and reverse entire invoice'}
+            </Button>
+          </>}
+        </div>}
       <p className="text-xs text-ink-500">Only original eligible items can be returned. Qty 0 skips a line.</p>
       {sale.items.map(line=>{
         const item=items.find(x=>x.productId===line.productId);
