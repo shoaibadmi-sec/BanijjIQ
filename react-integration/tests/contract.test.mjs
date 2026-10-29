@@ -17,9 +17,15 @@ test('real backend authentication and read-only bootstrap use existing BanijjIQ 
   assert.ok(gate.includes('basic POS posts real accounting transactions'));
   assert.ok(gate.includes('Products and basic POS use the real API'));
   const products=read('overlay/src/integration/LiveProductsPage.tsx');
-  assert.ok(products.includes('getBootstrap()'));
-  assert.ok(products.includes('LiveProductEditor'));
+  const live=read('overlay/src/integration/products/useLiveProducts.ts');
+  const catalog=read('overlay/src/integration/products/productApi.ts');
+  assert.ok(products.includes('useLiveProducts(permitted)'));
+  assert.ok(products.includes('MohimProductEditor'));
+  assert.ok(products.includes('MohimProductActions'));
   assert.ok(products.includes('canUseModule(user,\'products\',\'edit\')'));
+  assert.ok(live.includes('loadProductCatalog()'));
+  assert.ok(catalog.includes("'/api/bootstrap'"));
+  assert.ok(!products.includes('upsertProductPreview('));
 });
 
 test('main HisabIQ Products and POS routes are replaced, demos remain explicitly separate', () => {
