@@ -73,9 +73,18 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   const today = todayDate();
   let dateFrom = cleanText(url.searchParams.get('dateFrom')) || today;
   let dateTo = cleanText(url.searchParams.get('dateTo')) || today;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) dateFrom = today;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) dateTo = today;
-  if (dateFrom > dateTo) { const t = dateFrom; dateFrom = dateTo; dateTo = t; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo) || dateFrom>dateTo)
+    return json({ok:false,error:'Enter a valid date range.'},400);
+  const requestedSize=cleanText(url.searchParams.get('pageSize'));
+  if (requestedSize && requestedSize!=='50' && requestedSize!=='100')
+    return json({ok:false,error:'Choose 50 or 100 rows per page.'},400);
+  const pageRaw=cleanText(url.searchParams.get('page'))||'1',page=Number(pageRaw);
+  if (!/^[1-9]\d*$/.test(pageRaw) || !Number.isSafeInteger(page))
+    return json({ok:false,error:'Choose a valid page number.'},400);
+  const pageSize=requestedSize?Number(requestedSize):null;
+  const sortBy=cleanText(url.searchParams.get('sortBy'))||'createdAt';
+  if(sortBy!=='createdAt'&&sortBy!=='transactionDate')
+    return json({ok:false,error:'Choose transaction date or created-at order.'},400);
   const moduleFilter = cleanText(url.searchParams.get('module'));
   const paymentFilter = cleanText(url.searchParams.get('paymentMethod'));
   const query = cleanText(url.searchParams.get('query')).toLowerCase();
@@ -273,7 +282,7 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   for (const f of financeOwnedR.results || []) owned.add(cleanText(f.finance_id));
 
   const transfersR = await db.prepare(`
-    SELECT transfer_id,transfer_date,from_account_id,from_account_name,to_account_id,to_account_name,amount,notes,created_by,created_at
+    SELECT transfer_id,transfer_date,from_account_id,from_account_name,to_account_id,to_account_name,amount,notes,created_by,created_at,reversed_at,reversal_reason
     FROM bank_transfers WHERE transfer_date BETWEEN ? AND ? ORDER BY created_at ASC
   `).bind(dateFrom, dateTo).all<any>();
   for (const t of transfersR.results || []) owned.add(cleanText(t.transfer_id));
@@ -303,7 +312,7 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
     rows.push(dayBookRow({
       ts, date, time: dayBookTime(ts), referenceNo: cleanText(t.transfer_id), module: 'Bank Transfer', transactionType: 'Bank Transfer',
       party: `${cleanText(t.from_account_name)} → ${cleanText(t.to_account_name)}`, description: cleanText(t.notes) || 'Transfer between accounts',
-      paymentMethod: 'Bank', createdBy: t.created_by, status: 'Active', sourceModule: 'Bank Transfer', sourceId: cleanText(t.transfer_id), openId: cleanText(t.transfer_id)
+      paymentMethod: 'Bank', createdBy: t.created_by, status: cleanText(t.reversed_at)?'Reversed':'Active', sourceModule: 'Bank Transfer', sourceId: cleanText(t.transfer_id), openId: cleanText(t.transfer_id)
     }));
   }
 
@@ -378,7 +387,11 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
       if (!hay.includes(query)) return false;
     }
     return true;
-  }).sort((a, b) => b.ts.localeCompare(a.ts));
+  }).sort((a,b)=>{
+    const primary=sortBy==='transactionDate'?b.date.localeCompare(a.date):b.ts.localeCompare(a.ts);
+    return primary||b.ts.localeCompare(a.ts)||b.date.localeCompare(a.date)||
+      a.sourceModule.localeCompare(b.sourceModule)||a.sourceId.localeCompare(b.sourceId);
+  });
 
   const totals = { cashIn: 0, cashOut: 0, bankIn: 0, bankOut: 0, netCash: 0, netBank: 0 };
   for (const r of filtered) {
@@ -389,7 +402,10 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   totals.netBank = totals.bankIn - totals.bankOut;
   for (const key of ['cashIn','cashOut','bankIn','bankOut','netCash','netBank'] as const) totals[key] = Math.round(totals[key] * 10000) / 10000;
 
-  return json({ ok: true, rows: filtered, totals, isAdmin, count: filtered.length });
+  const totalRows=filtered.length,totalPages=pageSize?Math.ceil(totalRows/pageSize):1;
+  const visible=pageSize?filtered.slice((page-1)*pageSize,page*pageSize):filtered;
+  return json({ok:true,rows:visible,totals,isAdmin,count:totalRows,
+    totalRows,totalPages,page,pageSize:pageSize||totalRows,sortBy,dateFrom,dateTo});
 }
 
 
