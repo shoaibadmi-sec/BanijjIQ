@@ -8,7 +8,7 @@ type Transfer={transfer_id:string;transfer_date:string;from_account_id:string;to
 type Expense={expense_id:string;expense_date:string;category_name:string;description:string;
  amount:number;payment_method:string;bank_account_id:string;status:string;is_deleted:number};
 type Finance={finance_id:string;date:string;transaction_type:string;person_name:string;
- amount:number;payment_method:string;bank_account_id:string};
+ amount:number;payment_method:string;bank_account_id:string;is_deleted:number};
 type RowInfo={row:LiveReportRow;sortAmount:number};
 const minor=(value:number):number|null=>Number.isFinite(value)&&Number.isSafeInteger(Math.round(value*100))
   ?Math.round(value*100):null;
@@ -49,12 +49,13 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
    db.prepare("SELECT bank_account_id,opening_balance,current_balance,status FROM bank_accounts ORDER BY bank_account_id LIMIT 2001").all<BankAccount>(),
    db.prepare("SELECT transfer_id,transfer_date,from_account_id,to_account_id,amount FROM bank_transfers ORDER BY transfer_date,transfer_id LIMIT 5001").all<Transfer>(),
    db.prepare("SELECT expense_id,expense_date,category_name,description,amount,payment_method,bank_account_id,status,is_deleted FROM expenses ORDER BY expense_date,expense_id LIMIT 10001").all<Expense>(),
-   db.prepare("SELECT finance_id,date,transaction_type,person_name,amount,payment_method,bank_account_id FROM finance_transactions WHERE is_deleted=0 ORDER BY date,finance_id LIMIT 10001").all<Finance>()
+   db.prepare("SELECT finance_id,date,transaction_type,person_name,amount,payment_method,bank_account_id,is_deleted FROM finance_transactions ORDER BY date,finance_id LIMIT 10001").all<Finance>()
  ]);
  const cash=cashR.results||[],bank=bankR.results||[],accounts=accountsR.results||[],
-   transfers=transfersR.results||[],expenseSources=expensesR.results||[],finance=financeR.results||[];
+   transfers=transfersR.results||[],expenseSources=expensesR.results||[],financeSources=financeR.results||[];
+ const finance=financeSources.filter(x=>Number(x.is_deleted)===0);
  const expenses=expenseSources.filter(x=>Number(x.is_deleted)===0&&x.status!=='Cancelled'&&x.status!=='Deleted');
- if(cash.length>10000||bank.length>10000||expenseSources.length>10000||finance.length>10000||
+ if(cash.length>10000||bank.length>10000||expenseSources.length>10000||financeSources.length>10000||
    accounts.length>2000||transfers.length>5000)problems.add('Reporting row safety limit reached. Split or archive source records before certifying totals.');
  const accountIds=new Set(accounts.map(x=>x.bank_account_id));
  const bankByAccount=new Map<string,Book[]>();
@@ -194,6 +195,10 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
  const financed=new Map<string,string>();
  const positiveTypes=new Set(['Owner Investment','Loan Received','Opening Owner Capital','Opening Loan']);
  const negativeTypes=new Set(['Owner Withdrawal','Loan Repayment']);
+ const financeIds=new Set(financeSources.map(x=>x.finance_id));
+ for(const book of periodBooks)if((positiveTypes.has(book.type)||negativeTypes.has(book.type))&&
+    !financeIds.has(book.reference))
+   problems.add('Financing money-book posting '+book.entry_id+' has no Finance source.');
  for(const f of finance){
    const sourceInPeriod=f.date>=q.from&&f.date<=q.to;
    const direction=positiveTypes.has(f.transaction_type)?1:negativeTypes.has(f.transaction_type)?-1:0;
