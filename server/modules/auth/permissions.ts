@@ -41,6 +41,25 @@ export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<
   try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
 }
 
+// A delegated employee manager cannot assign a custom role stronger than their own active role.
+export async function mayAssignCustomRole(db:SherDatabase,actor:AuthUser,role:string):Promise<boolean>{
+  if(actor.role==='admin')return true;
+  if(role==='admin')return false;
+  const proposed=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`)
+    .bind(role).first<{permissions_json:string;status:string}>();
+  if(!proposed || proposed.status!=='Active')return false;
+  const own=await getUserPermissions(db,actor);
+  if(!own)return false;
+  let wants:RolePermissions;
+  try{wants=sanitizePermissions(JSON.parse(proposed.permissions_json||'{}'))}catch{return false}
+  const scope=(v:unknown):number=>v===true||v==='unlimited'?Infinity:v==='same'?0:typeof v==='string'&&/^\d+$/.test(v)?Number(v):-1;
+  return Object.entries(wants).every(([key,p])=>{
+    const h=own[key];
+    return !!h && (!p.view||h.view) && (!p.add||h.add) && (!p.edit||h.edit)
+      && scope(p.delete)<=scope(h.delete) && scope(p.backdate)<=scope(h.backdate);
+  });
+}
+
 export async function buildClientUser(db:SherDatabase,user:AuthUser):Promise<AuthUser & {allowedModules:string[]|null;permissions:RolePermissions|null}>{
   const permissions=await getUserPermissions(db,user);
   return {...user,allowedModules:permissions===null?null:Object.keys(permissions).filter(k=>permissions[k]?.view),permissions};
