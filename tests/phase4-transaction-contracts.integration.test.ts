@@ -516,6 +516,26 @@ test('4I financial audit: altered original Cash book method blocks reversal with
  });
 });
 
+test('4I financial audit: D1 reversal-state trigger rejects tampered original Cash money-book source',async()=>{
+ await fixture(async({api,db,one,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-AUDIT','Open')").run('CS-4I-AUDIT-TRIGGER');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const refund=await api('POST','/api/purchase-returns',{purchaseId:purchase.purchaseId,
+   refundMethod:'Cash',reason:'Original supplier return',
+   clientRequestId:crypto.randomUUID(),items:[{productId:p1.productId,qty:1,unitPrice:50}]});safe(refund);
+  db.native.prepare("UPDATE cash_book SET payment_method='Bank' WHERE type='Supplier Payment'").run();
+  const attempt=()=>db.native.prepare(`UPDATE purchase_returns SET refund_status='Reversed',
+   reversal_request_id=?,reversal_reason='Goods returned by supplier'
+   WHERE return_id=?`).run(crypto.randomUUID(),refund.returnId);
+  assert.throws(attempt,/purchase_refund_reversal_original_cash_source_changed/,
+    'SQLite/D1 write guard must reject changed original cash payment even if service checks are bypassed');
+  assert.equal(one('SELECT refund_status AS s FROM purchase_returns WHERE return_id=?',refund.returnId).s,'Posted');
+  assert.equal(one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,50);
+ });
+});
+
 test('4I-C3 Cash: reversal restores original FIFO stock and exactly compensates cash refund, with immutable retries',async()=>{
  await fixture(async({api,db,one,count,supplier,p1})=>{
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC3','Open')").run('CS-4IC3');
