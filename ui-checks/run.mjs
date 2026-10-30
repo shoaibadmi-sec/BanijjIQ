@@ -513,9 +513,9 @@ try{
           'native HisabIQ ReportResults table remains visible');
         const savedInvoiceRow=page.locator('[data-report-workspace] tbody tr').first();
         const savedInvoiceText=await savedInvoiceRow.innerText();
-        assert.match(savedInvoiceText,/৳\\s*45(?:\\D|$)/,
+        assert.match(savedInvoiceText,/৳\s*45(?:\D|$)/,
           'existing Paid column must show ৳45 from the saved invoice API');
-        assert.match(savedInvoiceText,/৳\\s*75(?:\\D|$)/,
+        assert.match(savedInvoiceText,/৳\s*75(?:\D|$)/,
           'existing Due column must show ৳75 from the saved invoice API');
         assert.ok(calls.some(call=>call.method==='GET'&&call.path==='/api/reports/v2/rows'),
           'native report must use real backend API');
