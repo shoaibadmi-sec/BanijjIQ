@@ -80,6 +80,13 @@ test('G2-F reviewed settlement requires real matched refund evidence, commits on
     ).run();
     assert.equal((await api('POST',path,{...payload,evidenceIds:['sale:SETTLE-SALE','return:SETTLE-RETURN','cash:SETTLE-CASH']})).status,409,
       'cash sale receipt cannot impersonate a return refund');
+    db.native.prepare(
+      "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) "+
+      "VALUES ('SETTLE-REFUND-2','2026-10-30','Sales Return','SETTLE-RETURN','Duplicate payout',10,0,'Cash',0)"
+    ).run();
+    assert.equal((await api('POST',path,payload)).status,409,
+      'double cash refund against one return cannot be marked reconciled');
+    db.native.prepare("DELETE FROM cash_book WHERE entry_id='SETTLE-REFUND-2'").run();
     const good=await api('POST',path,payload);
     assert.equal(good.ok,true,JSON.stringify(good));
     assert.equal(good.case.status,'verified_settled');
@@ -95,6 +102,12 @@ test('G2-F reviewed settlement requires real matched refund evidence, commits on
     assert.equal((await api('POST',path,{...payload,expectedVersion:2})).status,409);
     assert.equal(get('SELECT COUNT(*) n FROM audit_logs WHERE action=?','REVIEW_STORE_CREDIT_CASE').n,1);
     assert.equal(get('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n,1);
+    assert.throws(()=>db.native.prepare(
+      "UPDATE store_credit_reconciliation_cases SET review_reason='rewritten' WHERE case_id=?"
+    ).run(candidate.caseId),/STORE_CREDIT_CASE_IMMUTABLE/);
+    assert.throws(()=>db.native.prepare(
+      "DELETE FROM store_credit_reconciliation_cases WHERE case_id=?"
+    ).run(candidate.caseId),/STORE_CREDIT_CASE_IMMUTABLE/);
     assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.journal);
     assert.equal(get("SELECT current_due FROM customers WHERE customer_id='SETTLE-CUS'").current_due,before.due);
     assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,before.cash+1);
