@@ -8,7 +8,9 @@ export const liveReportCatalog: CatalogReport[] = [
  {id:'receivables',en:'Customer dues',bn:'গ্রাহকের বাকি',group:'people',status:'needs-review',reason:'Current due balances reconciled per customer ID; invoice aging unavailable.'},
  {id:'payables',en:'Supplier dues',bn:'সরবরাহকারীর দেনা',group:'people',status:'needs-review',reason:'Current supplier ledger balance by supplier ID; invoice aging unavailable.'},
  {id:'profit',en:'Profit',bn:'লাভ',group:'sales',status:'needs-review',reason:'Profit appears only when original FIFO allocation and return reversal evidence are complete.'},
- {id:'cash',en:'Cash & bank',bn:'ক্যাশ ও ব্যাংক',group:'money',status:'unavailable',reason:'Cash/bank transfer reconciliation is pending.'},
- {id:'expenses',en:'Expenses',bn:'খরচ',group:'money',status:'unavailable',reason:'Expense reconciliation is pending.'},
+ {id:'cash',en:'Cash & bank',bn:'ক্যাশ ও ব্যাংক',group:'money',status:'needs-review',reason:'Posted cash/bank movements, internal transfers and current ledger balances, subject to reconciliation.'},
+ {id:'bank',en:'Bank book',bn:'ব্যাংক খাতা',group:'money',status:'needs-review',reason:'Recorded bank movements; current balance is not historical.'},
+ {id:'finance',en:'Finance movements',bn:'আর্থিক লেনদেন',group:'money',status:'needs-review',reason:'Owner capital and loans are not sales revenue or profit.'},
+ {id:'expenses',en:'Expenses',bn:'খরচ',group:'money',status:'needs-review',reason:'Operating expenses are reconciled to money-book postings where available.'},
  {id:'audit',en:'Business audit',bn:'ব্যবসা পর্যালোচনা',group:'controls',status:'unavailable',reason:'Business Audit remains in development.'}
 ];
