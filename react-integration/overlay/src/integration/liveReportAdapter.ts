@@ -25,6 +25,8 @@ const toRow=(record:LiveReportRecord,report:LiveReportBackendKey):ReportRow=>{
   id:record.sourceId,label:report==='sales'||report==='purchase'?record.sourceId:record.label,
   party:report==='sales'||report==='purchase'?record.label:undefined,
   date:record.date,status:record.status,
+  route:report==='sales'?'/app/sales?q='+encodeURIComponent(record.sourceId):
+   report==='purchase'?'/app/purchases?q='+encodeURIComponent(record.sourceId):undefined,
   values:{amount,inflow:amount===null?null:Math.max(0,amount),
    outflow:amount===null?null:Math.max(0,-amount),paid:null,due:null,
    cost:null,profit:null,stock:null,quantity:null},
