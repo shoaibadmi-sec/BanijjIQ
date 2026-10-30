@@ -28,44 +28,93 @@ async function validAssignableRole(db:SherDatabase,role:string):Promise<boolean>
   if(role==='admin')return true;
   return !!(await db.prepare(`SELECT 1 ok FROM app_roles WHERE role_name=? LIMIT 1`).bind(role).first<any>());
 }
+type ValidEmployeeRoles={role:string;roleIds:string[]};
+async function resolveEmployeeRoles(db:SherDatabase,input:any,actor:AuthUser,
+  previous?:{role:string;roleIds:string[]}):Promise<ValidEmployeeRoles|Response>{
+  const explicit=input?.roleIds!==undefined;
+  if(explicit && !Array.isArray(input.roleIds))return error('Select employee roles.');
+  const legacy=cleanText(input?.role);
+  const requested:unknown[]=explicit?input.roleIds:
+    previous&&legacy===previous.role?previous.roleIds:[legacy];
+  if(!requested.length || requested.length>8 || requested.some(r=>typeof r!=='string'||!r.trim()))
+    return error('Choose between one and eight roles.');
+  const roles:string[]=[];
+  for(const raw of requested){
+    const name=cleanText(raw);
+    if(name==='admin'){roles.push(name);continue;}
+    const found=await db.prepare(`SELECT role_name,status FROM app_roles WHERE role_name=? LIMIT 1`)
+      .bind(name).first<{role_name:string;status:string}>();
+    if(!found)return error('Role not found.');
+    if(explicit&&found.status!=='Active')return error('Inactive roles cannot be assigned.');
+    roles.push(found.role_name);
+  }
+  if(new Set(roles.map(r=>r.toLowerCase())).size!==roles.length)
+    return error('Employee roles must be unique.');
+  if(roles.includes('admin') && (roles.length!==1 || actor.role!=='admin'))
+    return error('Only an Administrator can assign the Administrator role.',403);
+  if(explicit && actor.role!=='admin')
+    return error('Only an Administrator can assign roleIds until delegated grant checks are integrated.',403);
+  if(explicit&&legacy&&legacy!==roles[0])return error('Primary role and roleIds do not match.');
+  return {role:roles[0],roleIds:roles};
+}
 export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'users','view');if(denied)return denied;
-  const [ur,rr]=await Promise.all([
+  const [ur,rr,assignments]=await Promise.all([
     db.prepare(`SELECT user_id,full_name,phone,role,status,created_by,created_at,last_login_at FROM app_users ORDER BY full_name COLLATE NOCASE`).all<any>(),
-    db.prepare(`SELECT role_name FROM app_roles WHERE status='Active' ORDER BY role_name COLLATE NOCASE`).all<any>()
+    db.prepare(`SELECT role_name FROM app_roles WHERE status='Active' ORDER BY role_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT user_id,role_name FROM app_user_roles ORDER BY role_name COLLATE NOCASE`).all<any>()
   ]);
+  const linked=new Map<string,string[]>();
+  for(const row of assignments.results||[])linked.set(row.user_id,[...(linked.get(row.user_id)||[]),row.role_name]);
   return json({ok:true,
-    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,roleLabel:displayRoleName(u.role),status:u.status,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
+    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,
+      roleIds:[u.role,...(linked.get(u.user_id)||[]).filter(r=>r.toLowerCase()!==String(u.role).toLowerCase())],
+      roleLabel:displayRoleName(u.role),status:u.status,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
     roles:(rr.results||[]).map((r:any)=>({name:r.role_name,label:r.role_name})),
     canAssignAdministrator:user.role==='admin'
   });
 }
 export async function createManagedUserRoute(db:SherDatabase,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','add');if(denied)return denied;
-  const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role),password=String(input.password||'');
-  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
-  if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
+  const name=cleanText(input.name),mobile=cleanText(input.mobile),password=String(input.password||'');
+  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');
   if(password.length<6)return error('Password must be at least 6 characters.');
-  if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const resolved=await resolveEmployeeRoles(db,input,actor);if(resolved instanceof Response)return resolved;
+  const {role,roleIds}=resolved;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? LIMIT 1`).bind(mobile).first<any>())return error('A user with this mobile number already exists.');
   const id=crypto.randomUUID(),hashed=await hashPassword(password);
-  await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
-    .bind(id,name,mobile,hashed.hash,hashed.salt,role,actor.fullName||actor.phone).run();
-  await db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_USER','USER',?,?)`).bind(actor.userId,id,`Created ${name}`).run();
+  await db.batch([
+    db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
+      .bind(id,name,mobile,hashed.hash,hashed.salt,role,actor.fullName||actor.phone),
+    ...roleIds.filter(r=>r!=='admin').map(r=>db.prepare(`INSERT INTO app_user_roles(user_id,role_name) VALUES (?,?)`).bind(id,r)),
+    db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_USER','USER',?,?)`)
+      .bind(actor.userId,id,`Created ${name}`)
+  ]);
   return json({ok:true,id});
 }
 export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,existing.role);if(adminDenied)return adminDenied;
-  const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role);
-  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
-  if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
-  if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const name=cleanText(input.name),mobile=cleanText(input.mobile);
+  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');
+  const previousLinks=await db.prepare(`SELECT role_name FROM app_user_roles WHERE user_id=? ORDER BY role_name`).bind(id).all<{role_name:string}>();
+  const previous={role:String(existing.role),roleIds:[
+    String(existing.role),...(previousLinks.results||[]).map(x=>x.role_name)
+      .filter(r=>r.toLowerCase()!==String(existing.role).toLowerCase())
+  ]};
+  const request=input.roleIds===undefined?{...input,role:input.role??existing.role}:input;
+  const resolved=await resolveEmployeeRoles(db,request,actor,previous);if(resolved instanceof Response)return resolved;
+  const {role,roleIds}=resolved;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? AND user_id<>? LIMIT 1`).bind(mobile,id).first<any>())return error('A user with this mobile number already exists.');
-  if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
-  await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id).run();
-  await db.prepare(`UPDATE auth_sessions SET revoked_at=datetime('now') WHERE user_id=? AND revoked_at IS NULL`).bind(id).run();
+  if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)
+    return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
+  await db.batch([
+    db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id),
+    db.prepare(`DELETE FROM app_user_roles WHERE user_id=?`).bind(id),
+    ...roleIds.filter(r=>r!=='admin').map(r=>db.prepare(`INSERT INTO app_user_roles(user_id,role_name) VALUES (?,?)`).bind(id,r)),
+    db.prepare(`UPDATE auth_sessions SET revoked_at=datetime('now') WHERE user_id=? AND revoked_at IS NULL`).bind(id)
+  ]);
   return json({ok:true,id});
 }
 export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
@@ -135,7 +184,9 @@ export async function setManagedRoleStatusRoute(db:SherDatabase,id:string,status
 export async function deleteManagedRoleRoute(db:SherDatabase,id:string,user:AuthUser):Promise<Response>{
   const denied=await requireManagementDelete(db,user,'roles');if(denied)return denied;
   const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
-  if(await db.prepare(`SELECT 1 ok FROM app_users WHERE role=? LIMIT 1`).bind(row.role_name).first<any>())return error('This role is assigned to one or more users and can’t be deleted. Deactivate it instead, or reassign those users first.');
+  if(await db.prepare(`SELECT 1 ok FROM app_users WHERE role=? LIMIT 1`).bind(row.role_name).first<any>() ||
+    await db.prepare(`SELECT 1 ok FROM app_user_roles WHERE role_name=? LIMIT 1`).bind(row.role_name).first<any>())
+    return error('This role is assigned to one or more users and can’t be deleted. Deactivate it instead, or reassign those users first.');
   await db.prepare(`DELETE FROM app_roles WHERE role_id=?`).bind(id).run();return json({ok:true,id});
 }
 
@@ -146,7 +197,7 @@ const SYSTEM_BACKUP_TABLES = [
   'invoice_edit_logs','cash_sessions','cash_book','bank_book','customers','customer_ledger','vendors','vendor_ledger',
   'sales','sale_items','sale_item_lots','sale_item_tracking','warranty_records','warranty_claims','warranty_replacements','supplier_warranty_rmas','supplier_warranty_rma_received_items','supplier_warranty_rma_financials','vendor_sourcing','sales_returns','sales_return_items','app_settings',
   'expense_categories','expenses','bank_transfers','expense_payees','finance_persons','finance_transactions',
-  'app_roles','app_users','audit_logs','vendor_returns','vendor_issues','vendor_returns_received'
+  'app_roles','app_users','app_user_roles','audit_logs','vendor_returns','vendor_issues','vendor_returns_received'
 ] as const;
 function requireSystemAdministrator(user:AuthUser):Response|null{return user.role==='admin'?null:error('Administrator permission is required for System tools.',403)}
 export async function getSystemOverviewRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
