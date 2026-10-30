@@ -61,8 +61,8 @@ export async function postBundleCashSale(db:SherDatabase,input:PosSaleInput,user
    "INSERT INTO sale_item_lots(invoice_id,product_id,lot_id,quantity,unit_cost,supplier_id) VALUES (?,?,?,?,?,?)")
    .bind(invoiceId,draw.visibleId,draw.lotId,draw.qty,draw.unitCost,draw.supplierId));
   stmts.push(db.prepare(
-   "INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?,'Sale',0,?,(SELECT current_stock FROM products WHERE product_id=?),?,?)")
-   .bind(moveId,draw.physicalId,draw.qty,draw.physicalId,'BUNDLE:'+invoiceId+':'+draw.visibleId,draw.lotId));
+   "INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?,'Sale',0,?,?,?,?)")
+   .bind(moveId,draw.physicalId,draw.qty,draw.balanceAfter,'BUNDLE:'+invoiceId+':'+draw.visibleId,draw.lotId));
   stmts.push(db.prepare(
    "INSERT INTO bundle_sale_allocations(invoice_id,visible_product_id,component_id,lot_id,movement_id,quantity,unit_cost,cost_minor) VALUES (?,?,?,?,?,?,?,?)")
    .bind(invoiceId,draw.visibleId,draw.physicalId,draw.lotId,moveId,draw.qty,draw.unitCost,draw.minor));
