@@ -25,7 +25,7 @@ async function fixture(run:(f:{
    if(token)headers.authorization='Bearer '+token;
    const result=await handleApiRequest(new Request('http://purchase4f.local'+path,{
     method,headers,body:body===undefined?undefined:JSON.stringify(body)}),db);
-   return {status:result.status,...await result.json() as Record<string,unknown>} as any;
+   return {...await result.json() as Record<string,unknown>,status:result.status} as any;
   }
   const one=(statement:string,...args:any[])=>db.native.prepare(statement).get(...args) as any;
   const count=(table:string)=>one('SELECT COUNT(*) AS n FROM '+table).n as number;
