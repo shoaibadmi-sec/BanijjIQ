@@ -1,4 +1,5 @@
 import type { SherDatabase } from '../../../db/types.js';
+import { readCashExpenses } from './cash-expenses.js';
 import type {
   EvidenceSource, LiveReportPage, LiveReportQuery, LiveReportRow, ReportMetric, ReportStatus
 } from './types.js';
@@ -179,6 +180,13 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(amount===null||amount<0)reasons.add('Invalid recorded operating expense.');
     else expenses+=amount;
   }
+  // Finance-v2 independently validates each expense against active cash/bank
+  // posting references; a standalone expense header is not proof of net profit.
+  const expensePosting=await readCashExpenses(db,{...q,report:'expenses'});
+  const expenseMetric=expensePosting.metrics.find(x=>x.key==='operatingExpenses');
+  const expensesProven=expensePosting.coverage.status!=='incomplete' &&
+    expenseMetric?.valueMinor===expenses && !q.search;
+  if(!expensesProven)reasons.add('Expense posting does not reconcile with its cash/bank money-book source.');
   const net=gross-refund;
   if(net<0)reasons.add('Refunds exceed recorded invoice totals.');
   if(cogs<0)reasons.add('Original-cost reversals exceed recorded FIFO cost.');
@@ -202,7 +210,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   add('netSales',net,verified?'ready':'needs-review','Invoice cohort totals less linked recorded refunds.',sources);
   add('fifoCogs',verified?cogs:null,status,explanation,sources);
   add('grossProfit',verified?net-cogs:null,status,explanation,sources);
-  add('operatingExpenses',expenses,verified?'ready':'needs-review','Active recorded expenses dated within the selected period.',expenseSources);
+  add('operatingExpenses',expensesProven?expenses:null,expensesProven?'ready':'incomplete',
+    expensesProven?'Active expenses independently reconciled to posted cash/bank source IDs.':explanation,expenseSources);
   add('netProfit',verified?net-cogs-expenses:null,status,explanation,[...sources,...expenseSources]);
   const totalsByInvoice=new Map(invoices.map(inv=>[inv.invoice_id,minor(Number(inv.grand_total))??0]));
   for(const item of returns)
