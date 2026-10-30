@@ -786,9 +786,11 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if(paidRefund){
     if(!/^[0-9a-f-]{32,36}$/i.test(refundRequestId))
       return error('Use a unique refund request ID; a money receipt cannot be posted without it.',409);
-    const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount FROM purchase_returns WHERE refund_request_id=?')
-      .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number}>();
-    if(prior)return prior.refund_payload_json===refundPayload
+    const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount,refund_status FROM purchase_returns WHERE refund_request_id=?')
+      .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number;refund_status:string}>();
+    if(prior)return prior.refund_status!=='Posted'
+      ?error('Refund was already reversed. Review the historical receipt before a new request.',409)
+      :prior.refund_payload_json===refundPayload
       ?json({ok:true,returnId:prior.return_id,totalReturnAmount:prior.total_return_amount,idempotent:true})
       :error('Refund request ID was already used for different details.',409);
     const paid=Number(purchase.paid_amount||0),total=Number(purchase.grand_total||0);
@@ -948,9 +950,11 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   try{await db.batch(batch);}
   catch(e){
     if(paidRefund){
-      const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount FROM purchase_returns WHERE refund_request_id=?')
-        .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number}>();
-      if(prior)return prior.refund_payload_json===refundPayload
+      const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount,refund_status FROM purchase_returns WHERE refund_request_id=?')
+        .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number;refund_status:string}>();
+      if(prior)return prior.refund_status!=='Posted'
+        ?error('Refund was already reversed. Review the historical receipt before a new request.',409)
+        :prior.refund_payload_json===refundPayload
         ?json({ok:true,returnId:prior.return_id,totalReturnAmount:prior.total_return_amount,idempotent:true})
         :error('Refund request ID was already used for different details.',409);
       if(/constraint|purchase_refund_|negative|unreconciled|changed|insufficient/i.test(String(e)))

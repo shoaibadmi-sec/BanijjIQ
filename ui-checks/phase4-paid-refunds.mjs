@@ -56,6 +56,52 @@ export async function runPaidRefundChecks({browser,base,withCheck,results,startM
    results.apiCalls.push(...calls);await ctx.close();
   });
  }
+ await withCheck('4I-C6 reversed receipt after uncertain refund cannot appear as successfully posted',async()=>{
+   const ctx=await browser.newContext({viewport:{width:768,height:900},reducedMotion:'reduce'});
+   const calls=[];await startMocking(ctx,calls);
+   const purchase={purchaseId:'PUR-C6-UI',supplierId:'SUP-UI-001',supplierName:'Khan Hardware',
+     purchaseDate:'2026-10-30',status:'Completed',grandTotal:100,paidAmount:100,dueAmount:0,
+     discount:0,returnedAmount:0,paymentMethod:'Cash',bankAccountId:'',
+     items:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',quantity:2,unitPrice:50}]};
+   let originalRequestId='',attempts=0;
+   await ctx.route('**/api/purchases',route=>route.fulfill({status:200,contentType:'application/json',
+     body:JSON.stringify({ok:true,purchases:[purchase]})}));
+   await ctx.route('**/api/purchases/PUR-C6-UI',route=>route.fulfill({status:200,contentType:'application/json',
+     body:JSON.stringify({ok:true,purchase})}));
+   await ctx.route('**/api/purchases/PUR-C6-UI/return-data',route=>route.fulfill({status:200,
+     contentType:'application/json',body:JSON.stringify({ok:true,purchase:{...purchase,
+      items:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',boughtQty:2,
+       unitPrice:50,previouslyReturnedQty:0,availableQty:2,trackSerial:0,trackExpiry:0}]}})}));
+   await ctx.route('**/api/purchases/supplier-settlements/supplier/SUP-UI-001',route=>
+     route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+      ok:true,supplier:{id:'SUP-UI-001',name:'Khan Hardware',currentDue:0},
+      ledgerDue:0,needsReconciliation:false,activeSession:true,bankAccounts:[],settlements:[]
+     })}));
+   await ctx.route('**/api/purchase-returns',route=>{
+     if(route.request().method()==='GET')return route.fulfill({status:200,contentType:'application/json',
+       body:JSON.stringify({ok:true,returns:[{returnId:'PRTN-C6-UI',purchaseId:'PUR-C6-UI',
+        refundRequestId:originalRequestId,refundStatus:'Reversed',totalReturnAmount:50,
+        refundMethod:'Cash'}]})});
+     attempts++;originalRequestId=route.request().postDataJSON().clientRequestId;
+     return route.fulfill({status:503,contentType:'application/json',
+       body:JSON.stringify({ok:false,error:'Ambiguous server response'})});
+   });
+   await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+   const page=await ctx.newPage();
+   await page.goto(base+'/#/app/purchases?tab=return&purchaseId=PUR-C6-UI');
+   await page.locator('[data-live-standard-purchase-returns]').waitFor({timeout:12000});
+   await page.getByRole('spinbutton',{name:'Return quantity for Copper Cable 2.5mm'}).fill('1');
+   await page.getByRole('textbox',{name:'Return reason'}).fill('Damaged goods');
+   await page.getByRole('checkbox',{name:/I confirm the supplier/}).check();
+   await page.getByRole('button',{name:/Confirm verified refund/}).click();
+   await page.getByText(/refund outcome is uncertain/i).waitFor({timeout:12000});
+   await page.getByRole('button',{name:/Check return history/}).click();
+   await page.getByText(/already reversed|was reversed|refund was reversed/i).waitFor({timeout:12000});
+   assert.equal(await page.getByText(/Refund recorded · PRTN-C6-UI/).count(),0,
+     'Reversed historical receipt must never be presented as a current completed refund');
+   assert.equal(attempts,1,'Checking history must never re-post money or stock');
+   await ctx.close();
+ });
  await withCheck('4I-C4 rejects partially paid and unverified original-bank refunds',async()=>{
    const ctx=await browser.newContext({viewport:{width:768,height:900},reducedMotion:'reduce'});
    const calls=[];await startMocking(ctx,calls);
