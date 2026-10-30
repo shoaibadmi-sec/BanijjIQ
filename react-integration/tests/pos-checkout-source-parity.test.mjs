@@ -42,3 +42,9 @@ test('discount percent maps to backend fixed amount and no unsupported change is
   assert.ok(checkout.includes("props.onPaid(String(props.total))"));
   assert.ok(!checkout.includes('changeToReturn'));
 });
+
+test('customer blur selection reads the current input and cannot replace typed name with empty saved data',()=>{
+  assert.match(checkout,/onBlur=\{event => props\.onSelectCustomer\(event\.currentTarget\.value, 'name'\)\}/);
+  assert.match(checkout,/onBlur=\{event => props\.onSelectCustomer\(event\.currentTarget\.value, 'phone'\)\}/);
+  assert.match(live,/if \(!customer\?\.name\.trim\(\)\) return;/);
+});
