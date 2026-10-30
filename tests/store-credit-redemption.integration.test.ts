@@ -190,6 +190,30 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   const reconciledAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
   assert.equal(reconciledAccount.blocked,false);
   assert.equal(reconciledAccount.availableCents,1000);
+  // A disabled customer must not spend a valid positive liability.
+  // Reuse one contender's request key to prove a failed checkout does not
+  // reserve the key before the customer is reactivated.
+  const beforeDisabled={
+   sales:row('SELECT COUNT(*) n FROM sales').n,
+   stock:row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,
+   journal:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+   cash:row('SELECT COUNT(*) n FROM cash_book').n,
+   bank:row('SELECT COUNT(*) n FROM bank_book').n
+  };
+  db.native.prepare("UPDATE customers SET status='Inactive' WHERE customer_id='CR-CUSTOMER'").run();
+  const disabledAttempt=await api('POST','/api/pos/sales',{
+   ...saleInput,clientRequestId:'credit-race-checkout-0001',
+   items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(disabledAttempt.status,409,JSON.stringify(disabledAttempt));
+  assert.equal(row('SELECT COUNT(*) n FROM sales').n,beforeDisabled.sales);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,beforeDisabled.stock);
+  assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,beforeDisabled.journal);
+  assert.equal(row("SELECT available_cents FROM customer_store_credit_balance WHERE customer_id='CR-CUSTOMER'").available_cents,1000);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,beforeDisabled.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,beforeDisabled.bank);
+  assert.equal(row("SELECT COUNT(*) n FROM pos_sale_requests WHERE request_id='credit-race-checkout-0001'").n,0);
+  db.native.prepare("UPDATE customers SET status='Active' WHERE customer_id='CR-CUSTOMER'").run();
   // Two concurrent one-item checkouts cannot each spend the same last ৳10.
   const contenders=await Promise.all([
    api('POST','/api/pos/sales',{...saleInput,clientRequestId:'credit-race-checkout-0001',
