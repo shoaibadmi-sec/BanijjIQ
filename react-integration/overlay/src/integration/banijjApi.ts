@@ -343,3 +343,25 @@ export const postFinanceTransaction=(payload:FinanceTransactionPost)=>
   request<{ok:true;id:string;replayed:boolean}>('/api/finance/transactions',{
     method:'POST',body:JSON.stringify(payload)
   });
+
+export interface LiveDaybookRow {
+  date:string;time:string;referenceNo:string;module:string;transactionType:string;
+  party:string;description:string;paymentMethod:string;
+  cashIn:number;cashOut:number;bankIn:number;bankOut:number;
+  status:string;createdBy:string;sourceModule:string;sourceId:string;openId:string;
+  isBackdated:boolean;isDeleted:boolean;
+}
+export interface LiveDaybookResponse {
+  ok:true;rows:LiveDaybookRow[];count:number;isAdmin:boolean;
+  totals:{cashIn:number;cashOut:number;bankIn:number;bankOut:number;netCash:number;netBank:number};
+  pagination:{page:number;pageSize:50|100;totalRows:number;totalPages:number;sortBy:'created'|'transaction'};
+}
+export interface LiveDaybookQuery {
+  dateFrom:string;dateTo:string;module:string;query:string;page:number;
+  pageSize:50|100;sortBy:'created'|'transaction';
+}
+export const getLiveDaybook=(query:LiveDaybookQuery)=>
+  request<LiveDaybookResponse>('/api/daybook?'+new URLSearchParams({
+    dateFrom:query.dateFrom,dateTo:query.dateTo,module:query.module,query:query.query,
+    page:String(query.page),pageSize:String(query.pageSize),sortBy:query.sortBy
+  }).toString());
