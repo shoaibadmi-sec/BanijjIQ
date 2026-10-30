@@ -73,6 +73,7 @@ export function LivePosPage() {
   const lastResetPostedInvoiceRef = useRef<string | null>(null);
   const [saleResetVersion,setSaleResetVersion]=useState(0);
   const saleRequestId = useRef(crypto.randomUUID());
+  const startSessionRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -250,7 +251,7 @@ export function LivePosPage() {
     if (!Number.isFinite(amount) || amount < 0) { setError('Enter a valid opening cash amount.'); return; }
     if (!window.confirm('Start the real BanijjIQ cash session with '+taka(amount)+' opening cash?')) return;
     setSaving(true); setError('');
-    try { await startCashSession(amount); await load(); setFeedback('Cash session opened.'); }
+    try { await startCashSession(amount,startSessionRequestId.current); startSessionRequestId.current=crypto.randomUUID(); await load(); setFeedback('Cash session opened.'); }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not start cash session'); }
     finally { setSaving(false); }
   };
