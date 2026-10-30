@@ -58,7 +58,7 @@ export async function runAdminRoleCreationChecks({browser,base,withCheck}){
       await dialog.getByRole('checkbox',{name:'Users — View'}).check();
       await dialog.getByRole('checkbox',{name:'Users — Delete'}).check();
       await dialog.getByRole('button',{name:'Create role'}).click();
-      await f.page.locator('[data-live-team-settings]').getByText('Warehouse Supervisor').waitFor({timeout:12000});
+      await f.page.locator('[data-live-team-settings]').getByRole('heading',{name:'Warehouse Supervisor'}).waitFor({timeout:12000});
       assert.equal(await dialog.count(),0);
       const writes=f.calls.filter(c=>c.path==='/api/roles'&&c.method==='POST');
       assert.equal(writes.length,1);
