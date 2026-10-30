@@ -75,6 +75,7 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls,creditFixture=false){
+  let lastPostedInvoice=null;
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -124,10 +125,14 @@ function startMocking(context,calls,creditFixture=false){
       if(posted.items[0]?.productId==='PRD-000003')
         assert.deepEqual(posted.items[0].serialNumbers,['SN-UI-001']);
       calls.push({method:'ASSERT',path:'/api/pos/sales',payload:posted});
-      return respond({ok:true,invoice});
+      lastPostedInvoice=posted.tenders?.length?{
+        ...invoice,paymentMethod:'Split',
+        paymentAllocations:posted.tenders,paidAmount:invoice.grandTotal,dueAmount:0
+      }:invoice;
+      return respond({ok:true,invoice:lastPostedInvoice});
     }
     if(path==='/api/pos/invoices/UI-E2E-INV-001'&&request.method()==='GET')
-      return respond({ok:true,invoice});
+      return respond({ok:true,invoice:lastPostedInvoice||invoice});
     if(path.startsWith('/api/pos/products/')&&path.endsWith('/tracking-options')&&request.method()==='GET')
       return respond({ok:true,serials:[{serialNumber:'SN-UI-001'}]});
     if(path==='/api/pos/vendors'&&request.method()==='POST')
@@ -656,6 +661,11 @@ try{
         await page.getByRole('button',{name:'Review and post real sale'}).click();
         await page.locator('[data-split-review]').waitFor();
         await page.getByRole('button',{name:'Confirm and post'}).click();
+        await page.locator('[data-split-posted-provenance]').waitFor({timeout:12000});
+        assert.match(await page.locator('[data-split-posted-provenance]').innerText(),/Store Credit/);
+        await page.getByRole('button',{name:'View / Print receipt'}).click();
+        await page.locator('[data-split-receipt-provenance]').waitFor({timeout:12000});
+        assert.match(await page.locator('[data-split-receipt-provenance]').innerText(),/Cash/);
         const posted=api.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales');
         assert.equal(posted.length,1);
         assert.deepEqual(posted[0].payload.tenders,[
