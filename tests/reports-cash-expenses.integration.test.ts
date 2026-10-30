@@ -198,3 +198,21 @@ test('5G23: expense journal date drift in the same reporting period withholds re
    'A failed expense accounting report must never write to the database');
  }finally{db.close();}
 });
+
+test('5G23: out-of-period expense source must not hide an in-period money posting mismatch',async()=>{
+ const db=fixture();try{
+  // An October cash payment has an illegally shifted September expense source date.
+  db.native.prepare("UPDATE expenses SET expense_date='2026-09-30' WHERE expense_id='EXP-001'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  for(const report of ['cash','expenses'] as const){
+   const page=await readCashExpenses(db,query(report));
+   assert.equal(page.coverage.status,'incomplete',report+' must reject an October expense journal without its October source');
+   assert.match(page.coverage.reason,/expense|date|journal/i);
+   assert.equal(metric(page,'cashPayments').valueMinor,null);
+   assert.equal(metric(page,'operatingExpenses').valueMinor,null);
+   if(report==='expenses')assert.equal(page.totalRows,0,'September expense source must not appear as an October expense row');
+  }
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+   'Rejected cross-period expense report must remain read-only');
+ }finally{db.close();}
+});
