@@ -1,6 +1,6 @@
 # Superpowers implementation plan — Phase 6 Finance, Cash/Bank & Daybook
 Date: 2026-10-30
-Status: PROPOSED PLAN ONLY (requires design approval); do not treat as implementation
+Status: APPROVED by user 2026-10-30; executing 6A first; production release not approved
 Design: `docs/superpowers/specs/2026-10-30-phase6-finance-daybook-design.md`
 
 ## Development method
