@@ -1,264 +1,156 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
 import { SettingsDirectory } from '../settings/SettingsDirectory';
 import { SettingsTabs } from '../settings/SettingsTabs';
+import { TeamSettings } from '../settings/TeamSettings';
 import { sectionNames } from '../settings/fields';
+import {
+  permissions as sourcePermissions,
+  type BusinessEmployee, type BusinessRole, type SettingsPermission,
+  type TeamSettings as SourceTeamData
+} from '../settings/model';
 import { useTenantSettings } from '../settings/TenantSettingsProvider';
-import { Button, Input, SettingCard, SettingsDialog } from '../settings/ui';
 import { canUseModule, useBackendSession } from './BackendGate';
 import { request } from './banijjApi';
 
-type UserRow = {id:string;name:string;mobile:string;role:string;roleLabel:string;status:string;createdAt:string};
-type Capability = {view?:boolean;add?:boolean;edit?:boolean;delete?:boolean|string;backdate?:boolean|string};
-type RoleRow = {id:string;name:string;status:string;permissions:Record<string,Capability>};
-type UserResponse = {ok:true;users:UserRow[];roles?:Array<{name:string;label:string}>};
-type CreateDraft = {name:string;mobile:string;role:string;password:string};
-const newEmployee = ():CreateDraft=>({name:'',mobile:'',role:'',password:''});
-type RoleResponse = {ok:true;roles:RoleRow[]};
-type Source<T> = {loading:boolean;data:T|null;error:string};
-const pending = <T,>():Source<T>=>({loading:true,data:null,error:''});
-const noAccess = <T,>():Source<T>=>({loading:false,data:null,error:''});
-const toMessage=(cause:unknown)=>cause instanceof Error?cause.message:'Could not load live access data.';
+// The original HisabIQ_UI TeamSettings and EmployeeDirectory own ALL presentation.
+// This is an authenticated data adapter only, not a replacement team design.
+type UserRow = {
+  id:string; name:string; mobile:string; role:string;
+  status:string; email?:string; joinedDate?:string; createdAt?:string
+};
+type Capability={view?:boolean;add?:boolean;edit?:boolean;delete?:boolean|string};
+type RoleRow={id:string;name:string;status:string;permissions:Record<string,Capability>};
+type UsersResult={ok:true;users:UserRow[]};
+type RolesResult={ok:true;roles:RoleRow[]};
+type Load<T>={pending:boolean;value:T|null;error:string};
+const idle=<T,>():Load<T>=>({pending:false,value:null,error:''});
+const loading=<T,>():Load<T>=>({pending:true,value:null,error:''});
+const errorText=(e:unknown)=>e instanceof Error?e.message:'Cannot load team data';
+
+// Only map semantics that the original UI can truthfully represent.
+// The backend remains the authority for ALL permissions, not these labels.
+function displayPermissions(grants:Record<string,Capability>={}):SettingsPermission[]{
+  const p=new Set<SettingsPermission>();
+  if(grants.users?.view)p.add('user.account.view');
+  if(grants.users?.add)p.add('user.account.create');
+  if(grants.users?.edit)p.add('user.account.edit');
+  if(grants.roles?.view)p.add('user.role.view');
+  if(grants.roles?.add||grants.roles?.edit)p.add('user.role.manage');
+  if(grants.settings?.view)p.add('settings.setting.view');
+  if(grants.settings?.edit)p.add('settings.setting.edit');
+  for(const [backend,frontend] of [
+    ['sales','sales'],['products','products'],['purchase','purchases'],
+    ['notifications','notifications'],['invoices','invoices']
+  ] as const)if(grants[backend]?.view)p.add(frontend);
+  return [...p];
+}
 
 export function LiveTeamSettingsPage(){
   const actor=useBackendSession();
   const canUsers=canUseModule(actor,'users','view');
   const canRoles=canUseModule(actor,'roles','view');
-  const {personal}=useTenantSettings();
+  const {state,personal}=useTenantSettings();
   const navigate=useNavigate();
-  const id='live-team-settings-'+useId().replace(/:/g,'');
-  const [tab,setTab]=useState<'employees'|'roles'>('employees');
-  const [search,setSearch]=useState('');
-  const [users,setUsers]=useState<Source<UserRow[]>>(canUsers?pending():noAccess());
-  const [roles,setRoles]=useState<Source<RoleRow[]>>(canRoles?pending():noAccess());
-  const [reload,setReload]=useState(0);
-  const [assignableRoles,setAssignableRoles]=useState<string[]>([]);
-  const [createOpen,setCreateOpen]=useState(false);
-  const [createForm,setCreateForm]=useState<CreateDraft>(newEmployee);
-  const [createError,setCreateError]=useState('');
-  const [createSaving,setCreateSaving]=useState(false);
-  const creating=useRef(false);
-  const adminCanCreate=actor?.role==='admin'&&canUsers;
-  const active=canUsers&&(tab==='employees'||!canRoles)?'employees':canRoles?'roles':null;
+  const id='live-team-source-'+useId().replace(/:/g,'');
+  const [users,setUsers]=useState<Load<UserRow[]>>(canUsers?loading():idle());
+  const [roles,setRoles]=useState<Load<RoleRow[]>>(canRoles?loading():idle());
+  useEffect(()=>{
+    if(!canUsers){setUsers(idle());return;}
+    let alive=true;
+    setUsers(loading());
+    request<UsersResult>('/api/users').then(result=>{
+      if(alive)setUsers({pending:false,value:result.users,error:''});
+    }).catch(cause=>{if(alive)setUsers({pending:false,value:null,error:errorText(cause)});});
+    return()=>{alive=false;};
+  },[canUsers]);
+  useEffect(()=>{
+    if(!canRoles){setRoles(idle());return;}
+    let alive=true;
+    setRoles(loading());
+    request<RolesResult>('/api/roles').then(result=>{
+      if(alive)setRoles({pending:false,value:result.roles,error:''});
+    }).catch(cause=>{if(alive)setRoles({pending:false,value:null,error:errorText(cause)});});
+    return()=>{alive=false;};
+  },[canRoles]);
+
+  const team=useMemo<SourceTeamData>(()=>{
+    const employees:BusinessEmployee[]=(users.value||[]).map(u=>({
+      id:u.id,name:u.name,email:u.email||'',
+      // An account creation date is NOT an employee's joined date.
+      joinedDate:u.joinedDate||undefined,
+      roleIds:[u.role==='admin'?'owner':u.role],active:u.status==='Active'
+    }));
+    const savedRoles:BusinessRole[]=(roles.value||[]).map(r=>({
+      // Role assignments in the current backend use role_name, not role_id.
+      id:r.name,name:r.name,permissions:displayPermissions(r.permissions)
+    }));
+    if((users.value||[]).some(u=>u.role==='admin')||actor?.role==='admin')
+      savedRoles.unshift({id:'owner',name:'Administrator',permissions:[...sourcePermissions]});
+    return {employees,roles:savedRoles};
+  },[users.value,roles.value,actor?.role]);
+
+  const authenticatedState=useMemo(()=>{
+    const owner=actor?.role==='admin';
+    const roleId=owner?'owner':'authenticated-role';
+    const authority:BusinessRole={
+      id:roleId,name:owner?'Administrator':'Authenticated role',
+      permissions:owner?[...sourcePermissions]:displayPermissions(actor?.permissions||{})
+    };
+    const employee:BusinessEmployee={
+      id:actor?.userId||'',name:actor?.fullName||'',email:'',
+      roleIds:[roleId],active:true
+    };
+    return {...state,sections:{...state.sections,team:{roles:[authority],employees:[employee]}}};
+  },[actor,state]);
+
+  const sections=Object.entries(sectionNames).map(([section,item])=>({id:section,...item}));
   const language=personal.language;
   const bilingual=(en:string,bn:string)=>language==='Bangla'?bn:en;
-
-  useEffect(()=>{
-    if(!canUsers){setUsers(noAccess());return;}
-    let current=true;
-    setUsers(pending());
-    request<UserResponse>('/api/users').then(value=>{
-      if(current){
-        setUsers({loading:false,data:value.users,error:''});
-        setAssignableRoles((value.roles||[]).map(r=>r.name).filter(Boolean));
-      }
-    }).catch(cause=>{
-      if(current){setUsers({loading:false,data:null,error:toMessage(cause)});setAssignableRoles([]);}
-    });
-    return()=>{current=false;};
-  },[canUsers,reload]);
-
-  useEffect(()=>{
-    if(!canRoles){setRoles(noAccess());return;}
-    let current=true;
-    setRoles(pending());
-    request<RoleResponse>('/api/roles').then(value=>{
-      if(current)setRoles({loading:false,data:value.roles,error:''});
-    }).catch(cause=>{
-      if(current)setRoles({loading:false,data:null,error:toMessage(cause)});
-    });
-    return()=>{current=false;};
-  },[canRoles,reload]);
-
-  function openCreation(){
-    if(!adminCanCreate||users.loading||users.error||!assignableRoles.length)return;
-    setCreateForm(newEmployee());setCreateError('');setCreateOpen(true);
-  }
-  async function createEmployee(event:FormEvent<HTMLFormElement>){
-    event.preventDefault();
-    if(!adminCanCreate||creating.current||!assignableRoles.includes(createForm.role))return;
-    const name=createForm.name.trim(),mobile=createForm.mobile.trim();
-    if(!name||!mobile||createForm.password.length<6){
-      setCreateError('Enter a name, mobile number and a password of at least 6 characters.');return;
-    }
-    creating.current=true;setCreateSaving(true);setCreateError('');
-    try{
-      await request<{ok:true;id:string}>('/api/users',{
-        method:'POST',body:JSON.stringify({name,mobile,role:createForm.role,password:createForm.password})
-      });
-      setCreateForm(newEmployee());setCreateOpen(false);
-      setReload(n=>n+1); // Show the new employee only after a fresh authoritative server GET.
-    }catch(cause){setCreateError(toMessage(cause));}
-    finally{creating.current=false;setCreateSaving(false);}
-  }
-
-  const available=users.data||[];
-  const shown=useMemo(()=>available.filter(x=>
-    [x.name,x.mobile,x.role,x.status].some(s=>s?.toLowerCase().includes(search.trim().toLowerCase()))),
-    [available,search]);
-  const tabs=[
-    ...(canUsers?[{id:'employees',label:'Employees',bn:'কর্মী'}]:[]),
-    ...(canRoles?[{id:'roles',label:'Roles & permissions',bn:'ভূমিকা'}]:[])
-  ];
-  const settingsItems=Object.entries(sectionNames).map(([section,item])=>({id:section,...item}));
-  const permissions=(role:RoleRow)=>Object.entries(role.permissions||{}).flatMap(([module,rights])=>
-    Object.entries(rights||{}).filter(([name,value])=>value===true||
-      ((name==='delete'||name==='backdate')&&typeof value==='string'&&value!=='disabled'))
-      .map(([action,value])=>module+'.'+action+(value===true?'':' ('+value+')')));
-
+  const pending=(canUsers&&users.pending)||(canRoles&&roles.pending);
+  const unavailable=(canUsers&&users.error)||(canRoles&&roles.error);
   return <div data-live-team-settings className="erp-settings min-w-0 flex-1 space-y-5">
     <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
       <div className="min-w-0">
         <h1 data-testid="settings-title" className="text-xl font-semibold tracking-tight text-ink">
           {bilingual('Employees & access','কর্মী ও অনুমতি')}
-          {language==='English + Bangla'&&<span lang="bn" className="ml-2 font-bn text-xs font-normal text-helper">কর্মী ও অনুমতি</span>}
+          {language==='English + Bangla'&&
+            <span lang="bn" className="ml-2 font-bn text-xs font-normal text-helper">কর্মী ও অনুমতি</span>}
         </h1>
         <p className="mt-1 text-[13px] text-ink-500">Manage who can access this business and what they can do.</p>
-        <p className="mt-1 text-[11px] text-helper">Settings · BanijjIQ authenticated users · {adminCanCreate?'Administrator account creation':'Read-only'}</p>
       </div>
       <span className="text-xs text-ink-500">{actor?.fullName}</span>
     </header>
     <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <SettingsDirectory items={settingsItems} selected="team" language={language}
+      <SettingsDirectory items={sections} selected="team" language={language}
         id={id+'-directory'} panelId={id+'-content'}
         onSelect={next=>navigate('/app/settings/'+next)}/>
       <div className="min-w-0 space-y-4">
         <div className="lg:hidden">
           <SettingsTabs id={id+'-main'} panelId={id+'-content'}
             label="Settings categories" value="team" language={language}
-            items={settingsItems} onChange={next=>navigate('/app/settings/'+next)}/>
+            items={sections} onChange={next=>navigate('/app/settings/'+next)}/>
         </div>
         <div id={id+'-content'} role="tabpanel" aria-label="Employees & access" className="min-w-0 space-y-4">
-          {tabs.length>0&&<SettingsTabs id={id+'-team'} panelId={id+'-team-content'}
-            label="Employee settings views" language={language} value={active||''}
-            secondary={false} items={tabs} onChange={next=>setTab(next as typeof tab)}/>}
-          <div id={id+'-team-content'} role="tabpanel" className="min-w-0 space-y-4">
-            {!active?<SettingCard title="Settings access unavailable">
-              <p role="alert" className="text-sm text-danger">You do not have permission to view employees or roles.</p>
-            </SettingCard>:active==='employees'?
-              <div className="space-y-4">
-                {users.loading?<p role="status" className="text-sm text-helper">Loading employees from BanijjIQ…</p>:
-                  users.error?<SettingCard title="Cannot load employees">
-                    <p role="alert" className="text-sm text-danger">{users.error}</p>
-                  </SettingCard>:
-                    <>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Input type="search" aria-label="Search employees"
-                          placeholder="Search employees, phone or role…"
-                          value={search} onChange={event=>setSearch(event.target.value)}
-                          className="h-9 min-w-[180px] max-w-sm flex-1"/>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-helper">{shown.length} employees</span>
-                          {adminCanCreate&&assignableRoles.length>0&&<Button size="sm" onClick={openCreation}>Add employee</Button>}
-                        </div>
-                      </div>
-                      <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
-                        <div className="overflow-x-auto" role="region" tabIndex={0}
-                          aria-label={bilingual('Employees table','কর্মীদের তালিকা')}>
-                          <table data-erp-table className="w-full text-left text-sm">
-                            <thead className="bg-background text-ink-600"><tr>
-                              {['Employee','Mobile','Role','Status','Created'].map(h=>
-                                <th key={h} scope="col" className="px-3 py-2">{h}</th>)}
-                            </tr></thead>
-                            <tbody>
-                              {shown.map(u=><tr key={u.id} className="border-t border-border">
-                                <td className="px-3 py-2 font-medium text-primary">{u.name}</td>
-                                <td className="px-3 py-2">{u.mobile}</td>
-                                <td className="px-3 py-2">{u.roleLabel||u.role}</td>
-                                <td className="px-3 py-2">
-                                  <span className={'rounded-md px-2 py-1 text-xs '+
-                                    (u.status==='Active'?'bg-success-bg text-success':'bg-background text-helper')}>
-                                    {u.status}</span>
-                                </td>
-                                <td className="whitespace-nowrap px-3 py-2 text-xs text-helper">
-                                  {u.createdAt?.slice(0,10)||'—'}</td>
-                              </tr>)}
-                              {!shown.length&&<tr><td colSpan={5} className="p-6 text-center text-helper">
-                                No matching employees.</td></tr>}
-                            </tbody>
-                          </table>
-                        </div>
-                      </section>
-                    </>}
-              </div>:
-              <div className="space-y-4">
-                {roles.loading?<p role="status" className="text-sm text-helper">Loading roles from BanijjIQ…</p>:
-                  roles.error?<SettingCard title="Cannot load roles">
-                    <p role="alert" className="text-sm text-danger">{roles.error}</p>
-                  </SettingCard>:
-                    <>
-                      <p className="text-xs text-helper">
-                        {roles.data?.length||0} saved roles · Administrator is a protected built-in role
-                      </p>
-                      <div className="grid gap-3 lg:grid-cols-2">
-                        {(roles.data||[]).map(role=><section key={role.id}
-                          className="rounded-xl border border-border bg-card p-4">
-                          <header className="flex items-start justify-between gap-2">
-                            <div className="flex items-start gap-2">
-                              <ShieldCheck className="size-5 text-primary" aria-hidden="true"/>
-                              <div>
-                                <h2 className="text-sm font-semibold text-ink">{role.name}</h2>
-                                <p className="text-xs text-helper">{role.status}</p>
-                              </div>
-                            </div>
-                            <span className="text-[11px] text-helper">Custom</span>
-                          </header>
-                          {permissions(role).length?
-                            <ul className="mt-3 space-y-1 text-xs text-ink-600">
-                              {permissions(role).map(p=><li key={p}>{p}</li>)}
-                            </ul>:<p className="mt-3 text-xs text-helper">No permissions assigned.</p>}
-                        </section>)}
-                      </div>
-                      {!roles.data?.length&&<p className="text-xs text-helper">No custom roles are saved.</p>}
-                    </>}
-              </div>}
-            {active&&<div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-xs text-helper">
-              <span>Delegated editing and role changes await RBAC review. Only administrators may create employees.</span>
-              <button type="button" className="text-primary underline" onClick={()=>setReload(n=>n+1)}>
-                Refresh live data
-              </button>
-            </div>}
-          </div>
+          {!canUsers&&!canRoles&&<p role="alert" className="text-sm text-danger">
+            You do not have permission to view employees or roles.
+          </p>}
+          {pending&&<p role="status" className="text-sm text-helper">Loading team from BanijjIQ…</p>}
+          {users.error&&<p role="alert" className="text-sm text-danger">{users.error}</p>}
+          {roles.error&&<p role="alert" className="text-sm text-danger">{roles.error}</p>}
+          {!pending&&!unavailable&&(canUsers||canRoles)&&
+            <TeamSettings
+              value={team} state={authenticatedState} actorId={actor?.userId||''}
+              onChange={()=>{/* No simulated writes; backend parity required. */}}
+              disabled={true} advanced={false} language={language}/>
+          }
+          {!pending&&!unavailable&&(canUsers||canRoles)&&
+            <p className="text-xs text-helper">
+              Account changes are temporarily read-only until the original email, joined date,
+              multi-role and draft-save workflows are implemented in BanijjIQ.
+            </p>}
         </div>
       </div>
     </div>
-    <SettingsDialog title="Add employee" description="Create a real business login. The password is sent only to BanijjIQ."
-      open={createOpen} onClose={()=>{if(!creating.current){setCreateOpen(false);setCreateForm(newEmployee());setCreateError('');}}}>
-      <form className="space-y-4" onSubmit={event=>void createEmployee(event)}>
-        <label className="block space-y-1 text-sm text-ink-700">Employee name
-          <Input aria-label="Employee name" required autoComplete="name" value={createForm.name}
-            disabled={createSaving} onChange={event=>setCreateForm(x=>({...x,name:event.target.value}))}
-            className="h-9 w-full" />
-        </label>
-        <label className="block space-y-1 text-sm text-ink-700">Mobile number
-          <Input aria-label="Mobile number" required inputMode="tel" autoComplete="tel" value={createForm.mobile}
-            disabled={createSaving} onChange={event=>setCreateForm(x=>({...x,mobile:event.target.value}))}
-            className="h-9 w-full" />
-        </label>
-        <label className="block space-y-1 text-sm text-ink-700">Employee role
-          <select aria-label="Employee role" required value={createForm.role} disabled={createSaving}
-            onChange={event=>setCreateForm(x=>({...x,role:event.target.value}))}
-            className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-ink">
-            <option value="">Choose role</option>
-            {assignableRoles.map(role=><option value={role} key={role}>{role}</option>)}
-          </select>
-        </label>
-        <label className="block space-y-1 text-sm text-ink-700">Initial password
-          <Input aria-label="Initial password" required type="password" minLength={6} autoComplete="new-password"
-            value={createForm.password} disabled={createSaving}
-            onChange={event=>setCreateForm(x=>({...x,password:event.target.value}))}
-            className="h-9 w-full"/>
-        </label>
-        {createError&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{createError}</p>}
-        <div className="flex justify-end gap-2">
-          <Button size="sm" variant="outline" disabled={createSaving}
-            onClick={()=>{setCreateOpen(false);setCreateForm(newEmployee());setCreateError('');}}>Cancel</Button>
-          <Button type="submit" size="sm" disabled={createSaving||!adminCanCreate||!assignableRoles.length}>
-            {createSaving?'Creating…':'Create employee'}
-          </Button>
-        </div>
-      </form>
-    </SettingsDialog>
   </div>;
 }

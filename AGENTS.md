@@ -2,6 +2,14 @@
 
 These rules apply to **every development phase, module, bug fix, API, UI, database migration, and integration** in this repository, including concurrent agent work. They are mandatory for all human and AI contributors. Keep the existing HisabIQ React UI/design unless a specific approved task changes it.
 
+## HisabIQ_UI source-authority and backend-first integration (no redesign)
+
+1. **The pinned original `apps/hisabiq-web` React source is the sole authority for ERP frontend markup and behavior**, including Settings, Team, Employees, POS, Products, Purchases, Sales, Ledger and Reports. Preserve existing components, dialog flows, filters, column controls, responsive layouts, and styles. Do not substitute hand-authored lookalike `Live*Page` views for source components.
+2. Use build-copy adapters/data providers to connect **existing original components** to BanijjIQ authenticated routes. An adapter may fetch, map, submit, validate or refresh data; it must not recreate the page's UI in parallel. Keep the pinned source immutable; make any unavoidable source compatibility adjustments explicit, isolated and reviewable.
+3. **Inventory source fields and user actions before integration**. Where the frontend contract is absent from BanijjIQ (such as original Team email, joined date, multiple role assignments, draft-save), add fully tested backend models/endpoints/migrations **first**, including RBAC, session revocation and D1 persistence. Do not drop inputs, manufacture values, silently convert business meaning, or make a button appear functional with mock or local-only state.
+4. **Fail closed until complete.** A missing or denied backend capability cannot be simulated or redirected to a demo store; disable unsafe posting with an explicit blocker. Read-only stages may be reviewed in draft, but do not merge a partial replacement that removes existing original functionality.
+5. Require a **source-parity acceptance check** against the pinned original component for visual structure, search, filters, column controls, forms, dialogs, keyboard behavior and responsive screenshots, and separate real authenticated DB tests for every state change. API integration is not permission to redesign.
+
 ## Non-negotiable pipeline
 
 **TEST FIRST → VERIFY RED → MINIMAL IMPLEMENTATION → VERIFY GREEN → FULL LOGIC & REGRESSION TESTS → EXACT-HEAD GITHUB ACTIONS GREEN → REVIEW → MERGE.**
