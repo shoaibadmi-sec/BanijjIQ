@@ -239,11 +239,39 @@ export async function addBankManualEntryRoute(db:SherDatabase,input:BankManualIn
 }
 
 export async function reverseBankEntryRoute(db:SherDatabase,entryId:string,reasonRaw:string,user:AuthUser):Promise<Response>{
-  if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before reversing a bank entry.');const reason=cleanText(reasonRaw);if(!reason)return error('Enter a reason for reversing this entry.');
-  const e=await db.prepare(`SELECT * FROM bank_book WHERE entry_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(entryId).first<any>();if(!e)return error('Entry not found.',404);if(String(e.type||'').startsWith('Transfer'))return error('Transfer legs must be reversed together from the original transfer.',409);if(String(e.status||'Active')==='Reversed')return error('This entry has already been reversed.');if(cleanText(e.reversal_of))return error('This entry is itself a reversal and cannot be reversed again.');const exists=await db.prepare(`SELECT 1 x FROM bank_book WHERE reversal_of=? LIMIT 1`).bind(entryId).first();if(exists)return error('A reversal already exists for this entry.');
-  const debit=Number(e.debit||0),credit=Number(e.credit||0);if(!debit&&!credit)return error('This entry has no amount to reverse.');
-  await addBankBookExact(db,String(e.bank_account_id),{type:'Reversal',reference:entryId,description:`Reversal of ${entryId} — ${reason}`,debit:credit,credit:debit,notes:reason,createdBy:user.fullName,reversalOf:entryId});
-  await db.prepare(`UPDATE bank_book SET status='Reversed' WHERE entry_id=?`).bind(entryId).run();return json({ok:true,entryId});
+  if(!(await getOpenCashSession(db)))return error('Start the cash session before reversing a bank entry.');
+  const reason=cleanText(reasonRaw);
+  if(reason.length<8)return error('Explain the reversal (at least eight characters).');
+  const e=await db.prepare("SELECT * FROM bank_book WHERE entry_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1")
+    .bind(entryId).first<any>();
+  if(!e)return error('Entry not found.',404);
+  const manual=BANK_MANUAL_TYPES.find(t=>t.key===cleanText(e.type)&&t.contra===null);
+  if(!manual)return error('Reverse this entry from its original transaction, not one bank leg.',409);
+  if(cleanText(e.status)==='Reversed'||cleanText(e.reversal_of))
+    return error('Entry was already reversed.',409);
+  if(await db.prepare('SELECT 1 x FROM bank_book WHERE reversal_of=? LIMIT 1').bind(entryId).first())
+    return error('A reversal already exists for this entry.',409);
+  const debit=Number(e.debit||0),credit=Number(e.credit||0);
+  if(!debit&&!credit)return error('This entry has no amount to reverse.');
+  const account=await db.prepare('SELECT account_name,current_balance,status FROM bank_accounts WHERE bank_account_id=? LIMIT 1')
+    .bind(e.bank_account_id).first<any>();
+  if(!account||account.status!=='Active')return error('Original bank account is unavailable.',409);
+  const next=Math.round((Number(account.current_balance)+debit-credit)*10000)/10000;
+  if(next<0)return error('Funds have already been spent; cannot reverse this bank receipt.',409);
+  try{
+    await db.batch([
+      db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,notes,status,reversal_of,created_by,created_at,is_backdated,backdated_days,backdated_reason,is_deleted) VALUES(?,?,?,?,?,?,?,?,?,?,?,'Active',?,?,datetime('now'),0,0,'',0)")
+        .bind(bankId('BB'),e.bank_account_id,account.account_name,todayDate(),'Reversal',entryId,
+          'Reversal of '+entryId+' — '+reason,credit,debit,next,reason,entryId,user.fullName),
+      db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance+?-?,4) WHERE bank_account_id=? AND status=\'Active\'')
+        .bind(debit,credit,e.bank_account_id),
+      db.prepare("UPDATE bank_book SET status='Reversed' WHERE entry_id=? AND status='Active' AND COALESCE(is_deleted,0)=0")
+        .bind(entryId),
+      db.prepare("INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'BANK_REVERSE','BANK_BOOK',?,?)")
+        .bind(user.userId,entryId,reason)
+    ]);
+  }catch{return error('Bank reversal was not committed; original ledger, funds or audit changed.',409);}
+  return json({ok:true,entryId});
 }
 
 
