@@ -19,10 +19,12 @@ const maximumRows=500;
 const unavailable=(reason:string):ReportResult=>({
  rows:[],totals:{amount:null},basis:reason,basisBn:'মূল হিসাব এখনো যাচাই করা যায়নি।'
 });
-const toRow=(record:LiveReportRecord):ReportRow=>{
+const toRow=(record:LiveReportRecord,report:LiveReportBackendKey):ReportRow=>{
  const amount=record.amountMinor===null?null:record.amountMinor/100;
  return {
-  id:record.sourceId,label:record.label,date:record.date,status:record.status,
+  id:record.sourceId,label:report==='sales'||report==='purchase'?record.sourceId:record.label,
+  party:report==='sales'||report==='purchase'?record.label:undefined,
+  date:record.date,status:record.status,
   values:{amount,inflow:amount===null?null:Math.max(0,amount),
    outflow:amount===null?null:Math.max(0,-amount),paid:null,due:null,
    cost:null,profit:null,stock:null,quantity:null},
@@ -64,7 +66,7 @@ export function useLiveReportResult(key:ReportKey,filters:ReportFilters,refresh:
       p.coverage.status!==first.coverage.status)){
     throw new Error('Report source changed during pagination; totals withheld.');
    }
-   let rows=all.flatMap(p=>p.rows).map(toRow);
+   let rows=all.flatMap(p=>p.rows).map(record=>toRow(record,api));
    if(rows.length!==first.totalRows)throw new Error('Incomplete report pages; totals withheld.');
    const field=(row:ReportRow)=>filters.sort==='amount'?Number(row.values.amount??0):
     filters.sort==='date'?row.date:filters.sort==='label'?row.label:row.id;
