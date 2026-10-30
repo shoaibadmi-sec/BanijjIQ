@@ -78,6 +78,20 @@ export async function getSplitSaleReversalPreviewRoute(db:SherDatabase,id:string
     !Number.isSafeInteger(Number(row.sold))||Number(row.sold)<=0||
     Number(row.lot_qty)!==Number(row.sold)))
     return blocked('Original FIFO stock lot allocations are incomplete.');
+  // A lot that is already full cannot be restored again. Check at
+  // preview as well as POST so the cashier never confirms a doomed refund.
+  const restorable=(await db.prepare(
+    'SELECT lot.original_quantity capacity,lot.remaining_quantity remaining,'+
+    'lot.source_type kind,COALESCE(SUM(used.quantity),0) restore '+
+    'FROM sale_item_lots used JOIN stock_lots lot ON lot.lot_id=used.lot_id '+
+    'WHERE used.invoice_id=? GROUP BY lot.lot_id'
+  ).bind(id).all<any>()).results||[];
+  if(!restorable.length||restorable.some(row=>
+    row.kind==='OVERSOLD'||!Number.isSafeInteger(Number(row.restore))||
+    Number(row.restore)<=0||!Number.isFinite(Number(row.capacity))||
+    !Number.isFinite(Number(row.remaining))||Number(row.remaining)<0||
+    Number(row.remaining)+Number(row.restore)>Number(row.capacity)))
+    return blocked('Original FIFO lots cannot safely accept returned stock.');
   const a=await db.prepare(
     'SELECT method,amount_cents,bank_account_id,customer_id,source_key '+
     'FROM sale_tender_allocations WHERE invoice_id=? ORDER BY line_number'
