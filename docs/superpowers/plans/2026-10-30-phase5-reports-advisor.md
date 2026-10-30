@@ -118,7 +118,11 @@ The directories/files listed as new are proposed creation paths; preserve existi
 - [ ] **Step 4 — Green:** Run task test, full `tests/pos-accounting.integration.test.ts`, backend build.
 - [ ] **Step 5 — Commit:** `git add server/modules/reporting/live tests react-integration && git commit -m "feat(reports): reconcile cash bank and expenses"`.
 
-## Task 6 (5F) — 4–5-page A4 monthly/yearly Business Audit inside Report Library
+## Task 6 (5F) — DEFERRED: Business Audit requires a new user-approved design
+
+**Decision, 2026-10-30:** Do not implement the proposed 4–5-page A4 Business Audit in Phase 5. Its format and content requirements need redesign. The existing `/api/reports/v2/audit` must remain explicitly `unavailable` and the Report Library must not display fabricated audit metrics or a misleading print output. This deferred task is a historical proposal, not an active implementation checklist.
+
+### Archived, not approved for implementation: 4–5-page A4 Business Audit inside Report Library
 
 **Files:** Create `server/modules/reporting/live/audit.ts`, `tests/reports-audit.integration.test.ts`, `react-integration/overlay/src/integration/reporting/AuditBook.tsx`, `react-integration/overlay/src/integration/reporting/printAuditBook.ts`; add Business Audit as a selectable report in the existing Report Library, extend live page and v2 audit route. Do not add a top-level Audit tab.
 
@@ -136,9 +140,9 @@ The directories/files listed as new are proposed creation paths; preserve existi
 
 **Interfaces:** Existing `ui-checks/run.mjs` reporter and `d1-checks/run.mjs` local Worker test harness, plus Task 1–6 public routes. No production/hosted invocation.
 
-- [ ] **Step 1 — Red:** Add failing tests for report-only code changes triggering CI; unauthenticated + limited RBAC requests; mocked and real-local-D1 `GET /api/reports/v2/*` parity; laptop/tablet/phone screenshots; keyboard and click-through; filtering 50/100; CSV/print; WCAG axe; no preview demo data; 4–5-page clipped-free print; zero real writes. Test `apps/hisabiq-web` pinned source remains pristine.
+- [ ] **Step 1 — Red:** Add failing tests for report-only code changes triggering CI; unauthenticated + limited RBAC requests; mocked and real-local-D1 `GET /api/reports/v2/*` parity; laptop/tablet/phone screenshots; keyboard and click-through; filtering 50/100; WCAG axe; no preview demo data; no audit print/CSV artifact; zero real writes. Report-specific CSV/print checks apply only to source-backed export functions that actually exist. Test `apps/hisabiq-web` pinned source remains pristine.
 - [ ] **Step 2 — Verify red:** Run `node --test react-integration/tests/reports-source-parity.test.mjs` and `node ui-checks/run.mjs` after `npm run react:build`; new assertions fail before wiring.
-- [ ] **Step 3 — Implement:** Add reporting/code/doc path filters to the CI workflow, contract/backend tests to `node --import tsx --test ...`, report UI checks to `ui-checks/run.mjs`, Worker/D1 read-only checks to `d1-checks/run.mjs`, report artifacts, and release checklist including exact-head links and historical reconciliation dependency notes. Use only isolated `wrangler.d1-ci.jsonc` with `--local --persist-to`; never `--remote`.
+- [ ] **Step 3 — Implement:** Add reporting/code/doc path filters to the CI workflow, contract/backend tests to `node --import tsx --test ...`, report UI checks to `ui-checks/run.mjs`, Worker/D1 read-only checks to `d1-checks/run.mjs`, visual and test artifacts for implemented reports, and release checklist including exact-head links and historical reconciliation dependency notes. Use only isolated `wrangler.d1-ci.jsonc` with `--local --persist-to`; never `--remote`.
 - [ ] **Step 4 — Green:** Run `npm run backend:build`, all `tests/reports-*.integration.test.ts`, `node --test react-integration/tests/reports-*.test.mjs`, `npm run react:build`, `node ui-checks/run.mjs`, `node d1-checks/run.mjs`. On GitHub record the exact SHA and all jobs; skipped hosted-preview jobs are explicitly **not** passes.
 - [ ] **Step 5 — Commit:** `git add .github/workflows/hisabiq-react-build.yml d1-checks ui-checks react-integration/tests docs/superpowers && git commit -m "test(reports): add isolated d1 browser and release gates"`.
 
@@ -159,7 +163,7 @@ The directories/files listed as new are proposed creation paths; preserve existi
 | Sales/returns/discount/FIFO/expenses | 3 |
 | Lot values, moving stock, dues, aging, anomalies | 4 |
 | Cash/bank/expenses/capital | 5 |
-| A4 audit month/year, charts, print/export in Library | 6 |
+| Business Audit redesign and print/export | Deferred separately; explicitly excluded from Phase 5G |
 | Local SQLite/D1, Playwright/axe/security, cross-phase release gates | 7 |
 
-**Approval/execution:** Scope approved 2026-10-30; this file is the implementation handoff. Do not claim Task 1–7 implemented or passing merely because this documentation exists. At each implementation slice, update the checklist and draft PR with exact commit SHA/CI links.
+**Approval/execution:** Scope approved 2026-10-30; this file is the implementation handoff. Do not claim Task 1–7 implemented or passing merely because this documentation exists. Task 6 (5F) is explicitly deferred and not part of Phase 5 release acceptance; Task 7 (5G) verifies implemented reporting only. At each implementation slice, update the checklist and draft PR with exact commit SHA/CI links.
