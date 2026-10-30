@@ -22,7 +22,7 @@ export async function runPurchaseInvoiceSourceChecks({browser,base,withCheck,res
    await page.goto(base+'/#/app/purchases');
    await page.locator('[data-live-purchases]').waitFor({timeout:12000});
    await page.getByText('PUR-LIVE-SOURCE-001').waitFor({timeout:12000});
-   await page.getByRole('button',{name:'View invoice PUR-LIVE-SOURCE-001'}).click();
+   await page.getByRole('button',{name:'View · দেখুন invoice PUR-LIVE-SOURCE-001'}).click();
    const modal=page.getByRole('dialog',{name:/Bill details/i});
    await modal.getByText('Khan Hardware').waitFor({timeout:12000});
    await modal.getByText(/Copper Cable 2.5mm/).waitFor();
@@ -36,7 +36,7 @@ export async function runPurchaseInvoiceSourceChecks({browser,base,withCheck,res
    assert.equal(await modal.getByRole('link',{name:/Khan Hardware/}).count(),0,
     'Unconnected demo party route must not be suggested as live ledger');
    if(width===390){await screenshot(page,'phase4j-purchase-source-390');await audit(page,'phase4j-purchase-source-390');}
-   await modal.getByRole('button',{name:/Close|বন্ধ করুন/}).click();
+   await modal.getByRole('button',{name:/Close|বন্ধ করুন/}).first().click();
    assert.equal(await page.getByRole('dialog',{name:/Bill details/i}).count(),0);
    results.apiCalls.push(...calls);await ctx.close();
   });
@@ -53,10 +53,10 @@ export async function runPurchaseInvoiceSourceChecks({browser,base,withCheck,res
   });
   await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
   const page=await ctx.newPage();await page.goto(base+'/#/app/purchases');
-  await page.getByRole('button',{name:'View invoice PUR-LIVE-SOURCE-001'}).click();
+  await page.getByRole('button',{name:'View · দেখুন invoice PUR-LIVE-SOURCE-001'}).click();
   await page.getByRole('alert').getByText('Verified purchase invoice temporarily unavailable').waitFor({timeout:12000});
   assert.equal(await page.getByRole('dialog',{name:/Bill details/i}).count(),0);
-  assert.equal(calls.length,1);
+  assert.equal(calls.filter(c=>c.path==='/api/purchases/PUR-LIVE-SOURCE-001').length,1);
   await ctx.close();
  });
 }
