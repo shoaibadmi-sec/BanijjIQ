@@ -44,3 +44,9 @@ test('live stock/dues tables label current values and show row reconciliation st
  assert.match(source,/Current due/);
  assert.match(source,/Current FIFO value/);
 });
+
+test('Dashboard period changes clear previous metric values before loading new sources',()=>{
+ const source=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(source,/setSummaryMetrics\(\[\]\)/);
+ assert.match(source,/setSummaryStatus\('Loading current reporting evidence/);
+});
