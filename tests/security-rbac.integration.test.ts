@@ -158,8 +158,8 @@ test('RBAC: delegated users.edit cannot promote self or another account to a str
     assert.equal(after.users.find((u:any)=>u.id===self.id).role,'CashierAdminTools');
     assert.equal(after.users.find((u:any)=>u.id===other.id).role,'CashierAdminTools');
     assert.equal((await f.api('GET','/api/auth/me',undefined,f.staffToken)).user.role,'CashierAdminTools');
-    assert.equal((await f.api('GET','/api/bank',undefined,f.staffToken)).status,403,
-      'rejected promotion must not grant bank permissions');
+    assert.equal((await f.api('GET','/api/roles',undefined,f.staffToken)).status,403,
+      'rejected promotion must not grant role-management permissions');
     const adminChange=await f.api('PUT','/api/users/'+other.id,{
       name:'Existing Stock Clerk',mobile:'01000002504',role:'PrivilegedFinance'
     },f.adminToken);
