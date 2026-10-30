@@ -80,6 +80,11 @@ test('4B isolated full-migration accounting and revision guard',async()=>{
    assert.notEqual(bad.status,200,JSON.stringify({changes,bad}));
    assert.deepEqual(snapshot(),zero,'rejected purchase must preserve stock, due and FIFO');
   }
+  for(const invalid of [{discount:25},{paidAmount:30}]){
+   const blocked=await api('POST','/api/purchases',{...payload,...invalid});
+   assert.notEqual(blocked.status,200,JSON.stringify(blocked));
+   assert.deepEqual(snapshot(),zero,'Mixed-unit discount/paid tender must not create irreconcilable purchases');
+  }
   const posted=await api('POST','/api/purchases',payload);
   assert.equal(posted.status,200,JSON.stringify(posted));
   assert.equal(posted.grandTotal,2830);

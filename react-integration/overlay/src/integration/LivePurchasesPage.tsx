@@ -19,6 +19,7 @@ const newLine=():Line=>({key:crypto.randomUUID(),productId:'',qty:1,unitPrice:0}
 
 export function LivePurchasesPage(){
   const user=useBackendSession(),permitted=canUseModule(user,'purchase');
+  const navigate=useNavigate();
   const [params]=useSearchParams();
   const tab=params.get('tab')==='return'?'return':'purchases';
   const [items,setItems]=useState<PurchaseRecord[]>([]);
@@ -40,7 +41,9 @@ export function LivePurchasesPage(){
     <PageHeader title="Purchases" titleBn="ক্রয়" description="Real purchase invoices and supplier balances."
       actions={<div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={()=>void refresh()} disabled={loading}><RefreshCw className="size-4"/> Refresh</Button>
-        {canUseModule(user,'purchase','add')&&<Button asChild size="sm"><Link to="/app/purchases/new"><Plus className="size-4"/> New Purchase</Link></Button>}
+        {canUseModule(user,'purchase','add')&&<Button size="sm" onClick={()=>navigate('/app/purchases/new')}>
+          <Plus className="size-4"/> New Purchase
+        </Button>}
       </div>}/>
     <nav aria-label="Purchase sections" className="flex items-center gap-2 border-b border-border text-sm">
       <Link to="/app/purchases" className={'px-3 py-2 '+(tab==='purchases'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchases · ক্রয়</Link>

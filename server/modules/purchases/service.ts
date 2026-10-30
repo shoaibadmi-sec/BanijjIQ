@@ -116,8 +116,14 @@ export async function createSupplierRoute(db: SherDatabase, input: { name?: stri
 export async function createPurchase(db: SherDatabase, input: PurchaseInput, user: AuthUser): Promise<Response> {
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Add at least one product line.');
-  if(items.some(i=>i.unitQuantities!==undefined)&&!cleanText(input.supplierId))
+  const mixedPurchase=items.some(i=>i.unitQuantities!==undefined||
+    i.unitProfileRevision!==undefined||i.priceUnit!==undefined);
+  if(mixedPurchase&&!cleanText(input.supplierId))
     return error('Select a saved supplier for mixed-unit purchases.');
+  // Until split-tender and invoice-discount allocation have independent D1
+  // reconciliation, refuse new mixed purchases that 4C could not safely reverse.
+  if(mixedPurchase&&(Number(input.discount??0)!==0||Number(input.paidAmount??0)!==0))
+    return error('Mixed-unit purchases currently require zero discount and zero paid amount; settlement follows Phase 4D.');
   const lineIds=items.map(i=>cleanText(i.productId));
   if(new Set(lineIds).size!==lineIds.length)return error('Duplicate product lines must be merged.');
 
