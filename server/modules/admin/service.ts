@@ -4,6 +4,7 @@ import { hashPassword } from '../auth/service.js';
 import {
   DELETE_WINDOW_OPTIONS,
   PERMISSION_MODULES,
+  getUserPermissions,
   requireManagementDelete,
   requireModulePermission,
   sanitizePermissions
@@ -15,6 +16,21 @@ function error(message: string, status = 400): Response { return json({ ok: fals
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
 
 function displayRoleName(role:string):string{return role==='admin'?'Administrator':role}
+// A delegated role editor may only grant capabilities already present in their own active role.
+async function mayGrantRolePermissions(db:SherDatabase,actor:AuthUser,requested:RolePermissions):Promise<boolean>{
+  const own=await getUserPermissions(db,actor);
+  if(own===null)return true; // Built-in Administrator
+  const scope=(v:unknown):number=>v===true||v==='unlimited'?Infinity:v==='same'?0:typeof v==='string'&&/^\d+$/.test(v)?Number(v):-1;
+  return Object.entries(requested).every(([module,want])=>{
+    const have=own[module];
+    return !!have
+      && (!want.view||have.view)
+      && (!want.add||have.add)
+      && (!want.edit||have.edit)
+      && scope(want.delete)<=scope(have.delete)
+      && scope(want.backdate)<=scope(have.backdate);
+  });
+}
 async function countActiveAdmins(db:SherDatabase):Promise<number>{
   const r=await db.prepare(`SELECT COUNT(*) total FROM app_users WHERE role='admin' AND status='Active'`).first<{total:number}>();
   return Number(r?.total||0);
@@ -110,7 +126,9 @@ export async function createManagedRoleRoute(db:SherDatabase,input:any,user:Auth
   const denied=await requireModulePermission(db,user,'roles','add');if(denied)return denied;
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be created here.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) LIMIT 1`).bind(name).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
+  const permissions=sanitizePermissions(input.permissions);
+  if(!(await mayGrantRolePermissions(db,user,permissions)))return error('You cannot grant permissions beyond your own role.',403);
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
   await db.prepare(`INSERT INTO app_roles(role_id,role_name,allowed_modules,permissions_json,status,created_at,updated_at) VALUES (?,?,?,?,'Active',datetime('now'),datetime('now'))`).bind(id,name,allowed.join(','),JSON.stringify(permissions)).run();
   return json({ok:true,id});
 }
@@ -119,7 +137,9 @@ export async function updateManagedRoleRoute(db:SherDatabase,id:string,input:any
   const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be renamed to that.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) AND role_id<>? LIMIT 1`).bind(name,id).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
+  const permissions=sanitizePermissions(input.permissions);
+  if(!(await mayGrantRolePermissions(db,user,permissions)))return error('You cannot grant permissions beyond your own role.',403);
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
   await db.batch([
     db.prepare(`UPDATE app_roles SET role_name=?,allowed_modules=?,permissions_json=?,updated_at=datetime('now') WHERE role_id=?`).bind(name,allowed.join(','),JSON.stringify(permissions),id),
     db.prepare(`UPDATE app_users SET role=?,updated_at=datetime('now') WHERE role=?`).bind(name,oldName),
