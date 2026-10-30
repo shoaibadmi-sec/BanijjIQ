@@ -29,8 +29,8 @@ const toRow=(record:LiveReportRecord,report:LiveReportBackendKey):ReportRow=>{
    report==='purchase'?'/app/purchases?q='+encodeURIComponent(record.sourceId):undefined,
   values:{amount,inflow:amount===null?null:Math.max(0,amount),
    outflow:amount===null?null:Math.max(0,-amount),
-   paid:report==='sales'&&typeof record.paidMinor==='number'?record.paidMinor/100:null,
-   due:report==='sales'&&typeof record.dueMinor==='number'?record.dueMinor/100:null,
+   paid:(report==='sales'||report==='purchase')&&typeof record.paidMinor==='number'?record.paidMinor/100:null,
+   due:(report==='sales'||report==='purchase')&&typeof record.dueMinor==='number'?record.dueMinor/100:null,
    cost:null,profit:null,stock:null,quantity:null},
   note:record.reason
  };
