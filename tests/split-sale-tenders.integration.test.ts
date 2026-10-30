@@ -268,6 +268,44 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         tenders.map(t=>[t.method,t.amountCents,t.bankAccountId||'']));
       assert.equal(previewResponse.preview.refundCents,
         profile==='cash-credit'?2000:3000);
+
+      // G2-I: read-only business/accounting quote for a single item quantity.
+      // The quoted source amounts are hand-calculated from immutable tenders.
+      // Posting is intentionally disabled until separate D1 partial-return guards exist.
+      const quoteBooks=()=>({
+        cashRows:row('SELECT COUNT(*) n FROM cash_book').n,
+        bankRows:row('SELECT COUNT(*) n FROM bank_book').n,
+        creditRows:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+        creditBalance:row("SELECT available_cents n FROM customer_store_credit_balance WHERE customer_id='SPLIT-CUS'").n,
+        stock:row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,
+        lots:row('SELECT COALESCE(SUM(remaining_quantity),0) n FROM stock_lots WHERE product_id=?',product.productId).n
+      });
+      const preQuoteBooks=quoteBooks();
+      const partialPath='/api/sales-management/'+saleId+'/split-partial-preview';
+      const partial=await api('GET',partialPath+'?productId='+product.productId+'&quantity=1');
+      assert.equal(partial.status,200,JSON.stringify(partial));
+      assert.equal(partial.preview.invoiceId,saleId);
+      assert.equal(partial.preview.productId,product.productId);
+      assert.equal(partial.preview.quantity,1);
+      assert.equal(partial.preview.amountCents,1000);
+      assert.equal(partial.preview.postingEnabled,false);
+      assert.deepEqual(partial.preview.allocations.map((a:any)=>[a.sourceKey,a.amountCents]),
+        profile==='cash-credit'
+          ?[['Cash',400],['Store Credit',600]]
+          :[['Bank:'+bank.id,200],['Mobile Banking:'+mobile.id,400],['Store Credit',400]]);
+      for(const suffix of ['?productId='+product.productId+'&quantity=0',
+        '?productId='+product.productId+'&quantity=6',
+        '?productId='+product.productId+'&quantity=1.5',
+        '?productId=NOT-SOLD&quantity=1','?productId='+product.productId]){
+        const invalid=await api('GET',partialPath+suffix);
+        assert.equal(invalid.status,400,'invalid quantity/product may not return a refund quote');
+      }
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      assert.deepEqual(quoteBooks(),preQuoteBooks,
+        'read-only quote may not change cash, bank, credit, inventory or FIFO ledgers');
+
       // Full Phase 3 accounting acceptance: a preflight must NOT approve
       // an invoice whose immutable posting proof the POST would later reject.
       // This guards the entire UI "Confirm" workflow from misleading Cash payout.
@@ -289,6 +327,25 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         .run(item.unit_price,item.id);
       assert.equal((await api('GET','/api/sales-management/'+saleId+'/split-reversal')).preview.eligible,true,
         'verified original source must remain eligible after fixture restoration');
+      // TDD: full refund preflight must reject an already-filled FIFO lot
+      // before allowing an operator to approve any original-source payout.
+      const originalLot=(db.native.prepare(
+        'SELECT lot.lot_id,lot.remaining_quantity,lot.original_quantity '+
+        'FROM stock_lots lot JOIN sale_item_lots used ON used.lot_id=lot.lot_id '+
+        'WHERE used.invoice_id=? ORDER BY used.id LIMIT 1'
+      ).get(saleId) as any);
+      assert.ok(originalLot,'full split sale must retain original FIFO lot evidence');
+      assert.ok(originalLot.remaining_quantity<originalLot.original_quantity);
+      db.native.prepare('UPDATE stock_lots SET remaining_quantity=? WHERE lot_id=?')
+        .run(originalLot.original_quantity,originalLot.lot_id);
+      const capacityBlocked=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+      assert.equal(capacityBlocked.preview.eligible,false,
+        'FIFO lot with no restoration capacity must be rejected at PREVIEW, not just POST');
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      db.native.prepare('UPDATE stock_lots SET remaining_quantity=? WHERE lot_id=?')
+        .run(originalLot.remaining_quantity,originalLot.lot_id);
+      assert.equal((await api('GET','/api/sales-management/'+saleId+'/split-reversal')).preview.eligible,true);
+
       // An inactive original bank account must block refund rather than
       // redirecting funds to a different source or rewriting history.
       if(bank){
@@ -298,6 +355,23 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id=?").run(bank.id);
       }
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      // TDD: a caller requesting only part of the invoice must NEVER trigger
+      // the existing whole-invoice refund by slipping extra JSON fields through.
+      const partialUrl='/api/sales-management/'+saleId+'/split-reversal';
+      for(const change of [
+        {requestedRefundCents:1000},
+        {items:[{productId:product.productId,qty:1,unitPrice:10}]},
+        {allocations:[{method:'Cash',amountCents:400}]}
+      ]){
+        const denied=await api('POST',partialUrl,{
+          reason:'Return only one item, not the entire invoice',...change
+        });
+        assert.equal(denied.status,400,
+          'partial-refund payload must be rejected, not reverse the full sale');
+        assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+        assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+        assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      }
       // G2-H Task 2: a final audit fault must roll back FIFO restore,
       // all money-source refunds, credit reissue, and reversal idempotency.
       const before={
@@ -306,9 +380,34 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         bank:row('SELECT COUNT(*) n FROM bank_book').n,
         credit:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n
       };
-      db.native.exec("CREATE TRIGGER split_refund_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='REVERSE_SPLIT_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_AUDIT_FAULT'); END");
       const url='/api/sales-management/'+saleId+'/split-reversal';
       const reversalBody={reason:'Refund exactly to verified original payment sources'};
+      // Real transaction failure injection: the refund must never leave
+      // cash/bank debited or FIFO stock restored when credit issuance fails.
+      db.native.exec("CREATE TRIGGER split_credit_issue_fault BEFORE INSERT ON customer_store_credit_entries WHEN NEW.entry_type='ISSUE' AND NEW.source_type='Sales Return' BEGIN SELECT RAISE(ABORT,'CREDIT_ISSUE_FAILURE'); END");
+      const creditFault=await api('POST',url,reversalBody);
+      assert.equal(creditFault.ok,false,JSON.stringify(creditFault));
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+      assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
+      assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+      assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      db.native.exec('DROP TRIGGER split_credit_issue_fault');
+      if(bank){
+        db.native.exec("CREATE TRIGGER split_bank_refund_fault BEFORE INSERT ON bank_book WHEN NEW.type='Sales Return' BEGIN SELECT RAISE(ABORT,'BANK_REFUND_FAILURE'); END");
+        const bankFault=await api('POST',url,reversalBody);
+        assert.equal(bankFault.ok,false,JSON.stringify(bankFault));
+        assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+        assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+        assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+        assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+        assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank.id).n,110);
+        db.native.exec('DROP TRIGGER split_bank_refund_fault');
+      }
+
+      db.native.exec("CREATE TRIGGER split_refund_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='REVERSE_SPLIT_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_AUDIT_FAULT'); END");
       const failed=await api('POST',url,reversalBody);
       assert.equal(failed.ok,false,JSON.stringify(failed));
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);

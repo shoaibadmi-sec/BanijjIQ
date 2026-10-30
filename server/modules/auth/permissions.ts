@@ -95,6 +95,8 @@ async function resolveDeleteRecordDate(db:SherDatabase,path:string,moduleKey:str
 function permissionRouteInfo(path:string,method:string):{moduleKey:string;action:'view'|'add'|'edit'|'delete'}|null{
   if(path==='/api/bootstrap')return null;
   // Split refunds are Sales Returns actions, not permission to create an ordinary sale.
+  if(/^\/api\/sales-management\/[^/]+\/split-partial-preview$/.test(path))
+    return {moduleKey:'returns',action:method==='GET'?'view':'add'};
   if(/^\/api\/sales-management\/[^/]+\/split-reversal$/.test(path))
     return {moduleKey:'returns',action:method==='GET'?'view':'add'};
   const rules:Array<[RegExp,string]>=[
