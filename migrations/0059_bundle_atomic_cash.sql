@@ -69,3 +69,22 @@ CREATE TRIGGER IF NOT EXISTS guard_bundle_item_delete
 BEFORE DELETE ON sale_items
 WHEN EXISTS(SELECT 1 FROM sale_bundle_components WHERE invoice_id=OLD.invoice_id)
 BEGIN SELECT RAISE(ABORT,'BUNDLE_LIFECYCLE_NOT_READY'); END;
+
+
+-- Virtual bundles have no physical stock. Other modules must update components, not the kit.
+CREATE TRIGGER IF NOT EXISTS guard_virtual_bundle_stock_update
+BEFORE UPDATE OF current_stock ON products
+WHEN OLD.product_type='Bundle' AND NEW.current_stock<>0
+BEGIN SELECT RAISE(ABORT,'VIRTUAL_BUNDLE_STOCK_FORBIDDEN'); END;
+CREATE TRIGGER IF NOT EXISTS guard_virtual_bundle_fifo_lot_insert
+BEFORE INSERT ON stock_lots
+WHEN EXISTS(SELECT 1 FROM products WHERE product_id=NEW.product_id AND product_type='Bundle')
+BEGIN SELECT RAISE(ABORT,'VIRTUAL_BUNDLE_FIFO_LOT_FORBIDDEN'); END;
+CREATE TRIGGER IF NOT EXISTS guard_virtual_bundle_movement_insert
+BEFORE INSERT ON stock_movements
+WHEN EXISTS(SELECT 1 FROM products WHERE product_id=NEW.product_id AND product_type='Bundle')
+BEGIN SELECT RAISE(ABORT,'VIRTUAL_BUNDLE_STOCK_MOVEMENT_FORBIDDEN'); END;
+CREATE TRIGGER IF NOT EXISTS guard_bundle_product_type_change
+BEFORE UPDATE OF product_type ON products
+WHEN OLD.product_type<>NEW.product_type
+BEGIN SELECT RAISE(ABORT,'BUNDLE_PRODUCT_TYPE_IMMUTABLE'); END;
