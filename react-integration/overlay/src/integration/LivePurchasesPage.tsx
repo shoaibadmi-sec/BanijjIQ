@@ -54,7 +54,7 @@ export function LivePurchasesPage(){
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
       <Link to="/app/purchases?tab=plans" className={'px-3 py-2 '+(tab==='plans'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Plans · পরিকল্পনা</Link>
     </nav>
-    {tab==='return'?(params.get('purchaseId')&&!items.find(p=>p.purchaseId===params.get('purchaseId'))?.items?.some(i=>!!i.unitDescription)
+    {tab==='return'?(params.get('purchaseId')&&items.some(p=>p.purchaseId===params.get('purchaseId')&&!p.items?.some(i=>!!i.unitDescription))
       ?<LiveStandardPurchaseReturns purchaseId={params.get('purchaseId')!} onRefresh={()=>void refresh()}/>
       :<LiveMixedPurchaseReturns purchaseId={params.get('purchaseId')||''}
          purchases={items} loading={loading} onRefresh={()=>void refresh()}/>):
