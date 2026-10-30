@@ -350,3 +350,52 @@ test('4F historical paid purchase cannot be deleted without reversing its posted
   assert.deepEqual(snapshot(),before,'Refused deletion must not alter cash, FIFO or supplier records');
  });
 });
+
+test('4F authorization: every purchase and supplier financial route denies anonymous access',async()=>{
+ await fixture(async({db,one,count})=>{
+  const endpoints:Array<[string,string]>=[
+   ['GET','/api/purchases/supplier-search?q=hardware'],
+   ['GET','/api/purchases'],['POST','/api/purchases'],
+   ['GET','/api/purchases/PUR-UNKNOWN'],['PUT','/api/purchases/PUR-UNKNOWN'],
+   ['DELETE','/api/purchases/PUR-UNKNOWN'],
+   ['GET','/api/purchases/PUR-UNKNOWN/return-data'],
+   ['GET','/api/purchase-returns'],['POST','/api/purchase-returns'],
+   ['GET','/api/purchases/unit-profile/PRD-UNKNOWN'],
+   ['GET','/api/purchases/planner/analyze'],
+   ['GET','/api/purchases/planner/plans'],['POST','/api/purchases/planner/plans'],
+   ['GET','/api/purchases/planner/plans/PPL-UNKNOWN'],
+   ['PUT','/api/purchases/planner/plans/PPL-UNKNOWN'],
+   ['DELETE','/api/purchases/planner/plans/PPL-UNKNOWN'],
+   ['POST','/api/purchases/planner/plans/PPL-UNKNOWN/approve'],
+   ['POST','/api/purchases/planner/plans/PPL-UNKNOWN/reject'],
+   ['GET','/api/purchases/planner/orders'],
+   ['GET','/api/purchases/planner/orders/SPO-UNKNOWN'],
+   ['GET','/api/purchases/planner/orders/SPO-UNKNOWN/convert-data'],
+   ['POST','/api/purchases/supplier-settlements'],
+   ['GET','/api/purchases/supplier-settlements/supplier/SUP-UNKNOWN'],
+   ['POST','/api/purchases/supplier-settlements/SET-UNKNOWN/reverse'],
+   ['GET','/api/suppliers'],['POST','/api/suppliers'],
+   ['GET','/api/suppliers/SUP-UNKNOWN'],['PUT','/api/suppliers/SUP-UNKNOWN'],
+   ['DELETE','/api/suppliers/SUP-UNKNOWN'],
+   ['PUT','/api/suppliers/SUP-UNKNOWN/status'],
+   ['POST','/api/suppliers/SUP-UNKNOWN/payments'],
+   ['GET','/api/supplier-payments/PAY-UNKNOWN'],
+   ['PUT','/api/supplier-payments/PAY-UNKNOWN'],
+   ['DELETE','/api/supplier-payments/PAY-UNKNOWN']
+  ];
+  const before=[count('purchases'),count('purchase_returns'),count('purchase_plans'),
+   count('supplier_ledger'),count('supplier_settlement_entries'),count('cash_book'),
+   count('bank_book')];
+  for(const [method,path] of endpoints){
+   const request=new Request('http://phase4-auth.local'+path,{
+    method,headers:{'content-type':'application/json'},
+    body:method==='GET'?undefined:'{}'
+   });
+   const response=await handleApiRequest(request,db);
+   assert.equal(response.status,401,method+' '+path+' must require login');
+  }
+  assert.deepEqual([count('purchases'),count('purchase_returns'),count('purchase_plans'),
+   count('supplier_ledger'),count('supplier_settlement_entries'),count('cash_book'),
+   count('bank_book')],before,'Rejected requests must leave every financial journal untouched');
+ });
+});
