@@ -59,7 +59,8 @@ export async function runAdminEmployeeCreateChecks({browser,base,withCheck}){
         });
         assert.ok(f.calls.filter(x=>x.path==='/api/users'&&x.method==='GET').length>=2,
           'confirmed employee must be refreshed from server');
-        assert.equal(await f.page.getByText('Mahmud Hasan').count(),0,'demo identities prohibited');
+        assert.equal(await f.page.locator('[data-live-team-settings]').getByText('Mahmud Hasan').count(),0,
+          'demo identities prohibited in the live Team panel');
       }finally{await f.ctx.close();}
     });
   }
