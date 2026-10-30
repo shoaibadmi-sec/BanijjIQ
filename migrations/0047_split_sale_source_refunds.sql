@@ -21,13 +21,15 @@ CREATE TRIGGER trg_split_refund_allocation_no_delete
 BEFORE DELETE ON sales_return_refund_allocations
 BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_APPEND_ONLY'); END;
 
--- Preserve strict old issue validation; allow verified original-source credit reissue.
+-- Keep legacy-backed Store Credit issuance verification strictly intact.
 DROP TRIGGER IF EXISTS trg_store_credit_issue_source_reconciles;
 -- Phase 3G2-B: a credit is valid only when a real paid, reconciled sale
 -- and return exist. Inserting a liability cannot invent receipts or rewrite A/R.
 CREATE TRIGGER trg_store_credit_issue_source_reconciles
 BEFORE INSERT ON customer_store_credit_entries
-WHEN NEW.entry_type='ISSUE' AND NOT EXISTS (
+WHEN NEW.entry_type='ISSUE'
+  AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')<>'Split'
+  AND NOT EXISTS (
   SELECT 1 FROM sales_returns sr
   JOIN sales s ON s.invoice_id=sr.invoice_id
   JOIN customers c ON c.customer_id=NEW.customer_id
@@ -91,44 +93,6 @@ WHEN NEW.entry_type='ISSUE' AND NOT EXISTS (
           OR old.refund_method NOT IN ('Cash','Store Credit')
         )
     )
-  OR EXISTS (
-  SELECT 1 FROM sales_returns sr
-  JOIN sales s ON s.invoice_id=sr.invoice_id
-  JOIN customers c ON c.customer_id=NEW.customer_id
-  JOIN sales_return_refund_allocations r ON r.return_id=sr.return_id
-  JOIN sale_tender_allocations original ON original.invoice_id=s.invoice_id
-    AND original.source_key=r.source_key
-  JOIN customer_store_credit_entries redeemed ON redeemed.source_type='Sale'
-    AND redeemed.source_id=s.invoice_id AND redeemed.entry_type='REDEEM'
-    AND redeemed.customer_id=NEW.customer_id
-  WHERE sr.return_id=NEW.source_id AND sr.customer_id=NEW.customer_id
-    AND sr.customer_phone=c.phone AND s.customer_id=NEW.customer_id
-    AND s.status='Completed' AND s.is_deleted=0
-    AND s.payment_method='Split' AND s.payment_type='Cash'
-    AND s.paid_amount=s.grand_total AND s.due_amount=0
-    AND s.grand_total=sr.total_return_amount
-    AND sr.refund_method='Split'
-    AND r.method='Store Credit' AND r.customer_id=NEW.customer_id
-    AND original.method='Store Credit' AND original.customer_id=NEW.customer_id
-    AND original.amount_cents=r.amount_cents
-    AND r.amount_cents=NEW.delta_cents
-    AND redeemed.delta_cents=-NEW.delta_cents
-    AND c.status='Active' AND c.is_deleted=0 AND c.current_due>=0
-    AND NOT EXISTS (SELECT 1 FROM customer_ledger cl
-      WHERE cl.customer_id=NEW.customer_id AND cl.type='Sales Return Credit')
-    AND NOT EXISTS (
-      SELECT 1 FROM store_credit_legacy_unreconciled legacy
-      JOIN sales_returns old ON old.return_id=legacy.return_id
-      WHERE old.customer_id=NEW.customer_id OR old.customer_phone=c.phone)
-    AND NOT EXISTS (SELECT 1 FROM sales_returns old
-      WHERE old.invoice_id=s.invoice_id AND old.return_id<>sr.return_id)
-    AND (SELECT COUNT(*) FROM sales_return_items i WHERE i.return_id=sr.return_id)>0
-    AND CAST(ROUND(COALESCE((SELECT SUM(i.line_total) FROM sales_return_items i
-      WHERE i.return_id=sr.return_id),0)*100) AS INTEGER)
-        =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
-    AND (SELECT COALESCE(SUM(amount_cents),0) FROM sales_return_refund_allocations
-      WHERE return_id=sr.return_id)=CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
-)
 )
 BEGIN SELECT RAISE(ABORT,'STORE_CREDIT_SOURCE_CONFLICT'); END;
 
@@ -141,25 +105,15 @@ WHEN
   OR NEW.balance_after_cents < 0
   OR NOT EXISTS (SELECT 1 FROM customers c WHERE c.customer_id=NEW.customer_id
     AND c.is_deleted=0 AND c.status='Active')
-  OR (NEW.entry_type='ISSUE' AND (
+  OR (NEW.entry_type='ISSUE'
+      AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')<>'Split'
+      AND (
       NEW.source_type<>'Sales Return' OR NEW.delta_cents<=0
       OR NOT EXISTS (
         SELECT 1 FROM sales_returns sr JOIN sales s ON s.invoice_id=sr.invoice_id
         WHERE sr.return_id=NEW.source_id AND sr.customer_id=NEW.customer_id
-          AND (
-            (sr.refund_method='Store Credit'
-              AND CAST(ROUND(sr.total_return_amount*100) AS INTEGER)=NEW.delta_cents)
-            OR (sr.refund_method='Split' AND s.payment_method='Split'
-              AND s.status='Completed' AND s.is_deleted=0
-              AND s.grand_total=sr.total_return_amount
-              AND EXISTS (SELECT 1 FROM sales_return_refund_allocations a
-                WHERE a.return_id=sr.return_id AND a.method='Store Credit'
-                  AND a.customer_id=NEW.customer_id AND a.amount_cents=NEW.delta_cents)
-              AND EXISTS (SELECT 1 FROM customer_store_credit_entries redeemed
-                WHERE redeemed.source_type='Sale' AND redeemed.source_id=s.invoice_id
-                  AND redeemed.entry_type='REDEEM' AND redeemed.customer_id=NEW.customer_id
-                  AND redeemed.delta_cents=-NEW.delta_cents))
-          )
+          AND sr.refund_method='Store Credit'
+          AND CAST(ROUND(sr.total_return_amount*100) AS INTEGER)=NEW.delta_cents
           AND s.customer_id=NEW.customer_id
           AND s.paid_amount=s.grand_total AND s.due_amount=0
           AND s.grand_total>=sr.total_return_amount
@@ -211,6 +165,52 @@ WHEN
 BEGIN SELECT RAISE(ABORT,'STORE_CREDIT_LEDGER_CONFLICT'); END;
 
 
+
+-- Cloudflare D1 limits expression depth to 100. Keep split-proof
+-- separate from the original (unchanged) full cash-return credit guard.
+CREATE TRIGGER trg_store_credit_split_reissue_source
+BEFORE INSERT ON customer_store_credit_entries
+WHEN NEW.entry_type='ISSUE'
+  AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split'
+  AND (NEW.source_type<>'Sales Return' OR NEW.delta_cents<=0 OR NOT (EXISTS (
+  SELECT 1 FROM sales_returns sr
+  JOIN sales s ON s.invoice_id=sr.invoice_id
+  JOIN customers c ON c.customer_id=NEW.customer_id
+  JOIN sales_return_refund_allocations r ON r.return_id=sr.return_id
+  JOIN sale_tender_allocations original ON original.invoice_id=s.invoice_id
+    AND original.source_key=r.source_key
+  JOIN customer_store_credit_entries redeemed ON redeemed.source_type='Sale'
+    AND redeemed.source_id=s.invoice_id AND redeemed.entry_type='REDEEM'
+    AND redeemed.customer_id=NEW.customer_id
+  WHERE sr.return_id=NEW.source_id AND sr.customer_id=NEW.customer_id
+    AND sr.customer_phone=c.phone AND s.customer_id=NEW.customer_id
+    AND s.status='Completed' AND s.is_deleted=0
+    AND s.payment_method='Split' AND s.payment_type='Cash'
+    AND s.paid_amount=s.grand_total AND s.due_amount=0
+    AND s.grand_total=sr.total_return_amount
+    AND sr.refund_method='Split'
+    AND r.method='Store Credit' AND r.customer_id=NEW.customer_id
+    AND original.method='Store Credit' AND original.customer_id=NEW.customer_id
+    AND original.amount_cents=r.amount_cents
+    AND r.amount_cents=NEW.delta_cents
+    AND redeemed.delta_cents=-NEW.delta_cents
+    AND c.status='Active' AND c.is_deleted=0 AND c.current_due>=0
+    AND NOT EXISTS (SELECT 1 FROM customer_ledger cl
+      WHERE cl.customer_id=NEW.customer_id AND cl.type='Sales Return Credit')
+    AND NOT EXISTS (
+      SELECT 1 FROM store_credit_legacy_unreconciled legacy
+      JOIN sales_returns old ON old.return_id=legacy.return_id
+      WHERE old.customer_id=NEW.customer_id OR old.customer_phone=c.phone)
+    AND NOT EXISTS (SELECT 1 FROM sales_returns old
+      WHERE old.invoice_id=s.invoice_id AND old.return_id<>sr.return_id)
+    AND (SELECT COUNT(*) FROM sales_return_items i WHERE i.return_id=sr.return_id)>0
+    AND CAST(ROUND(COALESCE((SELECT SUM(i.line_total) FROM sales_return_items i
+      WHERE i.return_id=sr.return_id),0)*100) AS INTEGER)
+        =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
+    AND (SELECT COALESCE(SUM(amount_cents),0) FROM sales_return_refund_allocations
+      WHERE return_id=sr.return_id)=CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
+)))
+BEGIN SELECT RAISE(ABORT,'SPLIT_CREDIT_REISSUE_CONFLICT'); END;
 
 DROP TRIGGER IF EXISTS guard_reversal_refund_account;
 CREATE TRIGGER guard_reversal_refund_account
