@@ -5,6 +5,7 @@ import { LiveReportQueryError, parseLiveReportQuery, parseLiveReportRange } from
 import { readSalesProfit } from './sales-profit.js';
 import { readStockDues } from './stock-dues.js';
 import { readCashExpenses } from './cash-expenses.js';
+import { readDashboardCashflow } from './dashboard-cashflow.js';
 
 function json(data:unknown,status=200):Response {
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
@@ -52,6 +53,8 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
     if(path==='/api/reports/v2/catalog')
       return json({ok:true,mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},
         {id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],reports:liveReportCatalog});
+    if(path==='/api/reports/v2/dashboard-cashflow')
+      return json(await readDashboardCashflow(db,url));
     if(path==='/api/reports/v2/rows') {
       const query=parseLiveReportQuery(url);
       return json(query.report==='sales'?await salesRows(db,query):
