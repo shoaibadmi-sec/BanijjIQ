@@ -96,14 +96,25 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,existing.role);if(adminDenied)return adminDenied;
-  const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role);
-  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
-  if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
-  if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const name=cleanText(input.name),mobile=cleanText(input.mobile);
+  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');
+  const previousLinks=await db.prepare(`SELECT role_name FROM app_user_roles WHERE user_id=? ORDER BY role_name`).bind(id).all<{role_name:string}>();
+  const previous={role:String(existing.role),roleIds:[
+    String(existing.role),...(previousLinks.results||[]).map(x=>x.role_name)
+      .filter(r=>r.toLowerCase()!==String(existing.role).toLowerCase())
+  ]};
+  const request=input.roleIds===undefined?{...input,role:input.role??existing.role}:input;
+  const resolved=await resolveEmployeeRoles(db,request,actor,previous);if(resolved instanceof Response)return resolved;
+  const {role,roleIds}=resolved;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? AND user_id<>? LIMIT 1`).bind(mobile,id).first<any>())return error('A user with this mobile number already exists.');
-  if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
-  await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id).run();
-  await db.prepare(`UPDATE auth_sessions SET revoked_at=datetime('now') WHERE user_id=? AND revoked_at IS NULL`).bind(id).run();
+  if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)
+    return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
+  await db.batch([
+    db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id),
+    db.prepare(`DELETE FROM app_user_roles WHERE user_id=?`).bind(id),
+    ...roleIds.filter(r=>r!=='admin').map(r=>db.prepare(`INSERT INTO app_user_roles(user_id,role_name) VALUES (?,?)`).bind(id,r)),
+    db.prepare(`UPDATE auth_sessions SET revoked_at=datetime('now') WHERE user_id=? AND revoked_at IS NULL`).bind(id)
+  ]);
   return json({ok:true,id});
 }
 export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
