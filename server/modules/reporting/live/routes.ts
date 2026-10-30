@@ -4,6 +4,7 @@ import { liveReportCatalog } from './catalog.js';
 import { LiveReportQueryError, parseLiveReportQuery, parseLiveReportRange } from './query.js';
 import { readSalesProfit } from './sales-profit.js';
 import { readStockDues } from './stock-dues.js';
+import { readCashExpenses } from './cash-expenses.js';
 
 function json(data:unknown,status=200):Response {
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
@@ -56,22 +57,25 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
       return json(query.report==='sales'?await salesRows(db,query):
         query.report==='profit'?await readSalesProfit(db,query):
         (query.report==='stock'||query.report==='receivables'||query.report==='payables')?
-          await readStockDues(db,query):unavailable(query));
+          await readStockDues(db,query):
+        (query.report==='cash'||query.report==='bank'||query.report==='finance'||query.report==='expenses')?
+          await readCashExpenses(db,query):unavailable(query));
     }
     if(path==='/api/reports/v2/summary') {
       const query=parseLiveReportQuery(url);
-      const [profit,stock,receivables,payables]=await Promise.all([
+      const [profit,stock,receivables,payables,cash]=await Promise.all([
         readSalesProfit(db,{...query,report:'profit'}),
         readStockDues(db,{...query,report:'stock'}),
         readStockDues(db,{...query,report:'receivables'}),
-        readStockDues(db,{...query,report:'payables'})
+        readStockDues(db,{...query,report:'payables'}),
+        readCashExpenses(db,{...query,report:'cash'})
       ]);
-      const coverage=[profit.coverage,stock.coverage,receivables.coverage,payables.coverage];
+      const coverage=[profit.coverage,stock.coverage,receivables.coverage,payables.coverage,cash.coverage];
       const status=coverage.some(x=>x.status==='incomplete')?'incomplete':
         coverage.some(x=>x.status==='unavailable')?'unavailable':
         coverage.some(x=>x.status==='needs-review')?'needs-review':'ready';
       return json({ok:true,range:profit.range,
-        metrics:[...profit.metrics,...stock.metrics,...receivables.metrics,...payables.metrics],
+        metrics:[...profit.metrics,...stock.metrics,...receivables.metrics,...payables.metrics,...cash.metrics],
         coverage:{status,reason:coverage.map(x=>x.reason).filter(Boolean).join(' ')}});
     }
     if(path==='/api/reports/v2/audit') {
