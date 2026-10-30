@@ -164,9 +164,14 @@ export async function reverseSupplierSettlement(db:SherDatabase,settlementId:str
    Number(source?.credit)!==0||
    (original.method!=='Cash'&&source?.bank_account_id!==original.bank_account_id))
   return error('Original financial movement no longer matches. Reconcile before reversal.',409);
- const ledger=await db.prepare(`SELECT credit FROM supplier_ledger
-  WHERE ledger_id=? AND is_deleted=0`).bind(original.ledger_id).first<{credit:number}>();
- if(!ledger||Math.abs(Number(ledger.credit)-amount)>0.0001)
+ const ledger=await db.prepare(`SELECT supplier_id,type,reference,debit,credit,payment_method,bank_account_id
+  FROM supplier_ledger WHERE ledger_id=? AND is_deleted=0`)
+  .bind(original.ledger_id).first<{supplier_id:string;type:string;reference:string;
+   debit:number;credit:number;payment_method:string;bank_account_id:string}>();
+ if(!ledger||ledger.supplier_id!==original.supplier_id||ledger.type!=='Payment'||
+    ledger.reference!==settlementId||Number(ledger.debit)!==0||
+    Math.abs(Number(ledger.credit)-amount)>0.0001||
+    ledger.payment_method!==original.method||ledger.bank_account_id!==original.bank_account_id)
   return error('Original payment ledger was modified. Reconciliation required.',409);
  const reversalLedgerId=crypto.randomUUID(),today=new Date().toISOString().slice(0,10);
  const due=round4(Number(supplier.current_due)+amount);
