@@ -164,3 +164,41 @@ test('6F role-gated expense API denies posting, correction and cancellation to a
   assert.equal(f.expenses().length,0);
  }finally{f.db.close();}
 });
+
+test('6F accounting: cancelling an expense with missing bank source cannot mint a refund',async()=>{
+ const f=fixture();try{
+  const posted=await read(await addExpenseRoute(f.db,payload(),user));
+  assert.equal(posted.status,200);
+  f.db.native.prepare("UPDATE bank_book SET is_deleted=1 WHERE type='Expense' AND reference=?").run(posted.id);
+  const result=await read(await cancelExpenseRoute(f.db,posted.id,'Review missing bank ledger first',user));
+  assert.equal(result.status,409);
+  assert.equal(f.expenses()[0].status,'Active');
+  assert.equal(f.balance(),70);
+  assert.equal(f.book('bank_book',posted.id).filter((x:any)=>!x.is_deleted&&x.type==='Expense Deleted').length,0);
+  assert.equal(f.countAudit(),0);
+ }finally{f.db.close();}
+});
+test('6F accounting: expense editing fails closed if cash source is duplicated',async()=>{
+ const f=fixture();try{
+  const posted=await read(await addExpenseRoute(f.db,payload(25,'Cash','P6F-CASH-DUPLICATE'),user));
+  assert.equal(posted.status,200);
+  f.db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,debit,credit) VALUES ('P6F-DUP',?,'Expense',?,25,0)").run(date,posted.id);
+  const result=await read(await updateExpenseRoute(f.db,posted.id,payload(20,'Cash','P6F-CASH-EDIT')));
+  assert.equal(result.status,409);
+  assert.equal(f.expenses()[0].amount,25);
+  assert.equal(f.book('cash_book',posted.id).length,2);
+  assert.equal(f.balance(),100);
+ }finally{f.db.close();}
+});
+test('6F accounting: expense cancellation rejects a book leg assigned to another bank account',async()=>{
+ const f=fixture();try{
+  const posted=await read(await addExpenseRoute(f.db,payload(),user));
+  assert.equal(posted.status,200);
+  f.db.native.prepare("UPDATE bank_book SET bank_account_id='BK-MOBILE' WHERE reference=? AND type='Expense'").run(posted.id);
+  const result=await read(await cancelExpenseRoute(f.db,posted.id,'Bank source account mismatch',user));
+  assert.equal(result.status,409);
+  assert.equal(f.expenses()[0].status,'Active');
+  assert.equal(f.balance(),70);
+  assert.equal(f.balance('BK-MOBILE'),30);
+ }finally{f.db.close();}
+});
