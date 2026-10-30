@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "backend:dev": "tsx watch server/index.ts",
     "backend:build": "tsc -p tsconfig.server.json",
+    "test:phase7b": "node --import tsx --test tests/phase7b-fifo-valuation.business.test.ts",
     "test:phase4": "node --import tsx --test tests/phase4-*.integration.test.ts react-integration/tests/phase4-purchase-functions.test.ts",
     "test:phase4:coverage": "node --import tsx --experimental-test-coverage --test-coverage-include='server/modules/purchases/**' --test tests/phase4-*.integration.test.ts",
     "backend:start": "node dist-server/index.js",

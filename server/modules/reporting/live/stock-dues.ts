@@ -2,7 +2,7 @@ import type { SherDatabase } from '../../../db/types.js';
 import type { EvidenceSource, LiveReportPage, LiveReportQuery, LiveReportRow, ReportMetric, ReportStatus } from './types.js';
 
 type StockProduct={product_id:string;product_name:string;current_stock:number;status:string;created_at:string};
-type StockLot={lot_id:string;product_id:string;remaining_quantity:number;unit_cost:number;source_type:string};
+type StockLot={lot_id:string;product_id:string;original_quantity:number;remaining_quantity:number;unit_cost:number;source_type:string};
 type Party={id:string;name:string;due:number;created_at:string};
 type Ledger={id:string;debit:number;credit:number;entry_count:number;ending_balance:number};
 const price=(n:number):number|null=>{
@@ -10,7 +10,11 @@ const price=(n:number):number|null=>{
   const minor=Math.round(n*100);
   return Number.isSafeInteger(minor)?minor:null;
 };
-const near=(a:number,b:number)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<0.0001;
+const fourDecimals=(value:unknown):number|null=>{
+  if(typeof value!=='number'||!Number.isFinite(value))return null;
+  const ticks=value*10000,rounded=Math.round(ticks);
+  return Number.isSafeInteger(rounded)&&Math.abs(ticks-rounded)<1e-6?rounded:null;
+};
 const businessToday=()=>new Intl.DateTimeFormat('en-CA',{
   timeZone:'Asia/Dhaka',year:'numeric',month:'2-digit',day:'2-digit'
 }).format(new Date());
@@ -31,7 +35,7 @@ async function stock(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
   const [productsR,lotsR]=await Promise.all([
     db.prepare("SELECT product_id,product_name,current_stock,status,created_at FROM products WHERE is_deleted=0 ORDER BY product_id LIMIT 5001")
       .all<StockProduct>(),
-    db.prepare("SELECT lot_id,product_id,remaining_quantity,unit_cost,source_type FROM stock_lots ORDER BY product_id,lot_id LIMIT 10001")
+    db.prepare("SELECT lot_id,product_id,original_quantity,remaining_quantity,unit_cost,source_type FROM stock_lots ORDER BY product_id,lot_id LIMIT 10001")
       .all<StockLot>()
   ]);
   const products=productsR.results||[],lots=lotsR.results||[];
@@ -52,15 +56,26 @@ async function stock(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
   const sources:EvidenceSource[]=[];
   const entries=products.map(p=>{
     const owns=byProduct.get(p.product_id)||[];
-    const quantity=owns.reduce((n,l)=>n+Number(l.remaining_quantity),0);
+    const current=fourDecimals(p.current_stock);
+    const quantity=owns.reduce((sum,lot)=>{
+      const value=fourDecimals(lot.remaining_quantity);
+      return value===null||!Number.isSafeInteger(sum+value)?NaN:sum+value;
+    },0);
     let total=0;
     const problems:string[]=[];
-    const current=Number(p.current_stock);
-    if(!near(current,quantity))problems.push('Master quantity differs from FIFO lot quantity.');
-    if(current<0||quantity<0)problems.push('Negative physical stock must not be valued as a positive asset.');
+    if(current===null||!Number.isSafeInteger(quantity))problems.push('Stock quantity exceeds four-decimal precision or safe range.');
+    else if(current!==quantity)problems.push('Master quantity differs from FIFO lot quantity.');
+    if((current!==null&&current<0)||quantity<0)problems.push('Negative physical stock must not be valued as a positive asset.');
     for(const lot of owns){
       const units=Number(lot.remaining_quantity),cost=Number(lot.unit_cost);
-      if(!Number.isFinite(units)||!Number.isFinite(cost)||units<0||cost<0)
+      const remainingTicks=fourDecimals(lot.remaining_quantity);
+      const originalTicks=fourDecimals(lot.original_quantity);
+      const costTicks=fourDecimals(lot.unit_cost);
+      if(remainingTicks===null||originalTicks===null||costTicks===null)
+        problems.push('Lot quantity or acquisition cost exceeds four-decimal precision or safe range.');
+      if(remainingTicks!==null&&originalTicks!==null&&remainingTicks>originalTicks)
+        problems.push('Remaining FIFO lot quantity exceeds original acquisition quantity.');
+      if(!Number.isFinite(units)||!Number.isFinite(cost)||units<0||cost<0||Number(lot.original_quantity)<0)
         problems.push('Invalid or negative lot quantity/cost.');
       if(units>0&&cost===0)problems.push('Remaining stock has no original acquisition cost.');
       if(lot.source_type==='OVERSOLD'&&units!==0)
@@ -70,8 +85,10 @@ async function stock(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
       else total+=value;
       if(units>0&&sources.length<20)sources.push(evidence('stock_lots',lot.lot_id));
     }
-    const valid=problems.length===0&&Number.isSafeInteger(total);
+    if(!Number.isSafeInteger(total))problems.push('FIFO value exceeds safe integer poisha.');
+    const valid=problems.length===0;
     if(!valid)failures.push('Product '+p.product_id+': '+problems.join(' '));
+    else if(!Number.isSafeInteger(sum+total))failures.push('Whole-shop inventory valuation exceeds safe integer poisha.');
     else sum+=total;
     const amountMinor=valid?total:null;
     const row:LiveReportRow={sourceId:p.product_id,sourceModule:'products',date:now,label:p.product_name,
