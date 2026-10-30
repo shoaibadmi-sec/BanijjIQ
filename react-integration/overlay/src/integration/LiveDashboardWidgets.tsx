@@ -12,7 +12,11 @@ export type LiveDue={id:string;name:string;amount:number};
 export type LiveData={
   metrics:Record<string,LiveMetric>;
   sales:LiveRow[];dues:LiveDue[];
-  loading:boolean;error:string;
+  loading:boolean;error:string;userName?:string;businessName?:string;
+};
+export const useLiveDashboardIdentity=()=>{
+  const source=useContext(LiveDashboardContext);
+  return {userName:source.userName||'',businessName:source.businessName||''};
 };
 export const LiveDashboardContext=createContext<LiveData>({
   metrics:{},sales:[],dues:[],loading:true,error:''
