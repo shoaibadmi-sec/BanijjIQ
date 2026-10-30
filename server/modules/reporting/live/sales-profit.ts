@@ -252,37 +252,58 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     original_component:string|null;original_lot:string|null;original_quantity:number|null;
     original_cost_minor:number|null;movement_product:string|null;movement_qty:number|null
   };
-  const returnedSourceRows=await db.prepare(
+  type PartialMarker={invoice_id:string;return_id:string;bundle_id:string;sets_returned:number};
+  const sourceSql=(table:'bundle_return_allocations'|'bundle_partial_return_allocations')=>
     "SELECT a.return_id,a.invoice_id,a.visible_product_id,a.component_id,a.lot_id,a.quantity,a.unit_cost,a.cost_minor,"+
     "a.source_allocation_id,original.id AS original_id,original.visible_product_id AS original_visible,"+
     "original.component_id AS original_component,original.lot_id AS original_lot,"+
     "original.quantity AS original_quantity,original.cost_minor AS original_cost_minor,"+
     "m.product_id AS movement_product,m.quantity_in AS movement_qty "+
-    "FROM bundle_return_allocations a JOIN sales s ON s.invoice_id=a.invoice_id "+
+    "FROM "+table+" a JOIN sales s ON s.invoice_id=a.invoice_id "+
     "LEFT JOIN bundle_sale_allocations original ON original.id=a.source_allocation_id "+
-    "LEFT JOIN stock_movements m ON m.movement_id=a.movement_id WHERE "+where
-  ).bind(...params).all<ReturnedBundleSource>();
-  const returnedSources=returnedSourceRows.results||[];
-  const allocationDocTotals=new Map<string,number>();
-  const allocationCountByReturn=new Map<string,number>();
-  const seenSources=new Set<number>();
+    "LEFT JOIN stock_movements m ON m.movement_id=a.movement_id WHERE "+where;
+  const [fullR,partialR,markerR,fullMarkerR,cashEvidenceR]=await Promise.all([
+    db.prepare(sourceSql('bundle_return_allocations')).bind(...params).all<ReturnedBundleSource>(),
+    db.prepare(sourceSql('bundle_partial_return_allocations')).bind(...params).all<ReturnedBundleSource>(),
+    db.prepare("SELECT p.invoice_id,p.return_id,p.bundle_id,p.sets_returned FROM bundle_partial_return_requests p JOIN sales s ON s.invoice_id=p.invoice_id WHERE "+where)
+      .bind(...params).all<PartialMarker>(),
+    db.prepare("SELECT p.return_id,p.invoice_id FROM bundle_cash_return_requests p JOIN sales s ON s.invoice_id=p.invoice_id WHERE "+where)
+      .bind(...params).all<{return_id:string;invoice_id:string}>(),
+    db.prepare("SELECT r.return_id,r.total_return_amount,COALESCE((SELECT SUM(c.debit) FROM cash_book c WHERE c.reference=r.return_id AND c.type='Sales Return' AND c.is_deleted=0),0) cash_debit FROM sales_returns r JOIN sales s ON s.invoice_id=r.invoice_id WHERE "+where)
+      .bind(...params).all<{return_id:string;total_return_amount:number;cash_debit:number}>()
+  ]);
+  const partialMarkers=new Map((markerR.results||[]).map(r=>[r.return_id,r]));
+  const fullMarkers=new Set((fullMarkerR.results||[]).map(r=>r.return_id));
+  const returnedSources=[...(fullR.results||[]),...(partialR.results||[])];
+  const allocationDocTotals=new Map<string,number>(),sourceCumulative=new Map<number,number>();
+  const restoredByReturnComponent=new Map<string,number>(),allocationCountByReturn=new Map<string,number>();
+  const sourceWithinReturn=new Set<string>();
   for(const r of returnedSources){
     const soldKey=lotKey(r.invoice_id,r.visible_product_id,r.lot_id);
     const invoiceBundle=bundleRows.some(x=>x.invoice_id===r.invoice_id);
-    if(!invoiceBundle||returnInvoices.get(r.return_id)!==r.invoice_id||
-       !r.original_id||seenSources.has(r.source_allocation_id)||
+    const isFull=fullMarkers.has(r.return_id),isPartial=partialMarkers.has(r.return_id);
+    const sourceKey=JSON.stringify([r.return_id,r.source_allocation_id]);
+    const qty=Number(r.quantity);
+    if(!invoiceBundle||isFull===isPartial||returnInvoices.get(r.return_id)!==r.invoice_id||
+       !r.original_id||sourceWithinReturn.has(sourceKey)||
        r.original_visible!==r.visible_product_id||
        r.original_component!==r.component_id||r.original_lot!==r.lot_id||
-       !eq(Number(r.original_quantity),Number(r.quantity))||
-       r.original_cost_minor!==r.cost_minor||
+       !Number.isFinite(qty)||qty<=0||qty>Number(r.original_quantity)||
+       (isFull&&(!eq(Number(r.original_quantity),qty)||r.original_cost_minor!==r.cost_minor))||
        !eq(Number(soldLotKeys.get(soldKey)?.unit_cost),Number(r.unit_cost))||
        r.movement_product!==r.component_id||
-       !eq(Number(r.movement_qty),Number(r.quantity))||
-       minor(Number(r.unit_cost)*Number(r.quantity))!==r.cost_minor)
-      reasons.add('Cash bundle return does not match immutable original FIFO allocation and physical restoration.');
-    seenSources.add(r.source_allocation_id);
+       !eq(Number(r.movement_qty),qty)||
+       minor(Number(r.unit_cost)*qty)!==r.cost_minor)
+      reasons.add('Bundle return does not match immutable original FIFO and physical stock movement.');
+    sourceWithinReturn.add(sourceKey);
+    const prior=sourceCumulative.get(r.source_allocation_id)||0;
+    sourceCumulative.set(r.source_allocation_id,prior+qty);
+    if(prior+qty>Number(r.original_quantity)+0.000001)
+      reasons.add('Partial bundle returns exceed original physical FIFO source allocation.');
     const doc=JSON.stringify([r.return_id,r.invoice_id,r.visible_product_id,r.lot_id]);
-    allocationDocTotals.set(doc,(allocationDocTotals.get(doc)||0)+Number(r.quantity));
+    allocationDocTotals.set(doc,(allocationDocTotals.get(doc)||0)+qty);
+    const component=JSON.stringify([r.return_id,r.invoice_id,r.visible_product_id,r.component_id]);
+    restoredByReturnComponent.set(component,(restoredByReturnComponent.get(component)||0)+qty);
     allocationCountByReturn.set(r.return_id,(allocationCountByReturn.get(r.return_id)||0)+1);
   }
   const expectedLotReturns=new Map<string,number>();
@@ -293,20 +314,44 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   }
   for(const [doc,qty] of expectedLotReturns)
     if(!eq(qty,allocationDocTotals.get(doc)||0))
-      reasons.add('Full bundle return source lot is missing its immutable physical provenance.');
+      reasons.add('Bundle return source lot is missing immutable physical provenance.');
   for(const [doc,qty] of allocationDocTotals)
     if(!eq(qty,expectedLotReturns.get(doc)||0))
-      reasons.add('Physical bundle restoration has no matching return lot audit entry.');
+      reasons.add('Bundle physical restoration lacks matching return lot audit entry.');
   for(const r of returns){
     if(!bundleRows.some(x=>x.invoice_id===r.invoice_id))continue;
-    const expected=physicalRows.filter(x=>x.invoice_id===r.invoice_id).length;
-    if(!expected||allocationCountByReturn.get(r.return_id)!==expected)
-      reasons.add('Cash bundle refund must restore every originally consumed FIFO source.');
+    const isFull=fullMarkers.has(r.return_id),part=partialMarkers.get(r.return_id);
+    if(isFull===!!part)reasons.add('Bundle return is missing exactly one approved refund request marker.');
+    if(isFull){
+      const expected=physicalRows.filter(x=>x.invoice_id===r.invoice_id).length;
+      if(!expected||allocationCountByReturn.get(r.return_id)!==expected)
+        reasons.add('Full cash bundle return must restore every originally consumed FIFO source.');
+    }
+    if(part){
+      const soldLine=visibleLines.get(key(part.invoice_id,part.bundle_id));
+      const originalRecipes=bundleRows.filter(x=>x.invoice_id===part.invoice_id&&x.bundle_id===part.bundle_id);
+      const returnedVisible=returnedLines.filter(x=>x.return_id===part.return_id);
+      if(!soldLine||part.sets_returned<=0||part.sets_returned>Number(soldLine.quantity)||
+         returnedVisible.length!==1||returnedVisible[0].product_id!==part.bundle_id||
+         !eq(Number(returnedVisible[0].return_quantity),part.sets_returned)||originalRecipes.length===0)
+        reasons.add('Partial bundle cash return must include exactly the original whole bundle sets.');
+      for(const recipe of originalRecipes){
+        const ck=JSON.stringify([part.return_id,part.invoice_id,part.bundle_id,recipe.component_id]);
+        if(!eq(restoredByReturnComponent.get(ck)||0,part.sets_returned*recipe.quantity_per_set))
+          reasons.add('Partial bundle component restoration differs from immutable sold recipe.');
+      }
+      if((allocationCountByReturn.get(part.return_id)||0)<1)
+        reasons.add('Partial bundle return lacks original FIFO restoration sources.');
+    }
+    const cash=(cashEvidenceR.results||[]).find(c=>c.return_id===r.return_id);
+    if(!cash||minor(Number(cash.cash_debit))!==minor(Number(r.total_return_amount)))
+      reasons.add('Cash bundle refund cannot be reconciled to its cash-book debit.');
   }
   for(const [k,qty] of returnedQty){
     if(bundleParents.has(k)){
-      if(!eq(qty,soldQty.get(k)||0)||!(restoredQty.get(k)||0))
-        reasons.add('Cash bundle refund must return complete visible sets and all physical components.');
+      if(!Number.isFinite(qty)||qty<=0||qty>Number(soldQty.get(k)||0)||
+         !(restoredQty.get(k)||0))
+        reasons.add('Bundle return must contain valid complete sets and physical FIFO restoration.');
     }else if(!eq(qty,restoredQty.get(k)||0))
       reasons.add('Missing immutable return lot allocation; cannot infer original FIFO cost.');
     if(qty>(soldQty.get(k)||0))reasons.add('Return quantity exceeds original sale quantity.');
@@ -318,7 +363,6 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   }
   for(const doc of restoredByDocument.keys())if(!returnedByDocument.has(doc))
     reasons.add('Return lot allocation has no matching return document line.');
-  // Return lots with no matching line must never silently reduce COGS.
   for(const k of restoredQty.keys())if(!returnedQty.has(k))
     reasons.add('Restored lot has no matching recorded return line.');
 
