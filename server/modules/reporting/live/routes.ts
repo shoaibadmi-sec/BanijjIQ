@@ -22,9 +22,9 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
   const count=await db.prepare(`SELECT COUNT(*) AS count FROM sales WHERE ${where}`).bind(...bind).first<{count:number}>();
   const orderColumn={date:'sale_date',amount:'grand_total',name:'customer_name',reference:'invoice_id'}[query.sort];
   const offset=(query.page-1)*query.pageSize;
-  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_name,grand_total,paid_amount,due_amount
+  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_id,customer_phone,customer_name,grand_total,paid_amount,due_amount
     FROM sales WHERE ${where} ORDER BY ${orderColumn} ${query.direction.toUpperCase()},invoice_id DESC LIMIT ? OFFSET ?`)
-    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
+    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_id:string;customer_phone:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
   const rows:LiveReportRow[]=(result.results||[]).map(row=>{
     const amountMinor=toMinor(row.grand_total);
     const rawPaid=row.paid_amount===null?null:toMinor(row.paid_amount);
@@ -32,6 +32,7 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
     const splitValid=amountMinor!==null&&rawPaid!==null&&rawDue!==null&&
       Math.abs(rawPaid+rawDue-amountMinor)<=1;
     return {sourceId:row.invoice_id,sourceModule:'sales',date:row.sale_date,label:row.customer_name,
+      customerId:row.customer_id?.trim()||undefined,customerPhone:row.customer_phone?.trim()||undefined,
       amountMinor,paidMinor:splitValid?rawPaid:null,dueMinor:splitValid?rawDue:null,
       status:amountMinor===null?'incomplete':'needs-review',
       reason:amountMinor===null?'Invalid recorded amount.':

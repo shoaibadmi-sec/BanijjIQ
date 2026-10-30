@@ -255,6 +255,7 @@ export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;gr
 export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;
   amountMinor:number|null;paidMinor?:number|null;dueMinor?:number|null;
+  customerId?:string;customerPhone?:string;
   status:LiveReportStatus;reason:string;
 }
 export interface LiveReportMetric {

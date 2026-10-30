@@ -14,6 +14,7 @@ export type ReportMetric = { key: string; valueMinor: number | null; status: Rep
 export type LiveReportRow = {
   sourceId: string; sourceModule: string; date: string; label: string;
   amountMinor: number | null; paidMinor?: number | null; dueMinor?: number | null;
+  customerId?: string; customerPhone?: string;
   status: ReportStatus; reason: string;
 };
 export type LiveReportPage = {

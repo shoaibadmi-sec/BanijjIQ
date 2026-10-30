@@ -112,6 +112,20 @@ function startMocking(context,calls){
           page:1,pageSize:50,totalRows:0,rows:[],metrics:[],
           coverage:{status:'unavailable',reason}});
       }
+      if(kind==='sales'&&url.searchParams.get('search')==='CI-CUSTOMERS'){
+        const records=[
+          ['INV-CUST-A1','01000010001',10000,4000,6000,'2026-10-12'],
+          ['INV-CUST-A2','01000010001',5000,1000,4000,'2026-10-13'],
+          ['INV-CUST-B1','01000010002',3000,1000,2000,'2026-10-15'],
+          ['INV-CUST-ANON','',4000,0,4000,'2026-10-16'],
+        ].map(([sourceId,customerPhone,amountMinor,paidMinor,dueMinor,date])=>({
+          sourceId,customerPhone,sourceModule:'sales',date,label:'Same Name',
+          amountMinor,paidMinor,dueMinor,status:'needs-review',reason:'Persisted invoice.'
+        }));
+        return respond({ok:true,report:'sales',range:{from:'2026-10-01',to:'2026-10-30'},
+          page:1,pageSize:100,totalRows:records.length,rows:records,
+          metrics:[],coverage:{status:'needs-review',reason:'Recorded invoices only.'}});
+      }
       if(kind==='sales'&&url.searchParams.get('search')==='CI-PAGE'){
         const page=Number(url.searchParams.get('page')||1);
         const pageSize=Number(url.searchParams.get('pageSize')||50);
@@ -570,6 +584,50 @@ try{
       }finally{await ctx.close();}
     });
   }
+  // 5H4: reuse the original Customer Performance report table; group the
+  // authenticated Sales Register source without preview-store customer data.
+  for(const width of [390,768,1440]){
+    await withCheck('native Customer Performance groups real sales '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try{
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=customer-sales&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        const row=page.locator('[data-report-row]').first();
+        await row.getByRole('button',{name:'Real API Mock Buyer'}).waitFor({timeout:10000});
+        const text=await row.innerText();
+        assert.match(text,/৳\s*120(?:\D|$)/,'customer amount must come from persisted invoice');
+        assert.match(text,/৳\s*45(?:\D|$)/,'customer paid must be persisted amount');
+        assert.match(text,/৳\s*75(?:\D|$)/,'customer due must be persisted amount');
+        assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/reports/v2/rows'),
+          'customer report must reuse authenticated sales source API');
+        assert.equal(await page.locator('[data-live-reports]').count(),0);
+        await inspectLayout(page,'native-customer-sales-'+width);
+        await screenshot(page,'native-customer-sales-'+width);
+        await audit(page,'native-customer-sales-'+width);
+      }finally{await ctx.close();}
+    });
+  }
+  await withCheck('native Customer Performance never conflates same-name distinct buyers',async()=>{
+    const ctx=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    try{
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=customer-sales&search=CI-CUSTOMERS&from=2026-10-01&to=2026-10-30');
+      const rows=page.locator('[data-report-row]');
+      await page.waitForFunction(()=>document.querySelectorAll('[data-report-row]').length===3,null,{timeout:10000});
+      assert.equal(await rows.count(),3,'same name with different phone or missing identity cannot be one buyer');
+      const contents=await rows.allInnerTexts();
+      assert.equal(contents.filter(x=>x.includes('Same Name')).length,3);
+      assert.ok(contents.some(x=>/৳\s*150(?:\D|$)/.test(x)&&/৳\s*50(?:\D|$)/.test(x)&&/৳\s*100(?:\D|$)/.test(x)),
+        'same phone customer must combine exactly two invoice totals and paid/due amounts');
+      assert.ok(calls.some(x=>x.path==='/api/reports/v2/rows'&&x.method==='GET'));
+      await audit(page,'customer-distinct-identities');
+    }finally{await ctx.close();}
+  });
   for(const width of [390,768,1440]){
     await withCheck('native HisabIQ Purchase Register reads posted backend purchase '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
