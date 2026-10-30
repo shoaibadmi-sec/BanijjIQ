@@ -84,3 +84,30 @@ test('G2-I validates source provenance, monetary bounds, duplicates and prior pa
   assert.deepEqual(values(allocate(sources,[{sourceKey:'Cash',amountCents:2000}],3000)),
     [['Store Credit',3000]],'never convert exhausted Cash refund to fake Cash');
 });
+
+test('G2-I deterministic property sweep: every partial return conserves poisha and never overdrafts its source',()=>{
+  // An exhaustive small-money matrix catches allocation/rounding regressions
+  // without randomized, flaky tests or a new property-testing dependency.
+  for(let cash=1;cash<=6;cash++)for(let credit=1;credit<=6;credit++){
+    const original=[
+      {sourceKey:'Cash',amountCents:cash},
+      {sourceKey:'Store Credit',amountCents:credit}
+    ];
+    const prior:{sourceKey:string;amountCents:number}[]=[];
+    for(let n=0;n<cash+credit;n++){
+      const round=allocate(original,prior,1);
+      assert.equal(cents(round),1);
+      assert.ok(Object.isFrozen(round)&&round.every(Object.isFrozen));
+      prior.push(...round);
+      for(const source of original){
+        const spent=prior.filter(p=>p.sourceKey===source.sourceKey)
+          .reduce((sum,p)=>sum+p.amountCents,0);
+        assert.ok(spent<=source.amountCents,
+          source.sourceKey+' over-refunded '+spent+'/'+source.amountCents);
+      }
+    }
+    assert.equal(cents(prior),cash+credit);
+    assert.throws(()=>allocate(original,prior,1),
+      'fully refunded invoice must not pay even one additional poisha');
+  }
+});
