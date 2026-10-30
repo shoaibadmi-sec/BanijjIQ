@@ -152,6 +152,25 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
    db.native.prepare('UPDATE supplier_ledger SET '+column+'=? WHERE ledger_id=?')
     .run(originalLedger[column],bank.ledgerId);
   }
+  // Phase 4H RED: original money-book rows must retain their Supplier Payment type.
+  for(const [table,original] of [
+   ['bank_book',bank],['cash_book',cash]
+  ] as const){
+   db.native.prepare('UPDATE '+table+' SET type=? WHERE reference=?')
+    .run('Unrelated Payment',original.ledgerId);
+   const saved=state();
+   const auditCount=sql("SELECT COUNT(*) AS n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n;
+   const response=await api('POST',
+    '/api/purchases/supplier-settlements/'+original.settlementId+'/reverse',
+    {reason:'Source financial transaction type was changed'});
+   assert.equal(response.status,409,'Reject changed original '+table+' payment type');
+   assert.deepEqual(state(),saved,'Rejected reversal changes no supplier or money balances');
+   assert.equal(sql("SELECT COUNT(*) AS n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n,auditCount);
+   assert.equal(sql('SELECT status AS s FROM supplier_settlement_entries WHERE settlement_id=?',
+    original.settlementId).s,'Posted');
+   db.native.prepare('UPDATE '+table+' SET type=? WHERE reference=?')
+    .run('Supplier Payment',original.ledgerId);
+  }
   const reverse=await api('POST',
    '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
    {reason:'Wrong bank account selected'});
