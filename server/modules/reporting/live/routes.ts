@@ -32,6 +32,7 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
     const splitValid=amountMinor!==null&&rawPaid!==null&&rawDue!==null&&
       Math.abs(rawPaid+rawDue-amountMinor)<=1;
     return {sourceId:row.invoice_id,sourceModule:'sales',date:row.sale_date,label:row.customer_name,
+      customerId:row.customer_id?.trim()||undefined,customerPhone:row.customer_phone?.trim()||undefined,
       amountMinor,paidMinor:splitValid?rawPaid:null,dueMinor:splitValid?rawDue:null,
       status:amountMinor===null?'incomplete':'needs-review',
       reason:amountMinor===null?'Invalid recorded amount.':
