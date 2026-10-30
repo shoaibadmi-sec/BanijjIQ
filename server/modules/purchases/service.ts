@@ -117,6 +117,8 @@ export async function createSupplierRoute(db: SherDatabase, input: { name?: stri
 export async function createPurchase(db: SherDatabase, input: PurchaseInput, user: AuthUser): Promise<Response> {
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Add at least one product line.');
+  if (Number(input.paidAmount ?? 0) !== 0)
+    return error('Purchase-time payment is not posted to a cash/bank ledger. Create the due purchase and use Supplier Settlements.',409);
   const mixedPurchase=items.some(i=>i.unitQuantities!==undefined||
     i.unitProfileRevision!==undefined||i.priceUnit!==undefined);
   if(mixedPurchase&&!cleanText(input.supplierId))
