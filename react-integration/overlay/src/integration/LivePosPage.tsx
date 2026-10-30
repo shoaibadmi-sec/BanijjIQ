@@ -618,6 +618,12 @@ export function LivePosPage() {
           <p>Customer <strong>{finished?.customerName}</strong></p>
           <p>Total <strong>{taka(finished?.grandTotal || 0)}</strong></p>
           <p>Due <strong>{taka(finished?.dueAmount || 0)}</strong></p>
+          {!!finished?.paymentAllocations?.length&&<div data-split-posted-provenance className="space-y-1 border-t border-border pt-2">
+            <p className="text-xs font-semibold text-ink">Saved payment sources · জমার মাধ্যম</p>
+            {finished.paymentAllocations.map((source,index)=><p key={index} className="flex justify-between gap-2 text-xs">
+              <span>{source.method}</span><strong>{taka(source.amountCents/100)}</strong>
+            </p>)}
+          </div>}
         </div>
         <p className="text-xs text-ink-500">Receipts are fetched from the saved invoice. A4 invoice layout and editing remain in the Vue ERP.</p>
         <DialogFooter><Button variant="outline" disabled={receiptBusy || saving} onClick={()=>void openReceipt()}>
@@ -653,6 +659,12 @@ export function LivePosPage() {
               footer:bootstrap?.invoiceDesign?.settings?.['Invoice Footer']||''
             }}
           />
+          {!!receipt.paymentAllocations?.length&&<div data-split-receipt-provenance className="space-y-1 border-t border-border bg-card px-3 py-2 text-xs text-ink">
+            <p className="font-semibold">Payment breakdown · জমার বিবরণ</p>
+            {receipt.paymentAllocations.map((source,index)=><div key={index} className="flex justify-between gap-2">
+              <span>{source.method}</span><strong>{taka(source.amountCents/100)}</strong>
+            </div>)}
+          </div>}
         </div>}
         <DialogFooter><Button variant="outline" onClick={()=>setReceiptOpen(false)}>Close</Button>
           <Button disabled={!receipt} onClick={()=>window.print()}>Print receipt · প্রিন্ট</Button>
