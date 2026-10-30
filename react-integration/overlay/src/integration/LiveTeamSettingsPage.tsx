@@ -14,6 +14,7 @@ type Capability = {view?:boolean;add?:boolean;edit?:boolean;delete?:boolean|stri
 type RoleRow = {id:string;name:string;status:string;permissions:Record<string,Capability>};
 type UserResponse = {ok:true;users:UserRow[];roles?:Array<{name:string;label:string}>};
 type CreateDraft = {name:string;mobile:string;role:string;password:string};
+type EditDraft = {name:string;mobile:string;role:string};
 const newEmployee = ():CreateDraft=>({name:'',mobile:'',role:'',password:''});
 type ModuleOption={key:string;label:string};
 type WindowOption={key:string;label:string};
@@ -55,8 +56,20 @@ export function LiveTeamSettingsPage(){
   const [createError,setCreateError]=useState('');
   const [createSaving,setCreateSaving]=useState(false);
   const creating=useRef(false);
+  const [actionUser,setActionUser]=useState<UserRow|null>(null);
+  const [editTarget,setEditTarget]=useState<UserRow|null>(null);
+  const [editDraft,setEditDraft]=useState<EditDraft>({name:'',mobile:'',role:''});
+  const [editError,setEditError]=useState('');
+  const [editSaving,setEditSaving]=useState(false);
+  const editing=useRef(false);
+  const [statusTarget,setStatusTarget]=useState<UserRow|null>(null);
+  const [statusError,setStatusError]=useState('');
+  const [statusSaving,setStatusSaving]=useState(false);
+  const changingStatus=useRef(false);
   const adminCanCreate=actor?.role==='admin'&&canUsers;
   const adminCanCreateRole=actor?.role==='admin'&&canRoles;
+  const mayMaintainEmployee=(u:UserRow)=>actor?.role==='admin'&&canUsers&&
+    !users.loading&&!users.error&&u.role!=='admin'&&u.id!==actor.userId;
   const active=canUsers&&(tab==='employees'||!canRoles)?'employees':canRoles?'roles':null;
   const language=personal.language;
   const bilingual=(en:string,bn:string)=>language==='Bangla'?bn:en;
@@ -115,6 +128,45 @@ export function LiveTeamSettingsPage(){
       setReload(n=>n+1); // Show the new employee only after a fresh authoritative server GET.
     }catch(cause){setCreateError(toMessage(cause));}
     finally{creating.current=false;setCreateSaving(false);}
+  }
+
+  function openEditEmployee(user:UserRow){
+    if(!mayMaintainEmployee(user)||!assignableRoles.length)return;
+    setActionUser(null);setEditTarget(user);
+    setEditDraft({name:user.name,mobile:user.mobile,role:user.role});
+    setEditError('');
+  }
+  async function saveEmployee(event:FormEvent<HTMLFormElement>){
+    event.preventDefault();
+    const target=editTarget;
+    if(!target||!mayMaintainEmployee(target)||editing.current||!assignableRoles.includes(editDraft.role))return;
+    const name=editDraft.name.trim(),mobile=editDraft.mobile.trim();
+    if(!name||!mobile){setEditError('Employee name and mobile number are required.');return;}
+    editing.current=true;setEditSaving(true);setEditError('');
+    try{
+      await request<{ok:true;id:string}>('/api/users/'+encodeURIComponent(target.id),{
+        method:'PUT',body:JSON.stringify({name,mobile,role:editDraft.role})
+      });
+      setEditTarget(null);setReload(n=>n+1); // Authoritative GET before showing any changed employee.
+    }catch(cause){setEditError(toMessage(cause));}
+    finally{editing.current=false;setEditSaving(false);}
+  }
+  function openStatusChange(user:UserRow){
+    if(!mayMaintainEmployee(user))return;
+    setActionUser(null);setStatusTarget(user);setStatusError('');
+  }
+  async function confirmStatusChange(){
+    const target=statusTarget;
+    if(!target||!mayMaintainEmployee(target)||changingStatus.current)return;
+    const status=target.status==='Active'?'Inactive':'Active';
+    changingStatus.current=true;setStatusSaving(true);setStatusError('');
+    try{
+      await request<{ok:true;id:string;status:string}>('/api/users/'+encodeURIComponent(target.id)+'/status',{
+        method:'PUT',body:JSON.stringify({status})
+      });
+      setStatusTarget(null);setReload(n=>n+1); // No optimistic status change.
+    }catch(cause){setStatusError(toMessage(cause));}
+    finally{changingStatus.current=false;setStatusSaving(false);}
   }
 
   function changeGrant(moduleKey:string,patch:Partial<RoleGrant>){
@@ -227,7 +279,7 @@ export function LiveTeamSettingsPage(){
                           aria-label={bilingual('Employees table','কর্মীদের তালিকা')}>
                           <table data-erp-table className="w-full text-left text-sm">
                             <thead className="bg-background text-ink-600"><tr>
-                              {['Employee','Mobile','Role','Status','Created'].map(h=>
+                              {['Employee','Mobile','Role','Status','Created','Actions'].map(h=>
                                 <th key={h} scope="col" className="px-3 py-2">{h}</th>)}
                             </tr></thead>
                             <tbody>
@@ -242,8 +294,16 @@ export function LiveTeamSettingsPage(){
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2 text-xs text-helper">
                                   {u.createdAt?.slice(0,10)||'—'}</td>
+                                <td className="px-3 py-2 text-right">
+                                  {mayMaintainEmployee(u)&&<button type="button"
+                                    aria-label={'Actions for '+u.name}
+                                    aria-haspopup="dialog"
+                                    onClick={()=>setActionUser(u)}
+                                    className="inline-flex size-9 items-center justify-center rounded-md border border-border text-lg text-ink-700 hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                                    title="Employee actions">⋯</button>}
+                                </td>
                               </tr>)}
-                              {!shown.length&&<tr><td colSpan={5} className="p-6 text-center text-helper">
+                              {!shown.length&&<tr><td colSpan={6} className="p-6 text-center text-helper">
                                 No matching employees.</td></tr>}
                             </tbody>
                           </table>
@@ -286,7 +346,7 @@ export function LiveTeamSettingsPage(){
                     </>}
               </div>}
             {active&&<div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-xs text-helper">
-              <span>Delegated edits and status changes await RBAC review. Administrators may create employees and roles.</span>
+              <span>Delegated management awaits RBAC review. Administrators may manage non-admin employees and create roles.</span>
               <button type="button" className="text-primary underline" onClick={()=>setReload(n=>n+1)}>
                 Refresh live data
               </button>
@@ -295,6 +355,71 @@ export function LiveTeamSettingsPage(){
         </div>
       </div>
     </div>
+    <SettingsDialog title="Employee actions" description={actionUser?.name||''}
+      open={!!actionUser} onClose={()=>setActionUser(null)}>
+      {actionUser&&<div role="menu" aria-label={'Actions for '+actionUser.name} className="space-y-2">
+        <button type="button" role="menuitem" onClick={()=>openEditEmployee(actionUser)}
+          className="flex min-h-9 w-full items-center rounded-md border border-border px-3 text-left text-sm text-ink hover:bg-background">
+          Edit employee
+        </button>
+        <button type="button" role="menuitem" onClick={()=>openStatusChange(actionUser)}
+          className="flex min-h-9 w-full items-center rounded-md border border-border px-3 text-left text-sm text-ink hover:bg-background">
+          {actionUser.status==='Active'?'Deactivate employee':'Activate employee'}
+        </button>
+      </div>}
+    </SettingsDialog>
+    <SettingsDialog title="Edit employee" description="Changes will be saved to the real account and its sessions refreshed."
+      open={!!editTarget} onClose={()=>{if(!editing.current){setEditTarget(null);setEditError('');}}}>
+      <form className="space-y-4" onSubmit={event=>void saveEmployee(event)}>
+        <label className="block space-y-1 text-sm text-ink-700">Employee name
+          <Input aria-label="Employee name" required autoComplete="name"
+            className="h-9 w-full" value={editDraft.name} disabled={editSaving}
+            onChange={event=>setEditDraft(v=>({...v,name:event.target.value}))}/>
+        </label>
+        <label className="block space-y-1 text-sm text-ink-700">Mobile number
+          <Input aria-label="Mobile number" required inputMode="tel" autoComplete="tel"
+            className="h-9 w-full" value={editDraft.mobile} disabled={editSaving}
+            onChange={event=>setEditDraft(v=>({...v,mobile:event.target.value}))}/>
+        </label>
+        <label className="block space-y-1 text-sm text-ink-700">Employee role
+          <select aria-label="Employee role" required value={editDraft.role} disabled={editSaving}
+            onChange={event=>setEditDraft(v=>({...v,role:event.target.value}))}
+            className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-ink">
+            <option value="">Choose role</option>
+            {assignableRoles.map(role=><option key={role} value={role}>{role}</option>)}
+          </select>
+        </label>
+        {editError&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{editError}</p>}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" type="button" variant="outline" disabled={editSaving}
+            onClick={()=>{setEditTarget(null);setEditError('');}}>Cancel</Button>
+          <Button size="sm" type="submit" disabled={editSaving||!editTarget||!assignableRoles.includes(editDraft.role)}>
+            {editSaving?'Saving…':'Save employee'}
+          </Button>
+        </div>
+      </form>
+    </SettingsDialog>
+    <SettingsDialog title="Change employee status" description="This change affects login access."
+      open={!!statusTarget} onClose={()=>{if(!changingStatus.current){setStatusTarget(null);setStatusError('');}}}>
+      {statusTarget&&<div className="space-y-4">
+        <p className="text-sm text-ink">
+          {statusTarget.status==='Active'?'Deactivate':'Activate'} {statusTarget.name}?
+        </p>
+        <p className="text-xs text-helper">
+          {statusTarget.status==='Active'
+            ?'This employee will be signed out and cannot log in until reactivated.'
+            :'This employee will be allowed to log in again.'}
+        </p>
+        {statusError&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{statusError}</p>}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" type="button" variant="outline" disabled={statusSaving}
+            onClick={()=>{setStatusTarget(null);setStatusError('');}}>Cancel</Button>
+          <Button size="sm" disabled={statusSaving} onClick={()=>void confirmStatusChange()}>
+            {statusSaving?'Updating…':statusTarget.status==='Active'?'Confirm deactivate':'Confirm activate'}
+          </Button>
+        </div>
+      </div>}
+    </SettingsDialog>
     <SettingsDialog title="Add employee" description="Create a real business login. The password is sent only to BanijjIQ."
       open={createOpen} onClose={()=>{if(!creating.current){setCreateOpen(false);setCreateForm(newEmployee());setCreateError('');}}}>
       <form className="space-y-4" onSubmit={event=>void createEmployee(event)}>

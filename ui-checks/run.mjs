@@ -9,6 +9,7 @@ import {runLiveBusinessSettingsChecks} from './phase8a2-business-settings.mjs';
 import {runLiveTeamChecks} from './phase8a3-team.mjs';
 import {runAdminEmployeeCreateChecks} from './phase8a3b1-admin-user-create.mjs';
 import {runAdminRoleCreationChecks} from './phase8a3b2-admin-role-creation.mjs';
+import {runAdminEmployeeMaintenanceChecks} from './phase8a3b3-admin-employee-maintenance.mjs';
 import { runFinalProductChecks } from './products-final.mjs';
 import {runPaidRefundChecks} from './phase4-paid-refunds.mjs';
 import { createRequire } from 'node:module';
@@ -486,6 +487,7 @@ try{
   await runLiveTeamChecks({browser,base,withCheck});
   await runAdminEmployeeCreateChecks({browser,base,withCheck});
   await runAdminRoleCreationChecks({browser,base,withCheck});
+  await runAdminEmployeeMaintenanceChecks({browser,base,withCheck});
   await withCheck('unauthenticated route stays behind real sign-in',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:844}});
     const page=await ctx.newPage();

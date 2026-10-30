@@ -53,6 +53,7 @@ jobs:
           npm run backend:build
           npm run test:security
           node --import tsx --test tests/phase8a-admin-creations-real-db.integration.test.ts
+          node --import tsx --test tests/phase8a-admin-employee-maintenance-real-db.integration.test.ts
           node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
           node --import tsx --test tests/reports-transaction-lifecycle.integration.test.ts
