@@ -655,6 +655,42 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
   return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentMethod:s.payment_method||'',previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
 }
 
+/**
+ * Internal, administrator-only read-only evidence. A flag blocks approval:
+ * never convert historical negative receivables into current spendable credit.
+ * No POST/PUT/DELETE reconciliation action is intentionally exposed.
+ */
+export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
+  if(user.role!=='admin')return error('Administrator permission is required for Store Credit reconciliation.',403);
+  const [flagsCount,entries,customers,flagRows]=await Promise.all([
+    db.prepare('SELECT COUNT(*) n FROM store_credit_reconciliation_flags').first<{n:number}>(),
+    db.prepare(
+      "SELECT COALESCE(SUM(CASE WHEN entry_type='ISSUE' THEN delta_cents ELSE 0 END),0) issued_cents, "+
+      "COALESCE(SUM(CASE WHEN entry_type='REDEEM' THEN -delta_cents ELSE 0 END),0) redeemed_cents, "+
+      "COALESCE(SUM(delta_cents),0) outstanding_cents,COUNT(*) entries "+
+      "FROM customer_store_credit_entries"
+    ).first<any>(),
+    db.prepare(
+      "SELECT COUNT(*) n FROM (SELECT customer_id FROM customer_store_credit_entries GROUP BY customer_id)"
+    ).first<{n:number}>(),
+    db.prepare(
+      "SELECT flag_code,customer_id,reference_id,expected_cents,recorded_cents "+
+      "FROM store_credit_reconciliation_flags ORDER BY flag_code,customer_id,reference_id LIMIT 100"
+    ).all<any>()
+  ]);
+  return json({ok:true,readOnly:true,reviewRequired:Number(flagsCount?.n||0)>0,
+    flagsCount:Number(flagsCount?.n||0),flagsTruncated:Number(flagsCount?.n||0)>100,
+    issuedCents:Number(entries?.issued_cents||0),
+    redeemedCents:Number(entries?.redeemed_cents||0),
+    outstandingCents:Number(entries?.outstanding_cents||0),
+    journalEntries:Number(entries?.entries||0),
+    customerAccounts:Number(customers?.n||0),
+    flags:(flagRows.results||[]).map((v:any)=>({
+      flagCode:v.flag_code,customerId:v.customer_id,referenceId:v.reference_id,
+      expectedCents:Number(v.expected_cents||0),recordedCents:Number(v.recorded_cents||0)
+    }))});
+}
+
 export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string,user:AuthUser):Promise<Response>{
   if(!(await hasModulePermission(db,user,'pos','view'))&&
      !(await hasModulePermission(db,user,'returns','view')))
