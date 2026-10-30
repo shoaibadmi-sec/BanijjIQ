@@ -3,7 +3,7 @@ import type { SherDatabase } from '../../db/types.js';
 type Product = {
   productId:string; productName:string; currentStock:number; minimumStock:number; trackExpiry:number;
 };
-type Lot = {lotId:string; productId:string; originalQuantity:number; remainingQuantity:number};
+type Lot = {lotId:string; productId:string; originalQuantity:number; remainingQuantity:number; trackingRequiredQuantity?:number; trackingStatus?:string};
 type Batch = {expiryBatchId:string; lotId:string; productId:string; expiryDate:string; remainingQuantity:number};
 type AlertKind = 'needs-review'|'out-of-stock'|'low-stock'|'expired'|'expiring';
 type Alert = {
@@ -80,6 +80,18 @@ export function evaluateStockAlerts(products:Product[],lots:Lot[],batches:Batch[
       const remaining=ticks(lotById.get(lotId)!.remainingQuantity);
       if(remaining===null||batchTotal>remaining)reason='Expiry batch exceeds its source FIFO lot';
     }
+    if(product.trackExpiry){
+      for(const lot of sourceLots){
+        const remaining=ticks(lot.remainingQuantity);
+        const pending=ticks(lot.trackingRequiredQuantity ?? 0);
+        const assigned=batchTotalByLot.get(lot.lotId)||0;
+        if(remaining===null || pending===null || pending>remaining || assigned>remaining || assigned+pending!==remaining){
+          reason='Expiry tracking does not reconcile with the remaining FIFO lot';
+        }else if(pending>0 || lot.trackingStatus==='Pending'){
+          reason='Expiry tracking pending for source FIFO lot';
+        }
+      }
+    }
     if(reason){
       alerts.push({...base,kind:'needs-review',sourceStatus:'needs-review',reason});
       continue; // Never issue authoritative shortage or expiry advice from contradictory source records.
@@ -116,7 +128,8 @@ export async function getStockAlertsRoute(db:SherDatabase,request:Request):Promi
       minimum_stock AS minimumStock,track_expiry AS trackExpiry FROM products
       WHERE COALESCE(is_deleted,0)=0 AND status!='Inactive'`).all<Product>(),
     db.prepare(`SELECT lot_id AS lotId,product_id AS productId,original_quantity AS originalQuantity,
-      remaining_quantity AS remainingQuantity FROM stock_lots`).all<Lot>(),
+      remaining_quantity AS remainingQuantity, tracking_required_quantity AS trackingRequiredQuantity,
+      tracking_status AS trackingStatus FROM stock_lots`).all<Lot>(),
     db.prepare(`SELECT expiry_batch_id AS expiryBatchId,lot_id AS lotId,product_id AS productId,
       expiry_date AS expiryDate,remaining_quantity AS remainingQuantity FROM stock_expiry_batches`).all<Batch>()
   ]);
