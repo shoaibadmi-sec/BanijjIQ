@@ -536,6 +536,41 @@ test('4I financial audit: D1 reversal-state trigger rejects tampered original Ca
  });
 });
 
+test('4I-C6: original refund replay after reversal cannot masquerade as an active paid receipt',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-C6','Open')").run('CS-4I-C6');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const request={purchaseId:purchase.purchaseId,refundMethod:'Cash',
+   reason:'Defective original bolt',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]};
+  const refund=await api('POST','/api/purchase-returns',request);safe(refund);
+  const postedRetry=await api('POST','/api/purchase-returns',request);safe(postedRetry);
+  assert.equal(postedRetry.idempotent,true,'Before reversal same request remains idempotent');
+  safe(await api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',{
+   clientRequestId:crypto.randomUUID(),reason:'Restored original goods'}));
+  const snapshot=()=>({
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   payable:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+   status:one('SELECT refund_status AS n FROM purchase_returns WHERE return_id=?',refund.returnId).n,
+   cash:count('cash_book'),moves:count('stock_movements'),audit:count('audit_logs')
+  });
+  const before=snapshot();assert.equal(before.status,'Reversed');assert.equal(before.returned,0);
+  const replay=await api('POST','/api/purchase-returns',request);
+  assert.equal(replay.status,409,JSON.stringify(replay));
+  assert.match(replay.error,/revers/i);
+  assert.deepEqual(snapshot(),before,'Original reversed request cannot create an active receipt or change stock');
+  const newRequest=await api('POST','/api/purchase-returns',{
+   ...request,clientRequestId:crypto.randomUUID(),reason:'New authorized return'});
+  safe(newRequest);
+  assert.notEqual(newRequest.returnId,refund.returnId,'A new justified refund requires a new ID and transaction');
+  assert.equal(snapshot().returned,50);
+ });
+});
+
 test('4I-C3 Cash: reversal restores original FIFO stock and exactly compensates cash refund, with immutable retries',async()=>{
  await fixture(async({api,db,one,count,supplier,p1})=>{
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC3','Open')").run('CS-4IC3');
