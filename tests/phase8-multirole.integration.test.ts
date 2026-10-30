@@ -75,5 +75,25 @@ test('Phase 8: two assigned custom roles grant only their active union, and upda
     const deactivate=await api('PUT','/api/roles/'+products.id+'/status',token,{status:'Inactive'});
     assert.equal(deactivate.status,200);
     assert.deepEqual((await api('GET','/api/auth/me',relogin.token)).user.allowedModules,[]);
+    const managerRole=await api('POST','/api/roles',token,{
+      name:'LimitedUserManager',permissions:{users:{view:true,edit:true}}
+    });
+    assert.equal(managerRole.status,200);
+    const manager=await api('POST','/api/users',token,{
+      name:'Delegated Manager',mobile:'01000008603',password:'DelegatedManager2026!',
+      role:'LimitedUserManager'
+    });
+    assert.equal(manager.status,200);
+    const managerLogin=await api('POST','/api/auth/login','',{
+      phone:'01000008603',password:'DelegatedManager2026!'
+    });
+    assert.equal(managerLogin.status,200);
+    const forbidden=await api('PUT','/api/users/'+person.id,managerLogin.token,{
+      name:'Forged Role',mobile:'01000008602',roleIds:['ReportViewer']
+    });
+    assert.equal(forbidden.status,403,'non-admin must not use roleIds to assign stronger permissions');
+    const still=(await api('GET','/api/users',token)).users.find((u:any)=>u.id===person.id);
+    assert.equal(still.name,'Two Role Employee');
+    assert.deepEqual(still.roleIds,['StockViewer']);
   }finally{db.close();}
 });
