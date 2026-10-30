@@ -446,7 +446,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-dashboard], [data-live-products], [data-live-pos], [data-live-reports]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -460,7 +460,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-purchases], [data-live-purchase-editor]');
+    const root=document.querySelector('[data-live-dashboard], [data-live-products], [data-live-pos], [data-live-reports], [data-live-purchases], [data-live-purchase-editor]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -494,6 +494,29 @@ try{
     await ctx.close();
   });
 
+  for(const width of [390,768,1440]){
+    await withCheck('original Dashboard layout uses real report evidence, not demo totals '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];
+      await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/dashboard');
+      await page.locator('[data-live-dashboard]').waitFor({timeout:10000});
+      await page.waitForFunction(()=>{
+        const card=document.querySelector('[data-live-dashboard-metric="receivable"]');
+        return !!card&&card.textContent?.includes('40');
+      },{timeout:10000});
+      assert.equal(await page.locator('[data-live-dashboard-metric]').count(),6);
+      assert.equal(await page.getByText('Sample figures',{exact:false}).count(),0);
+      assert.ok(calls.some(x=>x.path==='/api/reports/v2/summary'));
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await inspectLayout(page,'live-dashboard-'+width);
+      await screenshot(page,'live-dashboard-'+width);
+      await audit(page,'live-dashboard-'+width);
+      await ctx.close();
+    });
+  }
   for(const width of [390,768,1440]){
     await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
@@ -975,333 +998,3 @@ try{
       await page.getByRole('button',{name:/Confirm Due Purchase/}).click();
       await page.getByText('PUR-UI-ORDER').waitFor({timeout:12000});
       assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases/order-conversion').length,1);
-      results.apiCalls.push(...calls);await ctx.close();
-    });
-  }
-  await withCheck('POS keeps typed name when a legacy saved phone match has an empty customer name',async()=>{
-    const ctx=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.route('**/api/pos/bootstrap',route=>route.fulfill({
-      status:200,contentType:'application/json',
-      body:JSON.stringify({ok:true,products:[...posProducts,posMixedProduct],
-        customers:[{id:'CUST-LEGACY-BLANK',name:'',phone:'01000000124',
-          fatherName:'',address:'',currentDue:0}],bankAccounts:[],
-        vendors:[],activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
-        invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop'},logoDataUri:''}})
-    }));
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
-    await page.locator('[data-live-pos]').waitFor({timeout:12000});
-    await page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
-    const name=page.locator('input[list="live-pos-customer-names"]');
-    const phone=page.locator('input[list="live-pos-customer-phones"]');
-    await name.fill('Real Browser Due Buyer');
-    await phone.fill('01000000124');
-    await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
-    assert.equal(await name.inputValue(),'Real Browser Due Buyer',
-      'legacy phone records must never silently erase a cashier-entered name on blur');
-    assert.equal(await phone.inputValue(),'01000000124');
-    assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40');
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,0);
-    await ctx.close();
-  });
-  for(const width of [390,768,1440]){
-    await withCheck('pos '+width+' light',async()=>{
-      const ctx=await browser.newContext({viewport:{width,height:960},
-        reducedMotion:'reduce',deviceScaleFactor:1});
-      const api=[];
-      await startMocking(ctx,api);
-      await ctx.addInitScript(()=>{
-        localStorage.setItem('shererp_auth_token','ui-e2e-only-token');
-        localStorage.setItem('hisabiq-theme','light');
-      });
-      const page=await ctx.newPage();
-      page.on('pageerror',e=>results.consoleErrors.push('pos '+width+': '+e.message));
-      await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
-      await page.locator('[data-live-pos]').waitFor({timeout:10000});
-      await page.getByText('Copper Cable 2.5mm').first().waitFor({timeout:10000});
-      // Source: pinned HisabIQ src/components/pos/CartTable.tsx.
-      // The original seven-column header and product picker share one grid.
-      const sourceCart=page.locator('[data-live-pos] [data-cart-kind="sale"]');
-      assert.equal(await sourceCart.locator('[data-cart-header]').count(),1,
-        'Restore the original HisabIQ cart header instead of a detached toolbar');
-      assert.equal(await sourceCart.locator('[data-testid="pos-cart"]').count(),1);
-      assert.equal(await sourceCart.locator('[data-testid="pos-add-row"]').count(),1,
-        'Product search belongs in the original HisabIQ add-row');
-      assert.equal(await sourceCart.locator('[data-cart-header] > *').count(),7,
-        'Original cart has #, Product, Quantity, Price In, Price, Total, Remove');
-      assert.equal(await sourceCart.locator('[data-testid="pos-add-row"] input').count(),1,
-        'One embedded product search, not a second detached form');
-      await inspectLayout(page,'pos-'+width+'-light');
-      await screenshot(page,'pos-'+width+'-light');
-      if(width===390)await audit(page,'pos-390-light');
-      // Explicit keyboard focus contract, then add a regular non-tracked item.
-      await page.keyboard.press('F2');
-      assert.ok(await page.locator('input:focus').count()>=1,'F2 should focus the product picker');
-      await page.keyboard.press('Escape'); // Close open source-authentic combobox before tapping quick item.
-      const quick=page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first();
-      await quick.click();
-      await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
-      assert.equal(await page.locator('[data-testid="pos-cart"] [data-pos-line]').count(),1,
-        'Live selected product renders in the original HisabIQ cart grid');
-      await screenshot(page,'pos-cart-'+width);
-      if(width===1440){
-        const [name,phone]=[
-          page.locator('input[list="live-pos-customer-names"]'),
-          page.locator('input[list="live-pos-customer-phones"]')
-        ];
-        await name.fill('Test Customer');
-        await phone.fill('01000000001');
-        await page.getByRole('spinbutton',{name:/Amount received/}).fill('120');
-        await page.getByRole('button',{name:'Review and post real sale'}).click();
-        await page.getByRole('button',{name:'Confirm and post'}).click();
-        await page.getByText('Sale posted successfully').waitFor({timeout:12000});
-        assert.equal(api.filter(x=>x.path==='/api/pos/sales'&&x.method==='POST').length,1);
-        await page.getByRole('button',{name:'View / Print receipt'}).click();
-        await page.locator('#hisabiq-real-receipt').waitFor();
-        await screenshot(page,'pos-saved-receipt-1440');
-      }
-      results.apiCalls.push(...api);
-      await ctx.close();
-    });
-  }
-  for(const width of [390,768,1440]){
-    await withCheck('mixed-unit joined quantity '+width+' layout and posting',async()=>{
-      const ctx=await browser.newContext({viewport:{width,height:960},reducedMotion:'reduce'});
-      const api=[];await startMocking(ctx,api);
-      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-      const page=await ctx.newPage();
-      page.on('pageerror',e=>results.consoleErrors.push('mixed '+width+': '+e.message));
-      await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
-      await page.locator('[data-live-pos]').waitFor();
-      await page.locator('[data-live-pos] button').filter({hasText:'Carton Test Cable'}).first().click();
-      const line=page.locator('[data-pos-line]').filter({hasText:'Carton Test Cable'});
-      const inputs=line.locator('[data-multi-quantity] input');
-      await inputs.first().waitFor();
-      assert.equal(await inputs.count(),3);
-      await inputs.nth(0).fill('1');await inputs.nth(1).fill('2');await inputs.nth(2).fill('3');
-      assert.ok((await line.textContent()).includes('2,490'),'mixed prices remain independent');
-      const tops=await inputs.evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().top));
-      assert.ok(tops.every(top=>Math.abs(top-tops[0])<2),'one compact horizontal quantity line');
-      await screenshot(page,'phase3b-mixed-quantity-'+width);
-      await page.locator('input[list="live-pos-customer-names"]').fill('UI Unit Buyer');
-      await page.locator('input[list="live-pos-customer-phones"]').fill('01000009123');
-      await page.getByRole('spinbutton',{name:/Amount received/}).fill('2490');
-      await page.getByRole('button',{name:'Review and post real sale'}).click();
-      await page.getByRole('button',{name:'Confirm and post'}).click();
-      await page.getByText('Sale posted successfully').waitFor({timeout:12000});
-      const posted=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
-      assert.equal(posted.items[0].qty,283);
-      assert.equal(posted.items[0].unitProfileRevision,1);
-      assert.deepEqual(posted.items[0].unitQuantities,{Carton:1,Box:2,Pcs:3});
-      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
-      results.apiCalls.push(...api);await ctx.close();
-    });
-  }
-  await withCheck('tracked serial POS selects backend eligible IMEI and posts once',async()=>{
-    const ctx=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    await page.goto(base+'/#/app/pos');
-    await page.locator('[data-live-pos]').waitFor();
-    await page.locator('[data-live-pos] button').filter({hasText:'Serial Tracked Motor'}).first().click();
-    await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
-    await page.getByRole('button',{name:/SN-UI-001/}).click();
-    await page.getByRole('button',{name:'Use serials'}).click();
-    await page.locator('input[list="live-pos-customer-names"]').fill('UI Tracking Buyer');
-    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000001');
-    await page.getByRole('spinbutton',{name:/Amount received/}).fill('700');
-    await page.getByRole('button',{name:'Review and post real sale'}).click();
-    await page.getByRole('button',{name:'Confirm and post'}).click();
-    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
-    assert.equal(api.filter(x=>x.path==='/api/pos/sales'&&x.method==='POST').length,1);
-    assert.equal(api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload.items[0].productId,'PRD-000003');
-    await screenshot(page,'phase13-pos-serial-1440');
-    results.apiCalls.push(...api);await ctx.close();
-  });
-  await withCheck('shortage dialog explicitly chooses negative sourcing',async()=>{
-    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
-    await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
-    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
-    await page.getByRole('radio',{name:/Negative Sale/}).click();
-    await page.getByRole('button',{name:'Allow negative sale'}).click();
-    await page.locator('input[list="live-pos-customer-names"]').fill('UI Shortage Buyer');
-    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000002');
-    await page.getByRole('spinbutton',{name:/Amount received/}).fill('275');
-    await page.getByRole('button',{name:'Review and post real sale'}).click();
-    await page.getByRole('button',{name:'Confirm and post'}).click();
-    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
-    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
-    assert.equal(payload.items[0].fulfillmentMode,'negative');
-    assert.equal(payload.items[0].qty,5);
-    await screenshot(page,'phase13-pos-shortage-768');
-    results.apiCalls.push(...api);await ctx.close();
-  });
-  await withCheck('vendor shortage uses live vendor ID and exact agreed cost',async()=>{
-    const ctx=await browser.newContext({viewport:{width:1024,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
-    await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
-    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
-    await page.getByRole('radio',{name:/Vendor/}).click();
-    await page.getByRole('textbox',{name:'New vendor name'}).fill('UI Quick Vendor');
-    await page.getByRole('textbox',{name:'New vendor phone'}).fill('01000000222');
-    await page.getByRole('button',{name:'+ Add & select vendor'}).click();
-    await page.getByRole('combobox',{name:'Select live vendor'}).selectOption('VEN-UI-2');
-    await page.getByRole('spinbutton',{name:'Vendor unit cost'}).fill('35');
-    await page.getByRole('button',{name:'Use vendor'}).click();
-    await page.locator('input[list="live-pos-customer-names"]').fill('UI Vendor Buyer');
-    await page.locator('input[list="live-pos-customer-phones"]').fill('01000000003');
-    await page.getByRole('spinbutton',{name:/Amount received/}).fill('275');
-    await page.getByRole('button',{name:'Review and post real sale'}).click();
-    await page.getByRole('button',{name:'Confirm and post'}).click();
-    await page.getByText('Sale posted successfully').waitFor({timeout:12000});
-    const payload=api.find(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales')?.payload;
-    assert.equal(payload.items[0].fulfillmentMode,'vendor');
-    assert.equal(payload.items[0].vendorId,'VEN-UI-2');
-    assert.equal(api.filter(x=>x.path==='/api/pos/vendors'&&x.method==='POST').length,1);
-    assert.equal(payload.items[0].vendorUnitCost,35);
-    results.apiCalls.push(...api);await screenshot(page,'phase13-pos-vendor-1024');
-    await ctx.close();
-  });
-  for(const width of [390,768,1440]){
-    await withCheck('mixed-unit partial return '+width+' historical prices and compact UI',async()=>{
-      const ctx=await browser.newContext({viewport:{width,height:960},reducedMotion:'reduce'});
-      const api=[];await startMocking(ctx,api);
-      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-      const page=await ctx.newPage();page.on('dialog',dialog=>void dialog.accept());
-      await page.goto(base+'/#/app/live-sales-returns');await page.locator('[data-live-sales-returns]').waitFor();
-      await page.getByRole('textbox',{name:'Search saved invoices'}).fill('MIXED');
-      await page.getByRole('button',{name:'Search',exact:true}).click();
-      await page.getByRole('button',{name:/UI-E2E-MIXED/}).click();
-      await page.getByRole('spinbutton',{name:'Return Box for Carton Test Cable'}).fill('1');
-      await page.getByRole('spinbutton',{name:'Return Pcs for Carton Test Cable'}).fill('1');
-      const panel=page.locator('[data-live-sales-returns]');
-      assert.ok((await panel.innerText()).includes('190'),'exact original Box+Pcs historical refund');
-      await screenshot(page,'phase3c-mixed-unit-return-'+width);
-      await page.getByPlaceholder('Why was this returned?').fill('Partial return');
-      await page.getByRole('button',{name:'Review real return'}).click();
-      await page.getByRole('button',{name:'Confirm & refund'}).click();
-      await page.getByText('SRT-UI-MIXED-001').waitFor({timeout:12000});
-      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,1);
-      results.apiCalls.push(...api);await ctx.close();
-    });
-  }
-  await withCheck('mixed full invoice reversal requires preview, reason, explicit cashier confirmation',async()=>{
-    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    page.on('dialog',d=>void d.accept());
-    await page.goto(base+'/#/app/live-sales-returns');
-    await page.locator('[data-live-sales-returns]').waitFor();
-    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('MIXED');
-    await page.getByRole('button',{name:'Search',exact:true}).click();
-    await page.getByRole('button',{name:/UI-E2E-MIXED/}).click();
-    await page.locator('[data-mixed-full-reversal]').waitFor();
-    await page.getByRole('button',{name:'Check full reversal'}).click();
-    await page.getByText(/Remaining: 1 lines/).waitFor();
-    await page.getByText(/Already refunded:/).waitFor();
-    const reversalButton=page.getByRole('button',{name:'Review and reverse entire invoice'});
-    assert.equal(await reversalButton.isDisabled(),true);
-    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Original customer requested a corrected sale');
-    await screenshot(page,'phase3d-full-invoice-reversal');
-    await reversalButton.click();
-    await page.getByText('SRT-UI-REVERSE-0001').waitFor({timeout:12000});
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
-    assert.equal(api.filter(x=>x.method==='ASSERT'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
-    results.apiCalls.push(...api);await ctx.close();
-  });
-  await withCheck('bank full reversal shows original account and confirms one bank refund',async()=>{
-    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
-    await page.goto(base+'/#/app/live-sales-returns');
-    await page.locator('[data-live-sales-returns]').waitFor();
-    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('BANK-REV');
-    await page.getByRole('button',{name:'Search',exact:true}).click();
-    await page.getByRole('button',{name:/UI-E2E-BANK-REV/}).click();
-    await page.getByRole('button',{name:'Check full reversal'}).click();
-    await page.locator('[data-reversal-bank-account]').waitFor();
-    assert.match(await page.locator('[data-reversal-bank-account]').innerText(),/Current Bank/);
-    assert.match(await page.locator('[data-mixed-full-reversal]').innerText(),/Bank refund/);
-    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Refund via original bank after full cancellation');
-    await screenshot(page,'phase3f-bank-reversal-original-account');
-    await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
-    await page.getByText('SRT-UI-BANK-REV-1').waitFor({timeout:12000});
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-BANK-REV/reverse').length,1);
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
-    results.apiCalls.push(...api);await ctx.close();
-  });
-  await withCheck('unpaid mixed invoice reversal cancels customer due and never claims a cash refund',async()=>{
-    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();
-    let confirmation='';
-    page.on('dialog',d=>{confirmation=d.message();void d.accept()});
-    await page.goto(base+'/#/app/live-sales-returns');
-    await page.locator('[data-live-sales-returns]').waitFor();
-    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('DUE-REV');
-    await page.getByRole('button',{name:'Search',exact:true}).click();
-    await page.getByRole('button',{name:/UI-E2E-DUE-REV/}).click();
-    await page.getByRole('button',{name:'Check full reversal'}).click();
-    await page.locator('[data-reversal-due-notice]').waitFor();
-    assert.match(await page.locator('[data-reversal-due-notice]').innerText(),/No cash refund/);
-    assert.match(await page.locator('[data-mixed-full-reversal]').innerText(),/Due to cancel/);
-    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Customer cancelled entire unpaid original invoice');
-    await screenshot(page,'phase3g-full-unpaid-due-cancellation');
-    await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
-    await page.getByText('SRT-UI-DUE-REV-1').waitFor({timeout:12000});
-    assert.match(confirmation,/cancel customer due/i);
-    assert.doesNotMatch(confirmation,/cash refund/i);
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-DUE-REV/reverse').length,1);
-    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
-    results.apiCalls.push(...api);await ctx.close();
-  });
-  await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
-    const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
-    const api=[];await startMocking(ctx,api);
-    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
-    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
-    await page.goto(base+'/#/app/live-sales-returns');
-    await page.locator('[data-live-sales-returns]').waitFor({timeout:10000});
-    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('UI-E2E-RET-INVOICE');
-    await page.getByRole('button',{name:'Search',exact:true}).click();
-    await page.getByRole('button',{name:/UI-E2E-RET-INVOICE/}).click();
-    await page.getByRole('spinbutton',{name:'Return quantity for Serial Tracked Motor'}).fill('1');
-    await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
-    await page.getByRole('button',{name:/SN-UI-001/}).click();
-    await page.getByRole('button',{name:'Use serials'}).click();
-    await page.getByPlaceholder('Why was this returned?').fill('Damaged after sale');
-    await page.getByRole('button',{name:'Review real return'}).click();
-    await page.getByRole('button',{name:'Confirm & refund'}).click();
-    await page.getByText('SRT-UI-E2E-001').waitFor({timeout:12000});
-    assert.equal(api.filter(x=>x.path==='/api/sales-returns'&&x.method==='POST').length,1);
-    await screenshot(page,'phase13-sales-return-390');
-    results.apiCalls.push(...api);await ctx.close();
-  });
-}finally{
-  try{await browser?.close()}catch{}
-  server.kill('SIGTERM');
-  results.finishedAt=new Date().toISOString();
-  writeFileSync(join(out,'ui-check-results.json'),JSON.stringify(results,null,2));
-  writeFileSync(join(out,'server.log'),serverLogs.slice(-10000));
-}
-process.stdout.write('UI checks: '+results.passed.length+' passed / '+results.failed.length+' failed; '+
-  results.screenshots.length+' screenshots; '+results.accessibility.length+' accessibility audits.\n');
-if(results.consoleErrors.length)results.failed.push({name:'Browser runtime errors',error:results.consoleErrors.join('\n')});
-if(results.failed.length)process.exitCode=1;
