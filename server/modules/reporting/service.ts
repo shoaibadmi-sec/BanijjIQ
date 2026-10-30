@@ -79,6 +79,15 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   const moduleFilter = cleanText(url.searchParams.get('module'));
   const paymentFilter = cleanText(url.searchParams.get('paymentMethod'));
   const query = cleanText(url.searchParams.get('query')).toLowerCase();
+  // Opt-in paging keeps existing dashboard and legacy Daybook consumers unchanged.
+  const paginate = ['page', 'pageSize', 'sortBy'].some(key => url.searchParams.has(key));
+  const pageText = url.searchParams.get('page') || '1';
+  const pageSizeText = url.searchParams.get('pageSize') || '50';
+  const sortBy = url.searchParams.get('sortBy') || 'created';
+  const page = Number(pageText), pageSize = Number(pageSizeText);
+  if (paginate && (!/^[1-9]\\d*$/.test(pageText) || !Number.isSafeInteger(page) ||
+      !['50', '100'].includes(pageSizeText) || !['created', 'transaction'].includes(sortBy)))
+    return json({ok:false,error:'Choose a valid page, 50/100 page size and transaction/created sort.'},400);
   const backdatedOnly = url.searchParams.get('backdatedOnly') === '1';
   const isAdmin = user.role === 'admin';
   const includeDeleted = isAdmin && url.searchParams.get('includeDeleted') === '1';
@@ -378,7 +387,13 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
       if (!hay.includes(query)) return false;
     }
     return true;
-  }).sort((a, b) => b.ts.localeCompare(a.ts));
+  }).sort((a, b) => {
+    if (!paginate) return b.ts.localeCompare(a.ts);
+    const primary = sortBy === 'transaction' ? b.date.localeCompare(a.date) : b.ts.localeCompare(a.ts);
+    return primary || (sortBy === 'transaction' ? b.ts.localeCompare(a.ts) : b.date.localeCompare(a.date)) ||
+      a.module.localeCompare(b.module) || a.sourceId.localeCompare(b.sourceId) ||
+      a.referenceNo.localeCompare(b.referenceNo);
+  });
 
   const totals = { cashIn: 0, cashOut: 0, bankIn: 0, bankOut: 0, netCash: 0, netBank: 0 };
   for (const r of filtered) {
@@ -389,7 +404,10 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   totals.netBank = totals.bankIn - totals.bankOut;
   for (const key of ['cashIn','cashOut','bankIn','bankOut','netCash','netBank'] as const) totals[key] = Math.round(totals[key] * 10000) / 10000;
 
-  return json({ ok: true, rows: filtered, totals, isAdmin, count: filtered.length });
+  const pageRows = paginate ? filtered.slice((page - 1) * pageSize, page * pageSize) : filtered;
+  return json({ ok: true, rows: pageRows, totals, isAdmin, count: filtered.length,
+    ...(paginate ? {pagination:{page,pageSize,totalRows:filtered.length,totalPages:Math.ceil(filtered.length/pageSize),
+      sortBy}} : {}) });
 }
 
 
