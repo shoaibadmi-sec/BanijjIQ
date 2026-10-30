@@ -44,10 +44,12 @@ export async function runLiveBusinessSettingsChecks({browser,base,withCheck}){
         const name=f.page.getByRole('textbox',{name:'Business name',exact:true});
         await name.waitFor({timeout:12000});
         assert.equal(await name.inputValue(),'D1 Source Hardware','must load D1 value, not demo/localStorage');
+        await f.page.getByRole('tab',{name:/Contact & address/}).click();
         assert.equal(await f.page.getByRole('textbox',{name:'Phone number'}).inputValue(),'01700002611');
         assert.equal(await f.page.getByRole('textbox',{name:'Business email'}).inputValue(),'source-test@example.invalid');
         assert.equal(await f.page.getByRole('textbox',{name:'Business address'}).inputValue(),'Source Street, Dhaka');
         assert.equal(await panel.getByText('Nawabpur Hardware House').count(),0,'must never show the demo business as live');
+        await f.page.getByRole('tab',{name:/General/}).click();
         await name.fill('Updated Source Hardware');
         await f.page.getByRole('button',{name:'Save business settings'}).click();
         await panel.getByText('Business settings saved.').waitFor({timeout:10000});
