@@ -61,7 +61,6 @@ test('Phase 8A3B3 employee edit/status use real DB, revoke sessions and preserve
     const deactivate=await api('PUT','/api/users/'+staffId+'/status',
       {status:'Inactive'},admin);
     assert.equal(deactivate.status,200);
-    assert.equal(deactivate.status===200&&deactivate.status,200);
     assert.equal((db.native.prepare('SELECT status FROM app_users WHERE user_id=?').get(staffId) as any).status,'Inactive');
     const revoked=await api('GET','/api/auth/me',undefined,relogin.token);
     assert.equal(revoked.user,null,'deactivation must revoke the new session');
