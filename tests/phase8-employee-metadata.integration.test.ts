@@ -52,6 +52,21 @@ test('Phase 8 stores employee email and true joining date, without inferring fro
     assert.equal(row.name,'Updated Stock Keeper');
     assert.equal(row.email,'newkeeper@example.com');
     assert.equal(row.joinedDate,'2025-01-31');
+    const invalidDate=await call('PUT','/api/users/'+created.id,token,{
+      name:'Must Not Save',mobile:'01000008102',role:'StockReader',
+      email:'valid@example.com',joinedDate:'2025-02-30'
+    });
+    assert.equal(invalidDate.status,400,'reject impossible calendar dates');
+    const duplicate=await call('POST','/api/users',token,{
+      name:'Duplicate',mobile:'01000008103',role:'StockReader',password:'OtherTestStaff2026!',
+      email:'NEWKEEPER@EXAMPLE.com'
+    });
+    assert.equal(duplicate.status,400,'email uniqueness must ignore case');
+    assert.equal((await list()).users.some((u:any)=>u.mobile==='01000008103'),false);
+    const unchanged=(await list()).users.find((u:any)=>u.id===created.id);
+    assert.equal(unchanged.name,'Updated Stock Keeper');
+    assert.equal(unchanged.joinedDate,'2025-01-31');
+
     const legacyEdit=await call('PUT','/api/users/'+created.id,token,{
       name:'Stock Keeper Again',mobile:'01000008102',role:'StockReader'
     });
