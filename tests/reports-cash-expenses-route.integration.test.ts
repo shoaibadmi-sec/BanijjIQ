@@ -45,6 +45,8 @@ test('real v2 cash, bank, expense and finance GET routes are authenticated and n
   const summary=await api('GET','/api/reports/v2/summary?from=2026-10-01&to=2026-10-30');
   assert.equal(summary.status,200,JSON.stringify(summary));
   assert.equal(summary.metrics.find((m:any)=>m.key==='cashBookBalance')?.valueMinor,15000);
+  assert.equal(summary.metrics.find((m:any)=>m.key==='operatingExpenses')?.status,'ready',
+    'a source-reconciled expense period is displayable even if physical cash remains unconfirmed');
   assert.equal((await api('POST','/api/reports/v2/rows?report=expenses',{})).status,404);
   const after=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
   assert.equal(after,before,'read-only reporting must not change D1');
