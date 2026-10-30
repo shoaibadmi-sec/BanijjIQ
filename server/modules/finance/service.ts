@@ -453,18 +453,65 @@ async function reverseFinanceMoney(db:SherDatabase,financeId:string,user:AuthUse
 }
 
 export async function addFinanceTransactionRoute(db:SherDatabase,input:FinanceInput,user:AuthUser):Promise<Response>{
+  // A stable client request ID is required: retries must never create two investments or loans.
+  const key=bankRequestId(input.clientRequestId);
+  if(!key)return error('A valid clientRequestId is required for finance posting.');
+  const type=financeType(cleanText(input.transactionType));
+  if(!type)return error('Choose a valid transaction type.');
+  const amountTicks=bankTransferTicks(input.amount);
+  if(amountTicks===null)return error('Enter a positive amount with at most four decimal places.');
+  const amount=amountTicks/10000;
+  const personId=cleanText(input.personId),person=await resolveFinancePerson(db,personId);
+  if(!person)return error('Choose an existing owner or lender.');
+  if(cleanText(person.status)!=='Active')return error('Finance person is inactive.');
+  if(type.account!==(person.person_type==='Lender'?'loan':'capital'))
+    return error('Owner transactions must use an Owner; loan transactions must use a Lender.');
+  const method=cleanText(input.paymentMethod);
+  if(!FINANCE_PAYMENT_METHODS.includes(method))return error('Choose a valid payment method.');
+  let bank:any;
+  try{bank=await resolveFinanceBank(db,method,cleanText(input.bankAccountId));}
+  catch(e){return error(e instanceof Error?e.message:'Bank account error.');}
+  if(method!=='Cash'&&(bank.status!=='Active'||bank.account_type!==method))
+    return error('Choose an active account matching the selected payment method.');
+  const dv=validateFinanceDate(input);if(dv instanceof Response)return dv;
+  const personName=cleanText(person.person_name),accountId=cleanText(bank.bank_account_id),
+    reference=cleanText(input.referenceNo),notes=cleanText(input.notes);
+  const fingerprint=JSON.stringify([type.key,personId,method,accountId,amountTicks,dv.date,reference,notes,dv.reason]);
+  const findRequest=()=>db.prepare("SELECT finance_id,request_fingerprint FROM finance_transactions WHERE client_request_id=? LIMIT 1")
+    .bind(key).first<{finance_id:string;request_fingerprint:string}>();
+  const already=await findRequest();
+  if(already)return already.request_fingerprint===fingerprint?
+    json({ok:true,id:already.finance_id,replayed:true}):
+    error('Client request ID was already used for a different finance transaction.',409);
   if(!(await getOpenCashSession(db)))return error('Start the POS Cash Session before posting a finance transaction.');
-  const type=financeType(cleanText(input.transactionType)); if(!type)return error('Choose a valid transaction type.');
-  const amount=money(input.amount); if(!(amount>0))return error('Enter a valid amount.');
-  const personId=cleanText(input.personId); if(!personId)return error('Choose the owner or lender.'); const person=await resolveFinancePerson(db,personId); if(!person)return error('Person not found.');
-  const method=FINANCE_PAYMENT_METHODS.includes(cleanText(input.paymentMethod))?cleanText(input.paymentMethod):''; if(!method)return error('Choose a valid payment method.');
-  let bank:any; try{bank=await resolveFinanceBank(db,method,cleanText(input.bankAccountId));}catch(e){return error(e instanceof Error?e.message:'Bank account error.');}
-  const dv=validateFinanceDate(input); if(dv instanceof Response)return dv;
   const id=await nextId(db,'finance_transactions','finance_id','FIN');
-  await db.prepare(`INSERT INTO finance_transactions(finance_id,date,transaction_type,person_id,person_name,payment_method,bank_account_id,bank_account_name,amount,reference_no,notes,created_by,created_at,is_backdated,backdated_days,backdated_reason,is_deleted) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,0)`)
-    .bind(id,dv.date,type.key,personId,cleanText(person.person_name),method,cleanText(bank.bank_account_id),cleanText(bank.account_name),amount,cleanText(input.referenceNo),cleanText(input.notes),user.fullName,dv.isBackdated?1:0,dv.backdatedDays,dv.reason).run();
-  await postFinanceMoney(db,id,type,method,bank,amount,cleanText(person.person_name),dv.date,user,dv);
-  const balances=await financeBalances(db); return json({ok:true,id,...balances});
+  const debit=type.direction==='out'?amount:0,credit=type.direction==='in'?amount:0,delta=credit-debit;
+  const description=type.label+' — '+personName;
+  const statements=[
+    db.prepare("INSERT INTO finance_transactions(finance_id,date,transaction_type,person_id,person_name,payment_method,bank_account_id,bank_account_name,amount,reference_no,notes,created_by,created_at,is_backdated,backdated_days,backdated_reason,is_deleted,client_request_id,request_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,0,?,?)")
+      .bind(id,dv.date,type.key,personId,personName,method,accountId,cleanText(bank.account_name),amount,reference,notes,user.fullName,dv.isBackdated?1:0,dv.backdatedDays,dv.reason,key,fingerprint)
+  ];
+  if(method==='Cash'){
+    statements.push(db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted,created_at) VALUES(?,?,?,?,?,?,?,'Cash',0,datetime('now'))")
+      .bind(bankId('CB'),dv.date,type.key,id,description,debit,credit));
+  }else{
+    statements.push(
+      db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES(?,?,?,?,?,?,?,?,?,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)+?,4),'Active',?,0)")
+        .bind(bankId('BB'),accountId,cleanText(bank.account_name),dv.date,type.key,id,description,debit,credit,accountId,delta,user.fullName),
+      db.prepare("UPDATE bank_accounts SET current_balance=ROUND(current_balance+?,4) WHERE bank_account_id=? AND status='Active'")
+        .bind(delta,accountId)
+    );
+  }
+  try{await db.batch(statements);}
+  catch{
+    const retried=await findRequest();
+    if(retried)return retried.request_fingerprint===fingerprint?
+      json({ok:true,id:retried.finance_id,replayed:true}):
+      error('Client request ID was already used for a different finance transaction.',409);
+    return error('Finance posting was not committed; bank/cash book failed or account changed.',409);
+  }
+  const balances=await financeBalances(db);
+  return json({ok:true,id,replayed:false,...balances});
 }
 
 /** Person balances are only shown if every active financing record matches one source-book posting. */
