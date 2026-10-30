@@ -59,12 +59,12 @@ test('Phase 4A: live supplier search / purchase payable and ledger reconciliatio
       assert.equal(result.suppliers[0].currentDue,60);
       assert.equal(result.suppliers[0].ledgerDue,60);
       assert.equal(result.suppliers[0].needsReconciliation,false);
-      assert.equal(db.native.prepare('SELECT current_due FROM suppliers WHERE supplier_id=?').get(supplier.id)?.current_due,60);
+      assert.equal((db.native.prepare('SELECT current_due FROM suppliers WHERE supplier_id=?').get(supplier.id) as any)?.current_due,60);
       const ledger=db.native.prepare('SELECT debit,credit,balance FROM supplier_ledger WHERE reference=?').get(purchase.purchaseId) as any;
       assert.deepEqual([ledger.debit,ledger.credit,ledger.balance],[60,0,60]);
       const lot=db.native.prepare("SELECT original_quantity,remaining_quantity,unit_cost FROM stock_lots WHERE source_ref=? AND source_type='PURCHASE'").get(purchase.purchaseId) as any;
       assert.deepEqual([lot.original_quantity,lot.remaining_quantity,lot.unit_cost],[3,3,20]);
-      assert.equal(db.native.prepare('SELECT current_stock FROM products WHERE product_id=?').get(product.productId)?.current_stock,3);
+      assert.equal((db.native.prepare('SELECT current_stock FROM products WHERE product_id=?').get(product.productId) as any)?.current_stock,3);
     });
     await t.test('read-only search makes no financial changes and does not include inactive suppliers',async()=>{
       const counts=()=>['suppliers','supplier_ledger','stock_lots','purchase_items'].map(x=>

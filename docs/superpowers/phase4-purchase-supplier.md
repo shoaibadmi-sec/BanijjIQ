@@ -7,7 +7,7 @@ Source of truth: verified `shuvodelux-commits/Mohim_ERP` business behavior, orig
 ## Sequential acceptance gates
 
 - [x] **4A backend foundation**: read-only, purchase-authorized supplier lookup with case-insensitive name/phone/ID matching, live payable, separate ledger reconciliation flag; purchase payable ledger no longer double-counts the same supplier due in its displayed balance.
-- [ ] **4A React entry completion**: original HisabIQ component styling, keyboard supplier selector, live due, saved supplier-only purchase, no fake/demo operational state; offline/ambiguous result handling.
+- [x] **4A React entry foundation (due purchases only)**: original HisabIQ component styling, keyboard supplier selector, live due, saved supplier-only purchase, no fake/demo operational state; offline/ambiguous result handling. Paid tender, mixed-unit conversion and returns remain gated until their later subphases.
 - [ ] **4B**: versioned 2–4 unit purchase quantities and unit-cost normalization to exact base units; reject stale profiles/overflows, atomic FIFO lot/master-stock movements.
 - [ ] **4C**: purchase return original-lot cost, exact mixed-unit allocation, tracked serial/expiry eligibility, signed ledger and audit reversal, no double-return.
 - [ ] **4D**: supplier payments and due settlement must atomically post ledger + cash/bank entries, prevent overpayment/negative payable, preserve historical reversal audit and original account.

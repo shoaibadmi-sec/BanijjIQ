@@ -38,18 +38,24 @@ let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
 const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
-if (![importAnchor, posAnchor, productsAnchor].every(anchor => app.includes(anchor))) {
+const purchasesAnchor = '<Route path="purchases" element={<Purchases />} />';
+const purchaseEditorAnchor = '<Route path="purchases/new" element={<PurchaseEditor />} />';
+if (![importAnchor, posAnchor, productsAnchor, purchasesAnchor, purchaseEditorAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
+  "const LivePurchases = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchasesPage })));",
+  "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
   importAnchor
 ].join('\n'));
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
+app = app.replace(purchasesAnchor, '<Route path="purchases" element={<LivePurchases />} />\\n          <Route path="purchases-design-preview" element={<Purchases />} />'.replace('\\n','\n'));
+app = app.replace(purchaseEditorAnchor, '<Route path="purchases/new" element={<LivePurchaseEditor />} />\\n          <Route path="purchase-editor-design-preview" element={<PurchaseEditor />} />'.replace('\\n','\n'));
 writeFileSync(appPath, app);
 console.log('Prepared isolated React build: pinned original Products table + authenticated D1 controller + verified Mohim actions, real POS and Returns.');
