@@ -38,6 +38,7 @@ jobs:
           node --test react-integration/tests/reports-live-route.test.mjs
           node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
+          node --test react-integration/tests/phase7f2-alerts-source.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
@@ -73,6 +74,7 @@ jobs:
           npm run test:phase4
           npm run test:phase7f
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
+          node --import tsx --test react-integration/tests/phase7f2-alerts-client.test.ts
       - name: Measure Phase 4F purchase/supplier function coverage with real isolated DB
         run: |
           set -o pipefail

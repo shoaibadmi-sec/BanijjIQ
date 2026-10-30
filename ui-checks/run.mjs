@@ -294,6 +294,16 @@ function startMocking(context,calls){
         grandTotal:amount,paidAmount:0,dueAmount:amount,paymentStatus:'Due',items:[]};
       return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:amount,dueAmount:amount});
     }
+    if(path==='/api/products/stock-alerts'&&request.method()==='GET'){
+      const page=Number(url.searchParams.get('page')||1);
+      const alerts=[{kind:'needs-review',productId:'PRD-000002',productName:'PVC Pipe 20mm',
+        currentStock:3,minimumStock:5,sourceStatus:'needs-review',
+        reason:'Product stock differs from source FIFO lots'}];
+      return respond({ok:true,asOf:url.searchParams.get('asOf')||'2026-10-30',horizonDays:30,
+        page,pageSize:50,totalAlerts:alerts.length,alerts:page===1?alerts:[],
+        counts:{outOfStock:0,lowStock:0,expired:0,expiring:0,needsReview:1},
+        coverage:{status:'needs-review',reason:'One stock source requires review'}});
+    }
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
@@ -709,7 +719,17 @@ try{
         await screenshot(page,'products-'+width+'-'+theme);
         await audit(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
+          const alerts=page.getByRole('region',{name:'Live stock alerts'});
+          await alerts.getByText('1 check stock').waitFor();
+          assert.ok(api.some(x=>x.method==='GET'&&x.path==='/api/products/stock-alerts'),
+            'stock alerts must use the real authorized API contract');
+          await alerts.getByRole('button',{name:'Review 1'}).click();
+          await alerts.getByRole('button',{name:'PVC Pipe 20mm'}).click();
           const search=page.getByRole('textbox',{name:'Search products'});
+          assert.equal(await search.inputValue(),'PVC Pipe 20mm');
+          assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
+          await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
+
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
           await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
