@@ -176,6 +176,8 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   assert.equal(legacyAccount.availableCents,1000);
   assert.equal(legacyAccount.blocked,true);
   const stockBeforeLegacyAttempt=row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock;
+  const journalBeforeLegacyAttempt=row('SELECT COUNT(*) n FROM customer_store_credit_entries').n;
+  const receivablesBeforeLegacyAttempt=row("SELECT COUNT(*) n FROM customer_ledger WHERE customer_id='CR-CUSTOMER'").n;
   const legacyAttempt=await api('POST','/api/pos/sales',{
    ...saleInput,clientRequestId:'credit-negative-due-denial-0001',
    items:[{productId:id,qty:1,unitPrice:10}]
@@ -186,6 +188,9 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,books.cash);
   assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,books.bank);
   assert.equal(row("SELECT current_due FROM customers WHERE customer_id='CR-CUSTOMER'").current_due,-5);
+  assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,journalBeforeLegacyAttempt);
+  assert.equal(row("SELECT COUNT(*) n FROM customer_ledger WHERE customer_id='CR-CUSTOMER'").n,receivablesBeforeLegacyAttempt);
+  assert.equal(row("SELECT COUNT(*) n FROM pos_sale_requests WHERE request_id='credit-negative-due-denial-0001'").n,0);
   db.native.prepare("UPDATE customers SET current_due=0 WHERE customer_id='CR-CUSTOMER'").run();
   const reconciledAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
   assert.equal(reconciledAccount.blocked,false);
