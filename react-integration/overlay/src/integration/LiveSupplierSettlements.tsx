@@ -167,7 +167,7 @@ export function LiveSupplierSettlements({supplierId}: {supplierId:string}){
   </div>}
   {data&&<div className="rounded-xl border border-border bg-card p-3 shadow-card">
    <h2 className="mb-3 text-sm font-semibold text-ink">Settlement History · পরিশোধের ইতিহাস</h2>
-   <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-left text-xs">
+   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Supplier settlement history table"><table className="w-full min-w-[520px] text-left text-xs">
     <thead><tr className="border-b border-border text-ink-600">
      <th className="p-2">Date</th><th className="p-2">Method</th>
      <th className="p-2 text-right">Amount</th><th className="p-2">Status</th>
