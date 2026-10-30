@@ -70,6 +70,6 @@ app = app.replace(reportsAnchor,
 app = app.replace(financeAnchor,
   '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
 app = app.replace(daybookAnchor,
-  '<Route path="daybook" element={<LiveDaybook />} />\\n          <Route path="daybook-design-preview" element={<Daybook />} />');
+  '<Route path="daybook" element={<LiveDaybook />} />\n          <Route path="daybook-design-preview" element={<Daybook />} />');
 writeFileSync(appPath, app);
 console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
