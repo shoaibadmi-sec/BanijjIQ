@@ -108,7 +108,7 @@ jobs:
 
   deploy-hosted-preview:
     # Neither pull requests nor routine CI can deploy a Worker.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_hosted_preview == true && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && github.ref == 'refs/heads/feat/hisabiq-react-api' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_hosted_preview == true && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && github.ref == 'refs/heads/feat/hisabiq-store-credit-liability-phase3g2' }}
     needs: react-build
     runs-on: ubuntu-latest
     timeout-minutes: 18
@@ -128,6 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -180,7 +181,7 @@ jobs:
   accept-hosted-preview:
     # Read-only acceptance is allowed ONLY after an explicitly authorized and
     # successful isolated hosted deployment. Never runs from pull_request.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && inputs.deploy_hosted_preview == true && github.ref == 'refs/heads/feat/hisabiq-react-api' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY' && inputs.deploy_hosted_preview == true && github.ref == 'refs/heads/feat/hisabiq-store-credit-liability-phase3g2' }}
     needs: deploy-hosted-preview
     runs-on: ubuntu-latest
     timeout-minutes: 14
