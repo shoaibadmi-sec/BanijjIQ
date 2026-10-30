@@ -87,6 +87,12 @@ test('Phase 7E2 business: ordinary POS cannot consume fictitious bundle inventor
   const cash={clientRequestId:'bundle-cash-guard01',customerName:'A',customerPhone:'01000002229',paymentType:'Cash',paymentMethod:'Cash',items};
   assert.equal((await api('POST','/api/pos/sales',cash)).status,409,'normal POS may not sell virtual bundle');
   const good=await api('POST','/api/pos/bundle-sales',cash);assert.equal(good.status,200,JSON.stringify(good));
+  const virtualBefore=(db.native.prepare("SELECT current_stock FROM products WHERE product_id='B-KIT'").get() as any).current_stock;
+  const manual=await api('POST','/api/products/B-KIT/adjust-stock',{delta:1,reason:'Unsafe virtual stock addition'});
+  assert.equal(manual.status>=400,true,'virtual bundle stock cannot be adjusted directly');
+  assert.equal((db.native.prepare("SELECT current_stock FROM products WHERE product_id='B-KIT'").get() as any).current_stock,virtualBefore);
+  assert.throws(()=>db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,original_quantity,remaining_quantity,unit_cost) VALUES ('BAD-VIRTUAL-LOT','B-KIT','OPENING',1,1,5)").run(),/BUNDLE|VIRTUAL/i,'virtual bundle must never own physical FIFO lots');
+
   const beforeReturn=(db.native.prepare('SELECT total_changes() n').get() as any).n;
   assert.equal((await api('POST','/api/sales-returns',{invoiceId:good.invoiceId,items:[{productId:'B-KIT',quantity:1}]})).status>=400,true);
   assert.equal((db.native.prepare('SELECT total_changes() n').get() as any).n,beforeReturn,'rejected bundle return must leave zero writes');
