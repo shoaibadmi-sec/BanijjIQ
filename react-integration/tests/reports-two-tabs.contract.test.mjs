@@ -25,7 +25,9 @@ test('legacy advisor, sales, stock, and other deep links become Report Library, 
   assert.match(page, /paramsForReportScreen\(allowedScreen,next\.id/);
   assert.match(page, /<ReportsNav value=\{screen\} onChange=\{selectScreen\}\/>/);
   assert.match(page, /screen==='library'&&<ReportToolbar/);
-  assert.match(page, /screen==='library'&&<ReportResults/);
+  assert.match(page, /screen==='library'&&liveStatus!=='unavailable'&&liveStatus!=='loading'&&<ReportResults/);
+  assert.match(page, /useLiveReportResult\(definition\.id,filters,refresh\)/);
+  assert.doesNotMatch(page, /useReportData\(refresh\)/);
   assert.match(page, /screen==='overview'/);
 });
 

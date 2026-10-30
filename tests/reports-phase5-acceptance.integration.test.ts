@@ -8,7 +8,7 @@ import { handleApiRequest } from '../server/core/handler.ts';
 
 const reports=['sales','purchase','stock','receivables','payables','profit',
   'product-profit','profit-loss','cash','bank','finance','expenses','audit'] as const;
-const unavailable=new Set(['purchase','product-profit','profit-loss','audit']);
+const unavailable=new Set(['product-profit','profit-loss','audit']);
 const range='&from=2026-10-01&to=2026-10-30';
 function fixture(){
   const db=new SqliteDatabase(':memory:');

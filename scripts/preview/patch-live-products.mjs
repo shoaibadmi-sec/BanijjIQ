@@ -37,6 +37,12 @@ import { useLiveProducts } from '../integration/products/useLiveProducts';
 import { toProductView } from '../integration/products/productContracts';
 import { MohimProductEditor } from '../integration/products/MohimProductEditor';
 import { MohimProductActions as ProductActions } from '../integration/products/MohimProductActions';
+import { StockHistoryView } from '../components/products/ProductInventoryViews';
+import { StockLotsView } from '../components/products/ProductInventoryViews';
+import { StockAdjustmentDialog, type StockAdjustmentResult } from '../components/products/ProductInventoryDialogs';
+import type { StockLot } from '../types/erp';
+import { loadInventoryHistory, loadInventoryLots } from '../integration/products/productApi';
+import type { StockMovement as HisabStockMovement } from '../types/erp';
 
 `;
 const controller=String.raw`type ProductView = 'list' | 'lots' | 'history' | 'settings';
@@ -58,9 +64,61 @@ export function Products() {
   useEffect(()=>setQuery(routeQuery),[routeQuery]);
   const [category,setCategory]=useState('All');
   const [stockFilter,setStockFilter]=useState<StockFilter>('all');
-  const [view,setView]=useState<ProductView>('list');
-  const chooseView=(next:ProductView)=>{if(next==='list'){setView('list');
-    setSearchParams(old=>{const params=new URLSearchParams(old);params.delete('view');return params;},{replace:true});}};
+  const requestedView=searchParams.get('view');
+  const [view,setView]=useState<ProductView>(requestedView==='history'?'history':requestedView==='lots'?'lots':'list');
+  useEffect(()=>setView(requestedView==='history'?'history':requestedView==='lots'?'lots':'list'),[requestedView]);
+  const chooseView=(next:ProductView)=>{
+    if(next!=='list'&&next!=='history'&&next!=='lots')return;
+    setView(next);
+    setSearchParams(old=>{
+      const params=new URLSearchParams(old);
+      if(next==='list')params.delete('view');else params.set('view',next);
+      return params;
+    },{replace:true});
+  };
+  const [movements,setMovements]=useState<HisabStockMovement[]>([]);
+  const [lots,setLots]=useState<StockLot[]>([]);
+  const [lotsLoading,setLotsLoading]=useState(false);
+  const [lotsError,setLotsError]=useState('');
+  const [lotsReload,setLotsReload]=useState(0);
+  const [adjustProduct,setAdjustProduct]=useState<Product|null>(null);
+  const [inventoryProductFilter,setInventoryProductFilter]=useState('');
+  const [historyLoading,setHistoryLoading]=useState(false);
+  const [historyError,setHistoryError]=useState('');
+  const [historyReload,setHistoryReload]=useState(0);
+  useEffect(()=>{
+    if(!permitted||view!=='history')return;
+    let active=true;
+    setHistoryLoading(true);setHistoryError('');setMovements([]);
+    loadInventoryHistory()
+      .then(rows=>{if(active)setMovements(rows);})
+      .catch(reason=>{if(active){setMovements([]);setHistoryError(reason instanceof Error?reason.message:'Could not load stock history');}})
+      .finally(()=>{if(active)setHistoryLoading(false);});
+    return()=>{active=false;};
+  },[permitted,view,items,historyReload]);
+  useEffect(()=>{
+    if(!permitted||view!=='lots')return;
+    let active=true;
+    setLotsLoading(true);setLotsError('');setLots([]);
+    loadInventoryLots()
+      .then(rows=>{if(active)setLots(rows);})
+      .catch(reason=>{if(active){setLots([]);setLotsError(reason instanceof Error?reason.message:'Could not load stock lots');}})
+      .finally(()=>{if(active)setLotsLoading(false);});
+    return()=>{active=false;};
+  },[permitted,view,items,lotsReload]);
+  const applyAdjustment=(product:Product,result:StockAdjustmentResult)=>{
+    if(!result.delta){setLotsError('No stock change was requested.');return;}
+    setLotsError('');
+    void adjustStock(product.id,result.delta,[result.reason,result.note].filter(Boolean).join(' · '))
+      .then(()=>{
+        setNotice('Stock adjusted in BanijjIQ · '+product.name);
+        setLotsReload(n=>n+1);setHistoryReload(n=>n+1);
+      })
+      .catch(reason=>{
+        setLots([]);
+        setLotsError(reason instanceof Error?reason.message:'Stock adjustment was not confirmed.');
+      });
+  };
   const [editing,setEditing]=useState<undefined|null|typeof items[number]>(undefined);
   const [notice,setNotice]=useState('');
   const {columns:visibleColumns,setColumns:setVisibleColumns}=
@@ -108,23 +166,31 @@ export function patchLiveProducts(source) {
   const pageStart=source.indexOf('export function Products() {');
   const jsxStart=source.indexOf('  return (\n    <div className="mx-auto max-w-[1440px] space-y-4">',pageStart);
   const afterList=source.indexOf("\n      {view === 'lots'",jsxStart);
-  if([blockStart,actionStart,pageStart,jsxStart,afterList].some(n=>n<0)
-     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList))
+  const historyStart=source.indexOf("      {view === 'history' && (",afterList);
+  const adjustDialogStart=source.indexOf('      <StockAdjustmentDialog',historyStart);
+  const adjustDialogEnd=source.indexOf('      <StockLotDialog',adjustDialogStart);
+  const settingsStart=source.indexOf("      {view === 'settings' && (",historyStart);
+  if([blockStart,actionStart,pageStart,jsxStart,afterList,historyStart,settingsStart,adjustDialogStart,adjustDialogEnd].some(n=>n<0)
+     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList&&afterList<historyStart&&historyStart<settingsStart&&settingsStart<adjustDialogStart&&adjustDialogStart<adjustDialogEnd))
     throw new Error('Pinned Products source JSX anchors changed');
   // Keep original column picker, status badges, table classes, tabs and list JSX intact.
   const primitives=source.slice(blockStart,actionStart);
   let jsx=source.slice(jsxStart,afterList);
+  const historyJsx=source.slice(historyStart,settingsStart);
+  const lotsJsx=source.slice(afterList+1,historyStart);
+  const adjustDialogJsx=source.slice(adjustDialogStart,adjustDialogEnd);
   jsx=replaceOnce(jsx,
     '    <div className="mx-auto max-w-[1440px] space-y-4">',
     '    <div className="mx-auto max-w-[1440px] space-y-4" data-live-products>','live root');
   jsx=replaceOnce(jsx,
     '      <PageHeader',
     `      {notice&&<p role="status" className="rounded-lg bg-success-bg p-2 text-xs text-success">{notice}</p>}
-      {error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-bg p-2 text-xs text-danger">
-          <span>{error} · Showing no unverified inventory.</span>
-          <Button size="sm" variant="outline" disabled={loading} onClick={()=>void refresh().catch(()=>{})}>Retry products</Button>
+      {(error||historyError||lotsError)&&<div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-bg p-2 text-xs text-danger">
+          <span>{error||historyError||lotsError} · Showing no unverified inventory.</span>
+          <Button size="sm" variant="outline" disabled={loading||historyLoading||lotsLoading}
+            onClick={()=>view==='history'?setHistoryReload(n=>n+1):view==='lots'?setLotsReload(n=>n+1):void refresh().catch(()=>{})}>{view==='history'?'Retry history':view==='lots'?'Retry stock lots':'Retry products'}</Button>
         </div>}
-      {loading&&<p role="status" className="p-2 text-xs text-ink-500">Loading live products…</p>}
+      {(loading||historyLoading||lotsLoading)&&<p role="status" className="p-2 text-xs text-ink-500">{view==='history'?'Loading live stock history…':view==='lots'?'Loading live stock lots…':'Loading live products…'}</p>}
       <PageHeader`,'live fetch state');
   jsx=replaceOnce(jsx,
     "onClick={() => setImportOpen(true)}",
@@ -137,7 +203,7 @@ export function patchLiveProducts(source) {
     'disabled={!canAdd||pendingOperation!==null} onClick={()=>setEditing(null)}','live Add product');
   jsx=replaceOnce(jsx,
     "onClick={() => chooseView(id)}",
-    `disabled={id!=='list'} title={id!=='list'?'Use a product row Actions menu for real lots and history; settings are not connected.':undefined}
+    `disabled={id!=='list'&&id!=='history'&&id!=='lots'} title={id!=='list'&&id!=='history'&&id!=='lots'?'Awaiting real API integration.':undefined}
              onClick={() => chooseView(id)}`,'deferred tabs');
   jsx=replaceOnce(jsx,
     "availableProductCategories().map((c) =>",
@@ -172,7 +238,7 @@ export function patchLiveProducts(source) {
                       onAdjustStock={adjustStock} onSetStatus={setStatus}
                       loadLots={loadLots} loadHistory={loadHistory}`;
   jsx=jsx.slice(0,rowActionStart)+safeActions+jsx.slice(actionEnd);
-  const compiled=header+primitives+controller+jsx+"\n    </div>);\n}\n";
+  const compiled=header+primitives+controller+jsx+lotsJsx+historyJsx+adjustDialogJsx+"\n    </div>);\n}\n";
   const forbidden=[
     'availableProducts(', 'availableProductCategories(', 'availableStockLots(',
     'availableStockMovements(', 'salesInvoices', 'upsertProductPreview',
