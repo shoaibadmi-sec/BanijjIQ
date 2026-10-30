@@ -60,8 +60,19 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
     }
     if(path==='/api/reports/v2/summary') {
       const query=parseLiveReportQuery(url);
-      const result=await readSalesProfit(db,{...query,report:'profit'});
-      return json({ok:true,range:result.range,metrics:result.metrics,coverage:result.coverage});
+      const [profit,stock,receivables,payables]=await Promise.all([
+        readSalesProfit(db,{...query,report:'profit'}),
+        readStockDues(db,{...query,report:'stock'}),
+        readStockDues(db,{...query,report:'receivables'}),
+        readStockDues(db,{...query,report:'payables'})
+      ]);
+      const coverage=[profit.coverage,stock.coverage,receivables.coverage,payables.coverage];
+      const status=coverage.some(x=>x.status==='incomplete')?'incomplete':
+        coverage.some(x=>x.status==='unavailable')?'unavailable':
+        coverage.some(x=>x.status==='needs-review')?'needs-review':'ready';
+      return json({ok:true,range:profit.range,
+        metrics:[...profit.metrics,...stock.metrics,...receivables.metrics,...payables.metrics],
+        coverage:{status,reason:coverage.map(x=>x.reason).filter(Boolean).join(' ')}});
     }
     if(path==='/api/reports/v2/audit') {
       const range=parseLiveReportRange(url);
