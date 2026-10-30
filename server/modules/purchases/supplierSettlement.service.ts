@@ -157,9 +157,11 @@ export async function reverseSupplierSettlement(db:SherDatabase,settlementId:str
   return error('Supplier ledger out of balance. Reconcile before reversal.',409);
  // If a source bank/cash movement has been altered manually, do not silently reverse it.
  const sourceTable=original.method==='Cash'?'cash_book':'bank_book';
- const movement=await db.prepare(`SELECT entry_id,debit FROM ${sourceTable}
+ const movement=await db.prepare(`SELECT entry_id,debit${original.method==='Cash'?'':',bank_account_id'} FROM ${sourceTable}
   WHERE reference=? AND COALESCE(is_deleted,0)=0`).bind(original.ledger_id).all();
- if(movement.results.length!==1||Math.abs(Number((movement.results[0] as any).debit)-amount)>0.0001)
+ const source=movement.results[0] as {debit:number;bank_account_id?:string}|undefined;
+ if(movement.results.length!==1||Math.abs(Number(source?.debit)-amount)>0.0001||
+   (original.method!=='Cash'&&source?.bank_account_id!==original.bank_account_id))
   return error('Original financial movement no longer matches. Reconcile before reversal.',409);
  const ledger=await db.prepare(`SELECT credit FROM supplier_ledger
   WHERE ledger_id=? AND is_deleted=0`).bind(original.ledger_id).first<{credit:number}>();
