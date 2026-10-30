@@ -58,7 +58,7 @@ export async function canDelegatePermissions(db:SherDatabase,actor:AuthUser,targ
       &&(!requested.add||granted.add)
       &&(!requested.edit||granted.edit)
       && permissionWindowRank(requested.delete)<=permissionWindowRank(granted.delete)
-      && permissionWindowRank(requested.backdate)<=permissionWindowRank(granted.backdate);
+      && (!(requested.add||requested.edit) || permissionWindowRank(requested.backdate)<=permissionWindowRank(granted.backdate));
   });
 }
 
