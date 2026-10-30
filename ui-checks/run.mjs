@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { runProductsHybridChecks } from './products-hybrid.mjs';
 import {runLiveBusinessSettingsChecks} from './phase8a2-business-settings.mjs';
 import {runLiveTeamChecks} from './phase8a3-team.mjs';
+import {runAdminEmployeeCreateChecks} from './phase8a3b1-admin-user-create.mjs';
 import { runFinalProductChecks } from './products-final.mjs';
 import {runPaidRefundChecks} from './phase4-paid-refunds.mjs';
 import { createRequire } from 'node:module';
@@ -544,6 +545,7 @@ try{
   browser=await chromium.launch({headless:true,args:['--no-sandbox']});
   await runLiveBusinessSettingsChecks({browser,base,withCheck});
   await runLiveTeamChecks({browser,base,withCheck});
+  await runAdminEmployeeCreateChecks({browser,base,withCheck});
   await withCheck('unauthenticated route stays behind real sign-in',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:844}});
     const page=await ctx.newPage();
