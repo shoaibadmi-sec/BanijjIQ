@@ -57,6 +57,74 @@ export async function getBankAccountsRoute(db: SherDatabase): Promise<Response> 
   });
 }
 
+// Money is stored to four decimals in the existing finance books.
+// Compare in exact 1/10000 units rather than using an arbitrary float tolerance.
+function financeTicks(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const amount = Number(value);
+  const ticks = Math.round(amount * 10000);
+  return Number.isFinite(amount) && Number.isSafeInteger(ticks) &&
+    Math.abs(amount * 10000 - ticks) < 0.00001 ? ticks : null;
+}
+
+/** Read-only book reconciliation; this is NOT statement/physical-cash verification. */
+export async function getBankReconciliationRoute(db: SherDatabase): Promise<Response> {
+  const [accountsResult, bookResult] = await Promise.all([
+    db.prepare(`SELECT bank_account_id,account_name,account_type,opening_balance,current_balance
+                FROM bank_accounts ORDER BY account_name COLLATE NOCASE,bank_account_id`).all<any>(),
+    db.prepare(`
+      SELECT bank_account_id,
+        COUNT(*) AS entries,
+        SUM(CASE WHEN type='Opening Balance' THEN 1 ELSE 0 END) AS opening_rows,
+        SUM(COALESCE(credit,0)-COALESCE(debit,0)) AS movement,
+        SUM(CASE WHEN debit IS NULL OR credit IS NULL
+                  OR typeof(debit) NOT IN ('integer','real')
+                  OR typeof(credit) NOT IN ('integer','real')
+                  OR debit<0 OR credit<0 OR (debit>0 AND credit>0)
+                 THEN 1 ELSE 0 END) AS invalid_entries
+      FROM bank_book WHERE COALESCE(is_deleted,0)=0
+      GROUP BY bank_account_id
+    `).all<any>()
+  ]);
+  const accounts=accountsResult.results||[],books=bookResult.results||[];
+  const accountIds=new Set(accounts.map((a:any)=>String(a.bank_account_id)));
+  const orphan=books.some((b:any)=>!accountIds.has(String(b.bank_account_id)));
+  const overLimit=accounts.length>2000 || books.length>2000;
+  const byId=new Map(books.map((b:any)=>[String(b.bank_account_id),b]));
+  const list=accounts.map((a:any)=>{
+    const b=byId.get(String(a.bank_account_id)) as any;
+    const opening=financeTicks(a.opening_balance),recorded=financeTicks(a.current_balance);
+    const delta=financeTicks(b?.movement??0);
+    const openingRows=Number(b?.opening_rows??0);
+    const invalid=Number(b?.invalid_entries??0)>0;
+    const expected=opening!==null&&delta!==null
+      ? (openingRows>0?0:opening)+delta : null;
+    let reason='Bank-book movements agree with the recorded balance; bank statement not checked.';
+    if(overLimit)reason='Account safety limit exceeded; book totals require review.';
+    else if(orphan)reason='Orphan bank-book posting references a missing account.';
+    else if(invalid||opening===null||recorded===null||delta===null)reason='Invalid account or bank-book amount.';
+    else if(openingRows>1)reason='Multiple opening balance postings require review.';
+    else if(expected===null||!Number.isSafeInteger(expected)||expected!==recorded)
+      reason='Recorded balance differs from opening plus bank-book movements.';
+    const ready=reason.startsWith('Bank-book movements agree');
+    return {
+      id:String(a.bank_account_id),name:String(a.account_name),accountType:bankAccountType(a.account_type),
+      openingBalance:opening===null?0:opening/10000,
+      recordedBalance:recorded===null?0:recorded/10000,
+      bookBalance:ready&&expected!==null?expected/10000:null,
+      status:ready?'ready':'needs-review',reason
+    };
+  });
+  const incomplete=list.filter(a=>a.status==='needs-review');
+  const status=list.length>0&&incomplete.length===0?'ready':'needs-review';
+  const reason=orphan?'Orphan bank-book posting references a missing account.':
+    overLimit?'Bank account safety limit exceeded.':
+    incomplete.length?`${incomplete.length} bank account(s) need book reconciliation.`:
+    list.length?'All available internal bank books reconcile. This does not match bank statements.':
+    'No bank accounts are configured.';
+  return json({ok:true,asOf:new Date().toISOString(),accounts:list,coverage:{status,reason}});
+}
+
 export async function createBankAccountRoute(db: SherDatabase, input: BankAccountInput): Promise<Response> {
   const name = cleanText(input.name);
   if (!name) return error('Account name is required.');
