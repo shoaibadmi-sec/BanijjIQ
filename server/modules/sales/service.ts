@@ -349,14 +349,63 @@ async function restoreMixedUnitLots(db:SherDatabase,invoiceId:string,needed:Map<
 
 export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start your cash session in POS before receiving customer payments.');
-  const customerId=cleanText(input.customerId),amount=Number(input.amount||0),method=cleanText(input.method)||'Cash';if(!customerId||!Number.isFinite(amount)||amount<=0)return error('Enter a valid payment amount.');
-  const c=await db.prepare(`SELECT * FROM customers WHERE customer_id=? AND is_deleted=0`).bind(customerId).first<any>();if(!c)return error('Customer not found.');
-  let bankId='';if(method==='Bank'||method==='Mobile Banking'){bankId=cleanText(input.bankAccountId);if(!bankId)return error('Select a bank/mobile banking account.');const b=await db.prepare(`SELECT 1 x FROM bank_accounts WHERE bank_account_id=? AND status='Active'`).bind(bankId).first();if(!b)return error('Bank/mobile banking account not found.');}
-  const newDue=Number(c.current_due||0)-amount,ledgerId=`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,note=[cleanText(input.reference)?`Ref: ${cleanText(input.reference)}`:'',cleanText(input.note)].filter(Boolean).join(' — '),stmts:SqlPreparedStatement[]=[];
-  stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));
-  stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Payment','',0,?,?,?)`).bind(ledgerId,todayDate(),customerId,c.customer_name,amount,newDue,note));
-  if(method==='Bank'||method==='Mobile Banking')stmts.push(db.prepare(`INSERT INTO bank_book (entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Customer Payment',?,?,0,?,0)`).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,todayDate(),ledgerId,`Payment from ${c.customer_name}`,amount));else stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Customer Payment',?,?,0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,todayDate(),ledgerId,`Payment from ${c.customer_name}`,amount));
-  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'RECEIVE_CUSTOMER_PAYMENT','CUSTOMER',?,?)`).bind(user.userId,customerId,`Amount ${amount}`));await db.batch(stmts);return json({ok:true,newDue});
+  const customerId=cleanText(input.customerId),amount=Number(input.amount||0);
+  const method=cleanText(input.method)||'Cash';
+  if(!customerId||!Number.isFinite(amount)||amount<=0||!Number.isSafeInteger(Math.round(amount*100))||
+     Math.abs(amount*100-Math.round(amount*100))>0.000001)
+    return error('Enter a valid payment in whole poisha.');
+  if(!['Cash','Bank','Mobile Banking'].includes(method))return error('Choose a supported payment method.');
+  const c=await db.prepare('SELECT * FROM customers WHERE customer_id=? AND is_deleted=0')
+    .bind(customerId).first<any>();
+  if(!c)return error('Customer not found.');
+  if(amount>Number(c.current_due||0)+0.000001)
+    return error('Payment exceeds the outstanding customer due.',409);
+  let bankId='',bankName='';
+  if(method==='Bank'||method==='Mobile Banking'){
+    bankId=cleanText(input.bankAccountId);
+    if(!bankId)return error('Select a bank/mobile banking account.');
+    const b=await db.prepare(
+      "SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active'"
+    ).bind(bankId).first<any>();
+    if(!b||String(b.account_type||'Bank')!==method)
+      return error('Matching active bank/mobile banking account not found.',409);
+    bankName=String(b.account_name||'');
+  }
+  const ledgerId=`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`;
+  const note=[cleanText(input.reference)?`Ref: ${cleanText(input.reference)}`:'',cleanText(input.note)]
+    .filter(Boolean).join(' — ');
+  const stmts:SqlPreparedStatement[]=[
+    // The DB sees the CURRENT due during the atomic batch: if another concurrent
+    // payment already spent it, NULL violates the NOT NULL constraint and rolls back.
+    db.prepare("UPDATE customers SET current_due=CASE WHEN current_due>=? THEN ROUND(current_due-?,2) ELSE NULL END,updated_at=datetime('now') WHERE customer_id=? AND is_deleted=0")
+      .bind(amount,amount,customerId),
+    db.prepare("INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Payment','',0,?,(SELECT current_due FROM customers WHERE customer_id=?),?)")
+      .bind(ledgerId,todayDate(),customerId,c.customer_name,amount,customerId,note)
+  ];
+  if(bankId){
+    stmts.push(db.prepare(
+      "UPDATE bank_accounts SET current_balance=CASE WHEN status='Active' THEN current_balance+? ELSE NULL END WHERE bank_account_id=?"
+    ).bind(amount,bankId));
+    stmts.push(db.prepare(
+      "INSERT INTO bank_book (entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) "+
+      "VALUES (?,?,?,?, 'Customer Payment',?,?,0,?,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,0)"
+    ).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,bankName,todayDate(),ledgerId,
+      `Payment from ${c.customer_name}`,amount,bankId,user.fullName));
+  }else stmts.push(db.prepare(
+    "INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Customer Payment',?,?,0,?,'Cash',0)"
+  ).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,todayDate(),ledgerId,
+    `Payment from ${c.customer_name}`,amount));
+  stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'RECEIVE_CUSTOMER_PAYMENT','CUSTOMER',?,?)")
+    .bind(user.userId,customerId,`Amount ${amount}`));
+  try{await db.batch(stmts);}
+  catch(e){
+    if(/NOT NULL constraint failed|CONSTRAINT/i.test(String(e)))
+      return error('Customer due or payment account changed. Reload before retrying.',409);
+    throw e;
+  }
+  const committed=await db.prepare('SELECT current_due due FROM customers WHERE customer_id=?')
+    .bind(customerId).first<{due:number}>();
+  return json({ok:true,newDue:Number(committed?.due??0)});
 }
 
 /**
