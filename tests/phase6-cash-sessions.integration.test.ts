@@ -121,7 +121,7 @@ test('6C concurrent close and failed audit write are atomic; never leave a partl
   f.db.native.exec("CREATE TRIGGER phase6c_fail_audit BEFORE INSERT ON audit_logs WHEN NEW.action='CLOSE_CASH_SESSION' BEGIN SELECT RAISE(ABORT,'audit failed'); END;");
   const failed=await payload(await closeCashSessionRoute(f.db,{countedCash:120,clientRequestId:'P6C-CLOSE-00007'},cashier));
   assert.notEqual(failed.status,200);
-  assert.equal(f.sessions().at(-1)?.status,'Open');
+  assert.equal(f.sessions().filter(x=>x.status==='Open').length,1,'failed audit must leave the second session open');
   assert.equal(f.audit().length,1);
  }finally{f.db.close();}
 });
