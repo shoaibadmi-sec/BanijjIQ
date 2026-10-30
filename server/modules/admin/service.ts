@@ -24,9 +24,9 @@ function readEmployeeMetadata(input:any, previous:EmployeeMetadata={email:null,j
   if(rawDate!==null && typeof rawDate!=='string')return error('Enter a valid joining date.');
   const email=rawEmail===null?null:rawEmail.trim().toLowerCase()||null;
   const joinedDate=rawDate===null?null:rawDate.trim()||null;
-  if(email && (email.length>254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)))
+  if(email && (email.length>254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))
     return error('Enter a valid employee email.');
-  if(joinedDate && (!/^\\d{4}-\\d{2}-\\d{2}$/.test(joinedDate) ||
+  if(joinedDate && (!/^\d{4}-\d{2}-\d{2}$/.test(joinedDate) ||
       Number.isNaN(Date.parse(joinedDate)) || new Date(joinedDate).toISOString().slice(0,10)!==joinedDate))
     return error('Enter a valid joining date.');
   return {email,joinedDate};
