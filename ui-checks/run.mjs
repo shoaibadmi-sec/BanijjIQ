@@ -626,6 +626,76 @@ try{
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
     results.apiCalls.push(...api);await ctx.close();
   });
+  await withCheck('G2-G split payment POS stays compact, source-exact and single-post across sizes',async()=>{
+    for(const width of [390,768,1440]){
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const api=[];await startMocking(ctx,api,true);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+      try{
+        await page.goto(base+'/#/app/pos');
+        await page.locator('[data-live-pos]').waitFor();
+        await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+        const name=page.getByRole('combobox',{name:'Customer name'});
+        await name.fill('Credit UI Buyer');await name.press('Tab');
+        await page.locator('[data-pos-store-credit-balance]').waitFor();
+        await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+        const rows=page.locator('[data-split-tender-row]');
+        assert.equal(await rows.count(),2,'Default Cash + Store Credit, without redesigning the checkout');
+        await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('50');
+        await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('71');
+        assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isDisabled(),true,
+          'Overpaid split may not post');
+        await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('70');
+        assert.match(await page.locator('[data-split-payment-total]').innerText(),/120/);
+        assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isEnabled(),true);
+        await screenshot(page,'phase3g2-split-pos-'+width);
+        await page.getByRole('button',{name:'Review and post real sale'}).click();
+        await page.locator('[data-split-review]').waitFor();
+        await page.getByRole('button',{name:'Confirm and post'}).click();
+        const posted=api.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales');
+        assert.equal(posted.length,1);
+        assert.deepEqual(posted[0].payload.tenders,[
+          {method:'Cash',amountCents:5000},
+          {method:'Store Credit',amountCents:7000}
+        ]);
+        assert.equal(posted[0].payload.customerId,'CUS-CREDIT-E2E');
+        assert.equal(posted[0].payload.paymentType,'Cash');
+        assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
+        results.apiCalls.push(...api);
+      }finally{await ctx.close();}
+    }
+  });
+  await withCheck('G2-G split payment rejects missing bank account and permits row removal',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    try{
+      await page.goto(base+'/#/app/pos');
+      await page.locator('[data-live-pos]').waitFor();
+      await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+      await page.getByRole('combobox',{name:'Customer name'}).fill('Credit UI Buyer');
+      await page.getByRole('combobox',{name:'Customer name'}).press('Tab');
+      await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('40');
+      await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('60');
+      await page.getByRole('button',{name:'Add payment · আরও মাধ্যম'}).click();
+      assert.equal(await page.locator('[data-split-tender-row]').count(),3);
+      await page.getByRole('combobox',{name:'Split method 3'}).selectOption('Bank');
+      await page.getByRole('spinbutton',{name:'Split amount 3'}).fill('20');
+      assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isDisabled(),true);
+      await page.getByRole('button',{name:'Remove split payment 3'}).click();
+      assert.equal(await page.locator('[data-split-tender-row]').count(),2);
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('60');
+      await page.getByRole('button',{name:'Review and post real sale'}).click();
+      await page.locator('[data-split-review]').waitFor();
+      assert.match(await page.locator('[data-split-review]').innerText(),/Store Credit/);
+      assert.equal(api.filter(x=>x.path==='/api/pos/sales').length,0);
+      await page.getByRole('button',{name:'Cancel'}).click();
+      results.apiCalls.push(...api);
+    }finally{await ctx.close();}
+  });
   await withCheck('G2-D Store Credit return shows liability history and no cash payout',async()=>{
     const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
     const api=[];await startMocking(ctx,api,true);
