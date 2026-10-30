@@ -55,6 +55,7 @@ if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, p
 }
 app = app.replace(importAnchor, [
   "const LiveBusinessSettingsPage = lazy(() => import('./integration/LiveBusinessSettingsPage').then(module => ({ default: module.LiveBusinessSettingsPage })));",
+  "const LiveTeamSettingsPage = lazy(() => import('./integration/LiveTeamSettingsPage').then(module => ({ default: module.LiveTeamSettingsPage })));",
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
@@ -65,7 +66,7 @@ app = app.replace(importAnchor, [
 ].join('\n'));
 // Keep the pinned Settings design and submodule untouched; replace only live Business route.
 app = app.replace(settingsRouteAnchor,
-  ['<Route path="settings/business" element={<LiveBusinessSettingsPage />} />', settingsRouteAnchor].join('\n'));
+  ['<Route path="settings/business" element={<LiveBusinessSettingsPage />} />', '<Route path="settings/team" element={<LiveTeamSettingsPage />} />', settingsRouteAnchor].join('\n'));
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
