@@ -8,7 +8,7 @@ import { businessToday } from '../utils/dateRange';
 import { useUiCopy } from '../i18n/useUiCopy';
 import { canUseModule, useBackendSession } from './BackendGate';
 import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary,
-  type LiveReportBackendKey, type LiveReportEntry, type LiveReportPageResponse } from './banijjApi';
+  type LiveReportBackendKey, type LiveReportEntry, type LiveReportPageResponse, type LiveReportMetric } from './banijjApi';
 
 const mapToBackend: Record<string,LiveReportBackendKey> = {
   'sales-register':'sales',purchases:'purchase',stock:'stock',receivables:'receivables',
@@ -42,6 +42,7 @@ export function LiveReportsPage(){
   const [catalog,setCatalog]=useState<LiveReportEntry[]>([]);
   const [rows,setRows]=useState<LiveReportPageResponse|null>(null);
   const [summaryStatus,setSummaryStatus]=useState('Verified dashboard totals are not yet available.');
+  const [summaryMetrics,setSummaryMetrics]=useState<LiveReportMetric[]>([]);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const [reload,setReload]=useState(0);
@@ -72,7 +73,7 @@ export function LiveReportsPage(){
     if(tab==='overview'){
       setLoading(true);
       getLiveReportSummary(from,to)
-        .then(value=>{if(alive)setSummaryStatus(value.coverage.reason);})
+        .then(value=>{if(alive){setSummaryStatus(value.coverage.reason);setSummaryMetrics(value.metrics);}})
         .catch(e=>{if(alive)setError(e instanceof Error?e.message:'Unable to load dashboard.');})
         .finally(()=>{if(alive)setLoading(false);});
     }else if(key){
@@ -123,12 +124,22 @@ export function LiveReportsPage(){
 
     {tab==='overview'?<section className="space-y-3" role="tabpanel" aria-label={text('Dashboard','ড্যাশবোর্ড')}>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {['Recorded sales','Gross profit','Expenses','Stock value'].map((label,i)=>
-          <div key={label} className="rounded-xl border border-border bg-card p-4">
-            <p className="text-xs text-ink-500">{text(label,['বিক্রি','মোট লাভ','খরচ','স্টক মূল্য'][i])}</p>
-            <p className="mt-2 text-xl font-semibold text-ink">—</p>
-            <p className="mt-1 text-xs text-warning">{text('Awaiting verified data','যাচাইকৃত তথ্য অপেক্ষমাণ')}</p>
-          </div>)}
+        {([
+          {key:'netSales',en:'Net sales',bn:'নিট বিক্রি'},
+          {key:'grossProfit',en:'Gross profit',bn:'মোট লাভ'},
+          {key:'operatingExpenses',en:'Expenses',bn:'খরচ'},
+          {key:'netProfit',en:'Net profit',bn:'নিট লাভ'}
+        ] as const).map(item=>{
+          const metric=summaryMetrics.find(m=>m.key===item.key);
+          const confirmed=metric?.status==='ready'&&metric.valueMinor!==null;
+          return <div key={item.key} data-live-metric={item.key} className="rounded-xl border border-border bg-card p-4">
+            <p className="text-xs text-ink-500">{text(item.en,item.bn)}</p>
+            <p className="mt-2 text-xl font-semibold text-ink">{confirmed?money(metric.valueMinor):'—'}</p>
+            <p className="mt-1 text-xs text-warning">{confirmed
+              ?text('Verified from recorded sources','মূল রেকর্ড থেকে যাচাইকৃত')
+              :text('Awaiting reconciled data','যাচাইকৃত হিসাব অপেক্ষমাণ')}</p>
+          </div>;
+        })}
       </div>
       <div className="rounded-xl border border-border bg-card p-5">
         <h2 className="text-sm font-semibold text-ink">{text('Dashboard reconciliation','ড্যাশবোর্ড হিসাব যাচাই')}</h2>
