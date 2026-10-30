@@ -96,7 +96,7 @@ async function sale(page,key,amount,phone){
 async function add(page,name){
  await page.locator('[data-live-pos]').waitFor({timeout:18000});
  await page.locator('[data-live-pos] button').filter({hasText:name}).first().click();
- await page.getByRole('spinbutton',{name:'Quantity for '+name}).waitFor();
+ await page.getByRole('textbox',{name:'Quantity for '+name}).waitFor();
 }
 
 async function refund(page,key,name,amount,serial){
@@ -173,7 +173,7 @@ try{
   const {page,ctx}=await open(1440,'/#/app/pos');
   try{
    await add(page,'P13 A Serial');
-   await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+   await page.getByRole('button',{name:/Serials?\s+0\/1/i}).click();
    await page.getByRole('button',{name:/P13-IMEI-A/}).click();
    await page.getByRole('button',{name:'Use serials'}).click();
    await inspect(page,'serial-pos-1440','[data-live-pos]');
@@ -189,8 +189,8 @@ try{
   const {page,ctx}=await open(390,'/#/app/pos');
   try{
    await add(page,'P13 C Negative');
-   await page.getByRole('spinbutton',{name:'Quantity for P13 C Negative'}).fill('3');
-   await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+   await page.getByRole('textbox',{name:'Quantity for P13 C Negative'}).fill('3');
+   await page.getByRole('button',{name:/short.*choose source/i}).click();
    await page.getByRole('radio',{name:/Negative Sale/}).click();
    await page.getByRole('button',{name:'Allow negative sale'}).click();
    await inspect(page,'negative-pos-390','[data-live-pos]');
@@ -201,8 +201,8 @@ try{
   const {page,ctx}=await open(1024,'/#/app/pos');
   try{
    await add(page,'P13 D Vendor');
-   await page.getByRole('spinbutton',{name:'Quantity for P13 D Vendor'}).fill('3');
-   await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+   await page.getByRole('textbox',{name:'Quantity for P13 D Vendor'}).fill('3');
+   await page.getByRole('button',{name:/short.*choose source/i}).click();
    await page.getByRole('radio',{name:/Vendor/}).click();
    await page.getByRole('textbox',{name:'New vendor name'}).fill('P13 Test Vendor');
    await page.getByRole('textbox',{name:'New vendor phone'}).fill('01000001310');
