@@ -64,6 +64,8 @@ export async function runPaidRefundChecks({browser,base,withCheck,results,startM
       purchaseDate:'2026-10-30',status:'Completed',grandTotal:100,paidAmount:partial?40:100,
       dueAmount:partial?60:0,discount:0,returnedAmount:0,paymentMethod:'Bank',bankAccountId:'BANK-ORIGINAL',
       items:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',quantity:2,unitPrice:50}]});
+   await ctx.route('**/api/purchases',route=>route.fulfill({status:200,contentType:'application/json',
+    body:JSON.stringify({ok:true,purchases:[purchase()]})}));
    await ctx.route('**/api/purchases/PUR-BANK-UI',route=>route.fulfill({status:200,contentType:'application/json',
     body:JSON.stringify({ok:true,purchase:purchase()})}));
    await ctx.route('**/api/purchases/PUR-BANK-UI/return-data',route=>route.fulfill({status:200,contentType:'application/json',
