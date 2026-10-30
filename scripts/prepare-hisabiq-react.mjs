@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
+import {patchOriginalPosApiCatalog} from './preview/patch-original-pos-api-catalog.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 
 const root = resolve(process.cwd());
@@ -33,6 +34,8 @@ const sourceProductsPath=join(sourceWeb,'src/pages/Products.tsx');
 const generatedProductsPath=join(web,'src/pages/Products.tsx');
 // Pinned source never changes; the build-copy transform fails closed on unknown JSX.
 writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
+const sourcePosPath=join(sourceWeb,'src/pages/Pos.tsx');
+writeFileSync(join(web,'src/pages/Pos.tsx'),patchOriginalPosApiCatalog(readFileSync(sourcePosPath,'utf8')));
 
 // Phase 5: simplify generated Reports navigation without touching the pinned React source.
 const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
@@ -53,6 +56,7 @@ const purchaseEditorAnchor = '<Route path="purchases/new" element={<PurchaseEdit
 if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, purchaseEditorAnchor, settingsRouteAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
+app = "import {OriginalPosCatalogProvider} from './integration/OriginalPosCatalogProvider';\n"+app;
 app = app.replace(importAnchor, [
   "const LiveBusinessSettingsPage = lazy(() => import('./integration/LiveBusinessSettingsPage').then(module => ({ default: module.LiveBusinessSettingsPage })));",
   "const LiveTeamSettingsPage = lazy(() => import('./integration/LiveTeamSettingsPage').then(module => ({ default: module.LiveTeamSettingsPage })));",
@@ -68,7 +72,7 @@ app = app.replace(importAnchor, [
 app = app.replace(settingsRouteAnchor,
   ['<Route path="settings/business" element={<LiveBusinessSettingsPage />} />', '<Route path="settings/team" element={<LiveTeamSettingsPage />} />', settingsRouteAnchor].join('\n'));
 app = app.replace(posAnchor,
-  '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
+  '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<OriginalPosCatalogProvider><Pos /></OriginalPosCatalogProvider>} />');
 app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
