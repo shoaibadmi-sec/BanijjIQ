@@ -16,6 +16,8 @@ test('dashboard numbers come from reporting evidence; unverified profits and fai
  ],[{productId:'p1',currentStock:2,minimumStock:5,status:'Active'},{productId:'p2',currentStock:9,minimumStock:5,status:'Active'}]);
  assert.equal(data['today-sales'].amount,2184);
  assert.equal(data['gross-profit'].amount,null);
+ assert.equal(loadDashboardMetrics([metric('grossProfit','ready',-40500)],null)['gross-profit'].amount,-405,
+   'verified gross losses are real negative amounts, not unavailable data');
  assert.equal(data.receivable.amount,25550);
  assert.equal(data.payable.amount,38400);
  assert.equal(data.cash.amount,5000);
