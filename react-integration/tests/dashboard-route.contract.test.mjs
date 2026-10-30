@@ -16,6 +16,20 @@ test('original Dashboard JSX and widget layout remain intact while all five demo
   assert.match(patched,/CustomizeDialog/);
   assert.match(patched,/data-live-dashboard/);
 });
+test('generated Dashboard header uses authenticated user and source business settings, never demo actor or business',()=>{
+  const original=read('apps/hisabiq-web/src/pages/Dashboard.tsx');
+  const patched=patchLiveDashboard(original);
+  assert.match(patched,/useLiveDashboardIdentity/);
+  assert.doesNotMatch(patched,/useTenantSettings/);
+  assert.doesNotMatch(patched,/state\.sections\.team\.employees/);
+  assert.doesNotMatch(patched,/state\.sections\.business\.name/);
+  const wrapper=read('react-integration/overlay/src/integration/LiveDashboardPage.tsx');
+  assert.match(wrapper,/canUseModule\(user,'settings','view'\)/);
+  assert.match(wrapper,/\/api\/settings\/bootstrap/);
+  assert.match(wrapper,/user\?\.fullName/);
+  assert.match(wrapper,/settings.status==='fulfilled'/);
+  assert.match(wrapper,/settings.value\?\.settings/);
+});
 test('generated app uses live Dashboard route and preserves original design preview separately',()=>{
   const prepare=read('scripts/prepare-hisabiq-react.mjs');
   assert.match(prepare,/patchLiveDashboard\(/);
