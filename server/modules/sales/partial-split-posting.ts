@@ -57,8 +57,11 @@ export async function postCashBankPartialSplitReturn(
     // are NOT compared with current balances (later transactions are valid).
     const cashSource=rows.filter(r=>r.source_key==='Cash');
     const bankSource=rows.filter(r=>String(r.source_key).startsWith('Bank:'));
-    if(rows.length!==2||cashSource.length!==1||bankSource.length!==1||
-      cashSource[0].amount_cents<=0||bankSource[0].amount_cents<=0)
+    // Integer-poisha rounding may correctly allocate zero to one original
+    // source. Record only nonzero refunds; never invent a zero-money book.
+    if(rows.length<1||rows.length>2||cashSource.length>1||bankSource.length>1||
+      rows.some(r=>r.source_key!=='Cash'&&!String(r.source_key).startsWith('Bank:'))||
+      rows.some(r=>!Number.isSafeInteger(Number(r.amount_cents))||Number(r.amount_cents)<=0))
       return fail('Idempotency replay has unverified original-source allocations.');
     const [cashBook,bankBook,movements,fifo,lots,credit,receivables]=await Promise.all([
       db.prepare('SELECT type,payment_method,debit,credit,is_deleted FROM cash_book WHERE reference=?')
@@ -78,13 +81,15 @@ export async function postCashBankPartialSplitReturn(
     ]);
     const cash=cashBook.results||[],bank=bankBook.results||[];
     const stock=movements.results||[],soldLots=fifo.results||[],restoredLots=lots.results||[];
-    if(cash.length!==1||cash[0].type!=='Sales Return'||
-      cash[0].payment_method!=='Cash'||Number(cash[0].is_deleted)!==0||
-      cents(cash[0].debit)!==Number(cashSource[0].amount_cents)||cents(cash[0].credit)!==0||
-      bank.length!==1||bank[0].type!=='Sales Return'||
-      bank[0].bank_account_id!==String(bankSource[0].source_key).slice(5)||
-      bank[0].status!=='Active'||Number(bank[0].is_deleted)!==0||
-      cents(bank[0].debit)!==Number(bankSource[0].amount_cents)||cents(bank[0].credit)!==0||
+    if(cash.length!==cashSource.length||
+      (cashSource.length===1&&(cash[0].type!=='Sales Return'||
+        cash[0].payment_method!=='Cash'||Number(cash[0].is_deleted)!==0||
+        cents(cash[0].debit)!==Number(cashSource[0].amount_cents)||cents(cash[0].credit)!==0))||
+      bank.length!==bankSource.length||
+      (bankSource.length===1&&(bank[0].type!=='Sales Return'||
+        bank[0].bank_account_id!==String(bankSource[0].source_key).slice(5)||
+        bank[0].status!=='Active'||Number(bank[0].is_deleted)!==0||
+        cents(bank[0].debit)!==Number(bankSource[0].amount_cents)||cents(bank[0].credit)!==0))||
       stock.length!==1||stock[0].product_id!==input.productId||
       stock[0].movement_type!=='Sales Return'||
       Number(stock[0].quantity_in)!==input.quantity||Number(stock[0].quantity_out)!==0||
