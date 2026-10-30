@@ -12,13 +12,13 @@ function fixture() {
 }
 function seed(db: SqliteDatabase) {
   db.native.prepare("INSERT INTO products(product_id,product_name,category,unit,current_stock) VALUES ('P7A','Cable','Electrical','Pcs',8)").run();
-  db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost) VALUES ('L-OPEN','P7A','OPENING','',10,4,25),('L-BUY','P7A','PURCHASE','PO-1',5,4,35)").run();
+  db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost) VALUES ('L-OPEN','P7A','OPENING','',5,0,25),('L-BUY','P7A','PURCHASE','PO-1',10,8,35)").run();
   const insert = db.native.prepare("INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,lot_id,note,created_at) VALUES (?,'P7A',?,?,?,?,?,?,'2026-10-30 10:00:00')");
-  insert.run('M-OPEN','OPENING',10,0,10,'L-OPEN','Opening stock');
-  insert.run('M-BUY','Purchase',5,0,15,'L-BUY','PO-1');
+  insert.run('M-OPEN','OPENING',5,0,5,'L-OPEN','Opening stock');
+  insert.run('M-BUY','Purchase',10,0,15,'L-BUY','PO-1');
   // POS posts one row per lot, each with the final invoice-level master balance.
-  insert.run('M-SALE-1','Sale',0,3,8,'L-OPEN','INV-1');
-  insert.run('M-SALE-2','Sale',0,4,8,'L-BUY','INV-1');
+  insert.run('M-SALE-1','Sale',0,5,8,'L-OPEN','INV-1');
+  insert.run('M-SALE-2','Sale',0,2,8,'L-BUY','INV-1');
 }
 test('business: multi-lot FIFO sale uses total net quantity, not per-lot running balance',async()=>{
   const db=fixture();
@@ -34,7 +34,7 @@ test('business: multi-lot FIFO sale uses total net quantity, not per-lot running
     assert.equal(result.totalRows,4);
     assert.deepEqual(result.items.map(x=>x.movementId),['M-SALE-2','M-SALE-1','M-BUY','M-OPEN']);
     assert.deepEqual(result.items.map(x=>x.lotId),['L-BUY','L-OPEN','L-BUY','L-OPEN']);
-    assert.equal(result.items[0].quantityOut,4);
+    assert.equal(result.items[0].quantityOut,2);
     assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before);
   } finally {db.close();}
 });
@@ -67,7 +67,7 @@ test('business: missing evidence and invalid source quantities must fail closed'
     assert.ok(empty.integrity.issues.includes('MISSING_MOVEMENTS'));
     assert.equal(await readStockLedger(db,'MISSING',1,50),null);
     seed(db);
-    db.native.prepare("UPDATE stock_lots SET remaining_quantity=-1 WHERE lot_id='L-BUY'").run();
+    db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost) VALUES ('L-NEG','P7A','OVERSOLD','INV-OVERSOLD',0,-1,25)").run();
     db.native.prepare("UPDATE stock_movements SET quantity_in=-2 WHERE movement_id='M-BUY'").run();
     const bad=await readStockLedger(db,'P7A',1,50);
     assert.ok(bad);
