@@ -168,3 +168,57 @@ test('6D bank posting uses the original account, rejects inactive account and ro
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,60);
  }finally{f.db.close();}
 });
+
+test('6D deleting bank financing reverses the original bank once and rolls back on audit failure',async()=>{
+ const f=fixture();
+ try{
+  const {deleteFinanceTransactionRoute}=await import('../server/modules/finance/service.ts');
+  f.db.native.prepare("UPDATE bank_accounts SET current_balance=0 WHERE bank_account_id='FIN-BANK'").run();
+  const posted=await addFinanceTransactionRoute(f.db,{
+    personId:'LENDER-1',transactionType:'Loan Received',amount:60,paymentMethod:'Bank',bankAccountId:'FIN-BANK',
+    clientRequestId:'P6D-LOAN-DELETE-01'
+  },f.user);
+  assert.equal(posted.status,200,await posted.text());
+  const {id}=await posted.json() as {id:string};
+  f.db.native.exec("CREATE TRIGGER fail_finance_reverse_audit BEFORE INSERT ON audit_logs WHEN NEW.action='FINANCE_REVERSE' BEGIN SELECT RAISE(ABORT,'audit broken'); END;");
+  let failed:Response|undefined;
+  try{failed=await deleteFinanceTransactionRoute(f.db,id,'Finance entry cancelled after review',f.user);}catch{}
+  assert.notEqual(failed?.status,200);
+  assert.equal((f.db.native.prepare('SELECT is_deleted n FROM finance_transactions WHERE finance_id=?').get(id) as any).n,0);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM bank_book WHERE reference=? AND is_deleted=0').get(id) as any).n,1);
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,60);
+  f.db.native.exec('DROP TRIGGER fail_finance_reverse_audit');
+  const deleted=await deleteFinanceTransactionRoute(f.db,id,'Finance entry cancelled after review',f.user);
+  assert.equal(deleted.status,200,await deleted.text());
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,0);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM bank_book WHERE reference=? AND is_deleted=0').get(id) as any).n,0);
+  assert.equal((await read(f.db,'LENDER-1')).balance,0);
+  assert.notEqual((await deleteFinanceTransactionRoute(f.db,id,'Duplicate delete',f.user)).status,200);
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,0);
+ }finally{f.db.close();}
+});
+test('6D finance edit moves the money leg between original bank and cash atomically',async()=>{
+ const f=fixture();
+ try{
+  const {updateFinanceTransactionRoute}=await import('../server/modules/finance/service.ts');
+  f.db.native.prepare("UPDATE bank_accounts SET current_balance=0 WHERE bank_account_id='FIN-BANK'").run();
+  const first=await addFinanceTransactionRoute(f.db,{personId:'LENDER-1',transactionType:'Loan Received',
+    amount:30,paymentMethod:'Bank',bankAccountId:'FIN-BANK',clientRequestId:'P6D-LOAN-EDIT-001'},f.user);
+  assert.equal(first.status,200,await first.text());
+  const {id}=await first.json() as {id:string};
+  f.db.native.exec("CREATE TRIGGER fail_finance_edited_cash BEFORE INSERT ON cash_book WHEN NEW.type='Loan Repayment' BEGIN SELECT RAISE(ABORT,'cash write failed'); END;");
+  let failed:Response|undefined;
+  const corrected={personId:'LENDER-1',transactionType:'Loan Repayment',amount:10,paymentMethod:'Cash',notes:'Original financing correction'};
+  try{failed=await updateFinanceTransactionRoute(f.db,id,corrected,f.user);}catch{}
+  assert.notEqual(failed?.status,200);
+  assert.equal((f.db.native.prepare('SELECT transaction_type t FROM finance_transactions WHERE finance_id=?').get(id) as any).t,'Loan Received');
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,30);
+  f.db.native.exec('DROP TRIGGER fail_finance_edited_cash');
+  const updated=await updateFinanceTransactionRoute(f.db,id,corrected,f.user);
+  assert.equal(updated.status,200,await updated.text());
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,0);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM bank_book WHERE reference=? AND is_deleted=0').get(id) as any).n,0);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM cash_book WHERE reference=? AND is_deleted=0').get(id) as any).n,1);
+  assert.equal((await read(f.db,'LENDER-1')).balance,-10);
+ }finally{f.db.close();}
+});
