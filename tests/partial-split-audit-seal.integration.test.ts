@@ -20,6 +20,8 @@ function fixture(){
   q.prepare("INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('AUD-R','2026-10-30','AUD-S','AUD-C','Audit Buyer','01000007781','Split Partial',10,'Partial return')").run();
   q.prepare("INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('AUD-R','AUD-S','AUD-P','Audit Wire',1,10,10)").run();
   q.prepare("INSERT INTO sales_return_item_lots(return_id,invoice_id,product_id,lot_id,quantity) VALUES ('AUD-R','AUD-S','AUD-P','AUD-L',1)").run();
+  // Reuse existing immutable G2-H pre-restore snapshot, not another table.
+  q.prepare("INSERT INTO split_refund_lot_restorations(return_id,invoice_id,lot_id,product_id,quantity,prior_remaining) VALUES ('AUD-R','AUD-S','AUD-L','AUD-P',1,5)").run();
   q.prepare("INSERT INTO split_partial_refund_allocations(allocation_id,return_id,invoice_id,method,amount_cents,source_key) VALUES ('AUD-A','AUD-R','AUD-S','Cash',1000,'Cash')").run();
   q.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('AUD-CB','2026-10-30','Sales Return','AUD-R','Source refund',10,0,'Cash',0)").run();
   q.prepare("INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES ('AUD-SM','AUD-P','Sales Return',1,0,6,'AUD-R',NULL)").run();
