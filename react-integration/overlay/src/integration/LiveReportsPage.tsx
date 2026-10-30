@@ -1,0 +1,198 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { LayoutDashboard, LibraryBig, RefreshCw, Search } from 'lucide-react';
+import { reportCatalog, reportGroups } from '../reports/catalog';
+import { reportKeyForScreen } from '../reports/screens';
+import type { ReportScreen } from '../reports/types';
+import { businessToday } from '../utils/dateRange';
+import { useUiCopy } from '../i18n/useUiCopy';
+import { canUseModule, useBackendSession } from './BackendGate';
+import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary,
+  type LiveReportBackendKey, type LiveReportEntry, type LiveReportPageResponse } from './banijjApi';
+
+const mapToBackend: Record<string,LiveReportBackendKey> = {
+  'sales-register':'sales',purchases:'purchase',stock:'stock',receivables:'receivables',
+  payables:'payables','product-profit':'profit','profit-loss':'profit',
+  'cash-book':'cash',expenses:'expenses','business-audit':'audit'
+};
+const money=(minor:number|null)=>minor===null?'—':'৳'+(minor/100).toLocaleString('en-BD',{minimumFractionDigits:0,maximumFractionDigits:2});
+const choices=[...reportCatalog.filter(r=>r.id!=='overview').map(r=>({id:r.id,en:r.en,bn:r.bn,group:r.group})),
+  {id:'business-audit',en:'Business Audit (A4)',bn:'ব্যবসা পর্যালোচনা',group:'controls'}];
+
+export function LiveReportsPage(){
+  const user=useBackendSession();
+  const {text}=useUiCopy();
+  const permitted=canUseModule(user, 'reports', 'view');
+  const [params,setParams]=useSearchParams();
+  const screen=params.get('screen');
+  const tab=screen===null||screen==='overview'?'overview':'library';
+  const legacyReport=screen&&screen!=='overview'&&screen!=='library'
+    ? reportKeyForScreen(screen as ReportScreen):null;
+  const selectedRequested=params.get('report')||legacyReport||'sales-register';
+  const selected=choices.some(x=>x.id===selectedRequested)?selectedRequested:'sales-register';
+  const report=choices.find(x=>x.id===selected)!;
+  const today=businessToday();
+  const from=params.get('from')||today.slice(0,8)+'01';
+  const to=params.get('to')||today;
+  const page=Math.max(1,Math.floor(Number(params.get('page'))||1));
+  const pageSize=params.get('pageSize')==='100'?100:50;
+  const [librarySearch,setLibrarySearch]=useState('');
+  const [group,setGroup]=useState('all');
+  const [rowSearch,setRowSearch]=useState('');
+  const [catalog,setCatalog]=useState<LiveReportEntry[]>([]);
+  const [rows,setRows]=useState<LiveReportPageResponse|null>(null);
+  const [summaryStatus,setSummaryStatus]=useState('Verified dashboard totals are not yet available.');
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState('');
+  const [reload,setReload]=useState(0);
+  const key=mapToBackend[selected];
+
+  const update=(changes:Record<string,string|null>)=>{
+    const next=new URLSearchParams(params);
+    for(const [name,value] of Object.entries(changes))value===null?next.delete(name):next.set(name,value);
+    setParams(next);
+  };
+  const switchTab=(next:'overview'|'library')=>update({screen:next,page:null});
+  const openReport=(id:string)=>{
+    update({screen:'library',report:id,page:null});
+  };
+
+  useEffect(()=>{
+    if(!permitted)return;
+    let alive=true;
+    getLiveReportCatalog().then(value=>{if(alive)setCatalog(value.reports);})
+      .catch(e=>{if(alive)setError(e instanceof Error?e.message:'Unable to load report catalog.');});
+    return ()=>{alive=false;};
+  },[permitted]);
+
+  useEffect(()=>{
+    if(!permitted)return;
+    let alive=true;
+    setRows(null);setError('');
+    if(tab==='overview'){
+      setLoading(true);
+      getLiveReportSummary(from,to)
+        .then(value=>{if(alive)setSummaryStatus(value.coverage.reason);})
+        .catch(e=>{if(alive)setError(e instanceof Error?e.message:'Unable to load dashboard.');})
+        .finally(()=>{if(alive)setLoading(false);});
+    }else if(key){
+      setLoading(true);
+      getLiveReportRows({report:key,from,to,page,pageSize,search:rowSearch})
+        .then(value=>{if(alive)setRows(value);})
+        .catch(e=>{if(alive)setError(e instanceof Error?e.message:'Unable to load report.');})
+        .finally(()=>{if(alive)setLoading(false);});
+    }else setLoading(false);
+    return ()=>{alive=false;};
+  },[permitted,tab,key,from,to,page,pageSize,rowSearch,reload]);
+
+  const visible=useMemo(()=>choices.filter(c=>(group==='all'||c.group===group)
+    &&(c.en+' '+c.bn).toLocaleLowerCase().includes(librarySearch.toLocaleLowerCase())),[group,librarySearch]);
+  const activeCatalog=catalog.find(c=>c.id===key);
+  const unsupported=!key;
+  const coverage=rows?.coverage;
+  if(!permitted)return <main className="mx-auto max-w-4xl p-6"><h1 className="text-lg font-semibold">
+    {text('Reports','রিপোর্ট')}</h1><p role="alert" className="mt-3 text-sm text-danger">
+    {text('You do not have permission to view reports.','আপনার রিপোর্ট দেখার অনুমতি নেই।')}</p></main>;
+
+  return <main className="mx-auto w-full max-w-[1440px] space-y-4 p-3 sm:p-4" data-live-reports="">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div><h1 className="text-xl font-semibold text-ink">{text('Reports','রিপোর্ট')}</h1>
+        <p className="mt-1 text-xs text-ink-500">{text('Live source records. Unverified totals are never shown as profit.','মূল রেকর্ড; যাচাই না হওয়া হিসাব লাভ হিসেবে দেখানো হয় না।')}</p>
+      </div>
+      <button type="button" onClick={()=>setReload(n=>n+1)} className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-xs font-medium text-ink hover:bg-ink-50">
+        <RefreshCw className="size-4" aria-hidden="true"/>{text('Refresh','হালনাগাদ')}</button>
+    </div>
+
+    <div className="flex w-full gap-1 border-b border-border" role="tablist" aria-label={text('Report destinations','রিপোর্টের বিভাগ')}>
+      {([{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড',icon:LayoutDashboard},
+         {id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি',icon:LibraryBig}] as const).map(item=>
+        <button type="button" role="tab" aria-selected={tab===item.id} key={item.id} onClick={()=>switchTab(item.id)}
+          className={'relative flex h-10 items-center gap-2 px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary '+(tab===item.id?'border-b-2 border-primary text-primary':'text-ink-500 hover:text-ink')}>
+          <item.icon className="size-4" aria-hidden="true"/>{text(item.en,item.bn)}
+        </button>)}
+    </div>
+    <section className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3" aria-label={text('Report period','রিপোর্টের সময়কাল')}>
+      <label className="flex items-center gap-2 text-xs text-ink-600">{text('From','শুরু')}
+        <input type="date" value={from} onChange={e=>update({from:e.target.value,page:null})} className="h-9 rounded-lg border border-border bg-card px-2 text-sm text-ink"/></label>
+      <label className="flex items-center gap-2 text-xs text-ink-600">{text('To','শেষ')}
+        <input type="date" value={to} onChange={e=>update({to:e.target.value,page:null})} className="h-9 rounded-lg border border-border bg-card px-2 text-sm text-ink"/></label>
+      <span className="text-xs text-ink-500">{text('Asia/Dhaka business dates','ঢাকা সময়ের হিসাব')}</span>
+    </section>
+    {error&&<p role="alert" className="rounded-lg border border-danger/20 bg-danger-bg p-3 text-sm text-danger">{error}</p>}
+    {loading&&<p role="status" className="text-sm text-ink-500">{text('Loading real records…','মূল তথ্য আসছে…')}</p>}
+
+    {tab==='overview'?<section className="space-y-3" role="tabpanel" aria-label={text('Dashboard','ড্যাশবোর্ড')}>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {['Recorded sales','Gross profit','Expenses','Stock value'].map((label,i)=>
+          <div key={label} className="rounded-xl border border-border bg-card p-4">
+            <p className="text-xs text-ink-500">{text(label,['বিক্রি','মোট লাভ','খরচ','স্টক মূল্য'][i])}</p>
+            <p className="mt-2 text-xl font-semibold text-ink">—</p>
+            <p className="mt-1 text-xs text-warning">{text('Awaiting verified data','যাচাইকৃত তথ্য অপেক্ষমাণ')}</p>
+          </div>)}
+      </div>
+      <div className="rounded-xl border border-border bg-card p-5">
+        <h2 className="text-sm font-semibold text-ink">{text('Dashboard reconciliation','ড্যাশবোর্ড হিসাব যাচাই')}</h2>
+        <p className="mt-2 text-sm text-ink-600">{summaryStatus}</p>
+        <button type="button" onClick={()=>switchTab('library')} className="mt-4 h-9 rounded-lg bg-primary px-4 text-sm font-medium text-white">
+          {text('Open Report Library','রিপোর্ট লাইব্রেরি খুলুন')}</button>
+      </div>
+    </section>:<section className="space-y-3" role="tabpanel" aria-label={text('Report Library','রিপোর্ট লাইব্রেরি')}>
+      <div className="flex flex-wrap gap-2">
+        <label className="relative min-w-48 flex-1">
+          <Search aria-hidden="true" className="absolute left-3 top-2.5 size-4 text-ink-400"/>
+          <input aria-label={text('Find a report','রিপোর্ট খুঁজুন')} placeholder={text('Find a report…','রিপোর্ট খুঁজুন…')}
+            value={librarySearch} onChange={e=>setLibrarySearch(e.target.value)}
+            className="h-9 w-full rounded-lg border border-border bg-card pl-9 pr-3 text-sm text-ink"/>
+        </label>
+        <select aria-label={text('Report group','রিপোর্টের বিভাগ')} value={group} onChange={e=>setGroup(e.target.value)}
+          className="h-9 rounded-lg border border-border bg-card px-2 text-sm">
+          <option value="all">{text('All report groups','সব বিভাগ')}</option>
+          {reportGroups.map(g=><option key={g.id} value={g.id}>{text(g.en,g.bn)}</option>)}
+        </select>
+      </div>
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[215px_minmax(0,1fr)]">
+        <nav aria-label={text('Report library','রিপোর্টের তালিকা')} className="max-h-[65vh] space-y-1 overflow-y-auto rounded-xl border border-border bg-card p-2">
+          {visible.map(item=><button type="button" key={item.id} onClick={()=>openReport(item.id)}
+            aria-current={selected===item.id?'page':undefined}
+            className={'flex h-9 w-full items-center rounded-lg px-2 text-left text-xs '+(selected===item.id?'bg-primary/10 font-semibold text-primary':'text-ink-600 hover:bg-ink-50')}>
+            <span className="truncate">{text(item.en,item.bn)}</span></button>)}
+          {!visible.length&&<p className="p-3 text-xs text-ink-500">{text('No matching reports','কোনো রিপোর্ট মেলেনি')}</p>}
+        </nav>
+        <div className="min-w-0 space-y-3">
+          <div className="rounded-xl border border-border bg-card p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div><h2 className="text-sm font-semibold text-ink">{text(report.en,report.bn)}</h2>
+                <p className="mt-1 text-xs text-ink-500">{coverage?.reason||activeCatalog?.reason||'Select a report to view verified source records.'}</p></div>
+              <div className="flex flex-wrap gap-2">
+                <input value={rowSearch} onChange={e=>{setRowSearch(e.target.value);update({page:null});}} aria-label={text('Search records','রেকর্ড খুঁজুন')}
+                  placeholder={text('Search records','রেকর্ড খুঁজুন')} className="h-9 w-36 rounded-lg border border-border bg-card px-2 text-xs"/>
+                <select value={pageSize} onChange={e=>update({pageSize:e.target.value,page:null})} aria-label={text('Rows per page','প্রতি পৃষ্ঠায় সারি')}
+                  className="h-9 rounded-lg border border-border bg-card px-2 text-xs"><option value="50">50</option><option value="100">100</option></select>
+              </div>
+            </div>
+            {unsupported&&<p className="mt-4 text-sm text-warning">{text('This report has not yet been reconciled with live D1. No preview figures are shown.','এই রিপোর্টের লাইভ হিসাব যাচাই হয়নি। ডেমো সংখ্যা দেখানো হচ্ছে না।')}</p>}
+          </div>
+          {rows&&<div className="overflow-x-auto rounded-xl border border-border bg-card">
+            <table className="w-full min-w-[520px] text-[13px]"><thead className="bg-ink-50/50 text-ink-600">
+              <tr><th scope="col" className="px-3 py-2 text-left">{text('Reference','নম্বর')}</th>
+                <th scope="col" className="px-3 py-2 text-left">{text('Date','তারিখ')}</th>
+                <th scope="col" className="px-3 py-2 text-left">{text('Party','পার্টি')}</th>
+                <th scope="col" className="px-3 py-2 text-right">{text('Recorded amount','লেখা টাকা')}</th></tr>
+            </thead><tbody>{rows.rows.map(item=><tr className="border-t border-border" key={item.sourceModule+':'+item.sourceId}>
+              <td className="px-3 py-2 font-medium text-primary">{item.sourceId}</td><td className="px-3 py-2">{item.date}</td>
+              <td className="px-3 py-2">{item.label}</td><td className="px-3 py-2 text-right">{money(item.amountMinor)}</td>
+            </tr>)}</tbody></table>
+            {!rows.rows.length&&<p className="p-5 text-sm text-ink-500">{text('No recorded rows for this selection.','এই নির্বাচনে কোনো রেকর্ড নেই।')}</p>}
+          </div>}
+          {rows&&<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-600">
+            <span>{text('Records','রেকর্ড')}: {rows.totalRows} · {text('Page','পৃষ্ঠা')}: {page}</span>
+            <div className="flex gap-2"><button type="button" disabled={page<=1} onClick={()=>update({page:String(page-1)})}
+              className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Previous','আগে')}</button>
+              <button type="button" disabled={page*pageSize>=rows.totalRows} onClick={()=>update({page:String(page+1)})}
+              className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Next','পরের')}</button></div>
+          </div>}
+        </div>
+      </div>
+    </section>}
+  </main>;
+}
