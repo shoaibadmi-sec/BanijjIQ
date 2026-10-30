@@ -73,5 +73,5 @@ export async function handleApiRequest(request: Request, db: SherDatabase): Prom
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return error('API route not found', 404);
   try { return await router(request, { DB: db }); }
-  catch (err) { return error(err instanceof Error ? err.message : 'Unexpected server error', 500); }
+  catch { return error('Unexpected server error', 500); }
 }
