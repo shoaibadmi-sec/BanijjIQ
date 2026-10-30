@@ -4,6 +4,7 @@ import type { PurchaseInput, PurchaseReturnInput } from './types.js';
 import type { PurchasePlanActionInput, PurchasePlanSaveInput, PurchasePlannerAnalysisInput } from './planner.types.js';
 import { searchPurchaseSuppliersRoute } from './supplier-search.js';
 import { readUnitProfile } from '../products/unitProfile.service.js';
+import { createSupplierSettlement, listSupplierSettlements, reverseSupplierSettlement, type SettleInput } from './supplierSettlement.service.js';
 import {
   completePurchaseReturnRoute, createPurchase, createSupplierRoute, deletePurchaseRoute,
   deleteSupplierPaymentRoute, deleteSupplierRoute, getPurchaseDetail, getPurchaseForReturn,
@@ -66,6 +67,18 @@ export async function handlePurchasesRoute(db: SherDatabase, request: Request, p
   const profileMatch=path.match(/^\/api\/purchases\/unit-profile\/([^/]+)$/);
   if(profileMatch&&request.method==='GET')
     return readUnitProfile(db,decodeURIComponent(profileMatch[1]));
+  if(path==='/api/purchases/supplier-settlements'&&request.method==='POST'){
+    const input=await readBody<SettleInput&{supplierId?:string}>(request);
+    return createSupplierSettlement(db,cleanText(input.supplierId),input,user,true);
+  }
+  const settlementSource=path.match(/^\/api\/purchases\/supplier-settlements\/supplier\/([^/]+)$/);
+  if(settlementSource&&request.method==='GET')
+    return listSupplierSettlements(db,decodeURIComponent(settlementSource[1]));
+  const settlementReverse=path.match(/^\/api\/purchases\/supplier-settlements\/([^/]+)\/reverse$/);
+  if(settlementReverse&&request.method==='POST'){
+    const body=await readBody<{reason?:string}>(request);
+    return reverseSupplierSettlement(db,decodeURIComponent(settlementReverse[1]),cleanText(body.reason),user);
+  }
   if (path === '/api/purchases/supplier-search' && request.method === 'GET') {
     return searchPurchaseSuppliersRoute(db, new URL(request.url).searchParams.get('q') || '');
   }

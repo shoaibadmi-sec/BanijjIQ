@@ -6,6 +6,7 @@ import type { PurchaseInput, PurchaseLineInput, PurchaseReturnInput } from './ty
 import { prepareNewLotTracking, trackingEnabled } from '../products/tracking.service.js';
 import { quotePurchaseUnits, type PurchaseUnitQuote } from './purchaseUnits.js';
 import { getMixedPurchaseForReturn, completeMixedPurchaseReturn } from './mixedReturn.service.js';
+import { createSupplierSettlement, reverseSupplierSettlement, type SettleInput } from './supplierSettlement.service.js';
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -868,28 +869,12 @@ async function reverseSupplierPaymentMoney(db: SherDatabase, ledgerId: string): 
   await db.batch(batch);
 }
 
-export async function paySupplierRoute(db: SherDatabase, supplierId: string, input: { amount?: number; method?: string; bankAccountId?: string; notes?: string; date?: string; backdatedReason?: string }, user: AuthUser): Promise<Response> {
-  if (!(await hasActiveCashSession(db))) return error('No active cash session. Start your day from POS before recording supplier payments.');
-  const amount = money(input.amount);
-  if (amount <= 0) return error('Enter a valid payment amount.');
-  const supplier = await db.prepare(`SELECT supplier_name FROM suppliers WHERE supplier_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(supplierId).first<{ supplier_name: string }>();
-  if (!supplier) return error('Supplier not found.', 404);
-  const date = cleanText(input.date) || new Date().toISOString().slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
-  const backdatedReason = cleanText(input.backdatedReason);
-  if (date < today && !backdatedReason) return error('A reason is required when dating a payment in the past.');
-  const method = cleanText(input.method) || 'Cash';
-  let bankAccountId = '';
-  try { bankAccountId = await validateBankAccount(db, method, input.bankAccountId); } catch (err) { return error(err instanceof Error ? err.message : 'Invalid payment method.'); }
-  const current = await db.prepare(`SELECT current_due FROM suppliers WHERE supplier_id=?`).bind(supplierId).first<{ current_due: number }>();
-  const newDue = Math.round((Number(current?.current_due || 0) - amount) * 10000) / 10000;
-  const ledgerId = crypto.randomUUID();
-  await db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, payment_method, bank_account_id, is_backdated, backdated_days, backdated_reason, created_by, created_at)
-    VALUES (?, ?, ?, ?, 'Payment', 'PAYMENT', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
-    .bind(ledgerId, date, supplierId, supplier.supplier_name, amount, newDue, cleanText(input.notes), method, bankAccountId, date < today ? 1 : 0, date < today ? 1 : 0, backdatedReason, user.userId).run();
-  await db.prepare(`UPDATE suppliers SET current_due=?, updated_at=datetime('now') WHERE supplier_id=?`).bind(newDue, supplierId).run();
-  await writeSupplierPaymentMoney(db, ledgerId, supplier.supplier_name, amount, method, bankAccountId, date);
-  return json({ ok: true, newDue });
+export async function paySupplierRoute(db:SherDatabase,supplierId:string,
+ input:SettleInput,user:AuthUser):Promise<Response>{
+ // Preserve existing authorized route but make every new supplier payment atomic.
+ // Legacy callers without request IDs cannot replay safely after a network timeout;
+ // the new Phase 4D React flow always supplies clientRequestId.
+ return createSupplierSettlement(db,supplierId,input,user,false);
 }
 
 export async function getSupplierPaymentRoute(db: SherDatabase, ledgerId: string): Promise<Response> {
@@ -905,6 +890,8 @@ export async function updateSupplierPaymentRoute(db: SherDatabase, ledgerId: str
   const row = await db.prepare(`SELECT * FROM supplier_ledger WHERE ledger_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(ledgerId).first<Record<string, unknown>>();
   if (!row) return error('Payment not found.', 404);
   if (String(row.type) !== 'Payment') return error('Only payment rows can be edited.');
+  if(await db.prepare('SELECT 1 FROM supplier_settlement_entries WHERE ledger_id=?').bind(ledgerId).first())
+    return error('Phase 4D posted payments must use audited reversal instead of editing.',409);
   const amount = money(input.amount);
   if (amount <= 0) return error('Enter a valid payment amount.');
   const method = cleanText(input.method) || String(row.payment_method || 'Cash');
@@ -927,6 +914,8 @@ export async function deleteSupplierPaymentRoute(db: SherDatabase, ledgerId: str
   const row = await db.prepare(`SELECT * FROM supplier_ledger WHERE ledger_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(ledgerId).first<Record<string, unknown>>();
   if (!row) return error('Payment not found.', 404);
   if (String(row.type) !== 'Payment') return error('Only payment rows can be deleted here.');
+  if(await db.prepare('SELECT 1 FROM supplier_settlement_entries WHERE ledger_id=?').bind(ledgerId).first())
+    return error('Phase 4D posted payments require an audited reversal.',409);
   await reverseSupplierPaymentMoney(db, ledgerId);
   await db.prepare(`UPDATE supplier_ledger SET is_deleted=1, delete_reason=?, deleted_by=?, deleted_at=datetime('now') WHERE ledger_id=?`).bind(reason, user.userId, ledgerId).run();
   await recomputeSupplierLedgerBalances(db, String(row.supplier_id));
