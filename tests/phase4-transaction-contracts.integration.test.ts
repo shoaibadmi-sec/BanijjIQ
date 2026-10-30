@@ -478,6 +478,42 @@ test('4I functions: invalid discounts must not silently change purchase invoice 
  });
 });
 
+test('4I accounting: multiple purchases reconcile supplier, bank, cash and FIFO by hand',async()=>{
+ await fixture(async({api,db,one,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')")
+   .run('CS-4I-ACCOUNT');
+  db.native.prepare(`INSERT INTO bank_accounts
+   (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type)
+   VALUES ('BANK-4I-ACCOUNT','Current','4I Bank',500,500,'Active','Bank')`).run();
+  const due=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(due);
+  const cash=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:40,
+   clientRequestId:crypto.randomUUID(),paymentMethod:'Cash',discount:10,
+   items:[{productId:p1.productId,qty:1,unitPrice:80}]});safe(cash);
+  const bank=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:90,
+   clientRequestId:crypto.randomUUID(),paymentMethod:'Bank',bankAccountId:'BANK-4I-ACCOUNT',
+   items:[{productId:p1.productId,qty:3,unitPrice:40}]});safe(bank);
+  assert.deepEqual([due.grandTotal,cash.grandTotal,bank.grandTotal],[100,70,120]);
+  assert.deepEqual([due.dueAmount,cash.dueAmount,bank.dueAmount],[100,30,30]);
+  const ledger=db.native.prepare('SELECT type,debit,credit,balance FROM supplier_ledger WHERE supplier_id=? ORDER BY rowid')
+   .all(supplier.id) as Array<{type:string;debit:number;credit:number;balance:number}>;
+  assert.deepEqual(ledger.map(x=>[x.type,x.debit,x.credit,x.balance]),[
+   ['Purchase',100,0,100],['Purchase',70,0,170],['Purchase Payment',0,40,130],
+   ['Purchase',120,0,250],['Purchase Payment',0,90,160]
+  ]);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,160);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,160);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,6);
+  assert.deepEqual(db.native.prepare("SELECT original_quantity AS n,unit_cost AS cost FROM stock_lots WHERE product_id=? AND source_type='PURCHASE' ORDER BY rowid").all(p1.productId),
+   [{n:2,cost:50},{n:1,cost:80},{n:3,cost:40}]);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM cash_book').n,40);
+  assert.equal(one('SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id=?','BANK-4I-ACCOUNT').n,410);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM bank_book WHERE bank_account_id=?','BANK-4I-ACCOUNT').n,90);
+  assert.deepEqual(db.native.prepare('SELECT paid_amount AS paid,due_amount AS due,payment_status AS status FROM purchases ORDER BY rowid').all(),
+   [{paid:0,due:100,status:'Due'},{paid:40,due:30,status:'Partial'},{paid:90,due:30,status:'Partial'}]);
+ });
+});
+
 test('4F historical paid purchase cannot be deleted without reversing its posted supplier payment',async()=>{
  await fixture(async({api,one,count,db,supplier,p1})=>{
   const p=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,discount:0,
