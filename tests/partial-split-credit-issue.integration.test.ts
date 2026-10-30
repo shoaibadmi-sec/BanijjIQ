@@ -7,7 +7,7 @@ import {postCashCreditPartialSplitReturn} from '../server/modules/sales/partial-
 
 /** G2-P: real full-migration proof for one already redeemed original
  * Store Credit source; the reissued refund must remain liability, never cash. */
-function fixture(preposted=true){
+function fixture(preposted=true,creditFirst=false){
   const db=new SqliteDatabase(':memory:');runMigrations(db.native,resolve('migrations'));
   const q=db.native;
   const statements=[
@@ -23,8 +23,8 @@ function fixture(preposted=true){
     "INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,subtotal,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method,status,is_deleted) VALUES ('CR-S','2026-10-30','CR-C','Credit Return Buyer','01000006951',50,50,50,0,'Cash','Paid','Split','Completed',0)",
     "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('CR-S','CR-P','Credit Wire',5,10,50)",
     "INSERT INTO sale_item_lots(invoice_id,product_id,lot_id,quantity,unit_cost) VALUES ('CR-S','CR-P','CR-L',5,5)",
-    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CR-S-CASH','CR-S',1,'Cash',2000,'','','Cash')",
-    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CR-S-CREDIT','CR-S',2,'Store Credit',3000,'','CR-C','Store Credit')",
+    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CR-S-CASH','CR-S',"+(creditFirst?2:1)+",'Cash',2000,'','','Cash')",
+    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CR-S-CREDIT','CR-S',"+(creditFirst?1:2)+",'Store Credit',3000,'','CR-C','Store Credit')",
     "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('CR-S-CB','2026-10-30','Sale','CR-S','Split cash receipt',0,20,'Cash',0)",
     "INSERT INTO customer_store_credit_entries(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_by) VALUES ('CR-REDEEM','CR-C','REDEEM','Sale','CR-S',-3000,0,'auditor')",
     "INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('CR-R','2026-10-30','CR-S','CR-C','Credit Return Buyer','01000006951','Split Partial',10,'Source exact partial return')",
@@ -192,12 +192,9 @@ test('G2-Q forced final-audit rejection rolls back Cash, ISSUE, FIFO and invento
 });
 
 test('G2-Q accepts original Cash and Store Credit tenders in either row order',async()=>{
-  const f=fixture(false);
+  // Original allocations are immutable; the fixture creates credit-first at checkout.
+  const f=fixture(false,true);
   try{
-    // Tender position is a UI choice, not accounting identity.
-    f.q.exec("UPDATE sale_tender_allocations SET line_number=9 WHERE invoice_id='CR-S' AND method='Cash'");
-    f.q.exec("UPDATE sale_tender_allocations SET line_number=1 WHERE invoice_id='CR-S' AND method='Store Credit'");
-    f.q.exec("UPDATE sale_tender_allocations SET line_number=2 WHERE invoice_id='CR-S' AND method='Cash'");
     const posted=await postCashCreditPartialSplitReturn(f.db,{
       invoiceId:'CR-S',productId:'CR-P',quantity:1,
       requestId:'CR-REVERSE-TENDER',reason:'Cash and Store Credit sources were independently verified'
