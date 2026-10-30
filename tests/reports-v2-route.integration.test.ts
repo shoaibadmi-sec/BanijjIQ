@@ -24,6 +24,7 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(setup.status,200);
     token = setup.token as string;
     db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES ('INV-REPORT-001','2026-10-15','Test Buyer','01000000121',120,'Cash','Paid')").run();
+    db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status,status) VALUES ('INV-DRAFT-UNPOSTED','2026-10-17','Unposted Buyer','01000000125',900,'Cash','Unpaid','Draft')").run();
     // A valid session for a non-admin without reports.view must not bypass the route guard.
     const adminToken=token;
     const deniedToken='local-staff-report-session-token';
@@ -42,6 +43,7 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     const rows = await call('GET','/api/reports/v2/rows?report=sales&from=2026-10-01&to=2026-10-30');
     assert.equal(rows.status,200,JSON.stringify(rows));
     assert.equal(rows.totalRows,1);
+    assert.ok(!rows.rows.some((x:any)=>x.sourceId==='INV-DRAFT-UNPOSTED'), 'unposted invoices cannot appear in Sales Register');
     assert.deepEqual(rows.rows.map((x:any)=>x.sourceId),['INV-REPORT-001']);
     assert.equal(rows.rows[0].amountMinor,12000);
     assert.equal(rows.coverage.status,'needs-review');
