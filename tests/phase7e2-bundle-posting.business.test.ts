@@ -78,7 +78,9 @@ test('Phase 7E2 business: ordinary POS cannot consume fictitious bundle inventor
   const cash={clientRequestId:'bundle-cash-guard01',customerName:'A',customerPhone:'01000002229',paymentType:'Cash',paymentMethod:'Cash',items};
   assert.equal((await api('POST','/api/pos/sales',cash)).status,409,'normal POS may not sell virtual bundle');
   const good=await api('POST','/api/pos/bundle-sales',cash);assert.equal(good.status,200,JSON.stringify(good));
+  const beforeReturn=(db.native.prepare('SELECT total_changes() n').get() as any).n;
   assert.equal((await api('POST','/api/sales-returns',{invoiceId:good.invoiceId,items:[{productId:'B-KIT',quantity:1}]})).status>=400,true);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as any).n,beforeReturn,'rejected bundle return must leave zero writes');
   const after=(db.native.prepare('SELECT total_changes() n').get() as any).n;
   const bad=await api('DELETE','/api/sales-management/'+good.invoiceId,{reason:'legacy delete bypass'});
   assert.equal(bad.status>=400,true);
