@@ -93,7 +93,7 @@ async function resolveDeleteRecordDate(db:SherDatabase,path:string,moduleKey:str
 }
 
 function permissionRouteInfo(path:string,method:string):{moduleKey:string;action:'view'|'add'|'edit'|'delete'}|null{
-  if(path==='/api/bootstrap')return null;
+  if(path==='/api/bootstrap' && method==='GET') return {moduleKey:'products',action:'view'};
   const rules:Array<[RegExp,string]>=[
     [/^\/api\/settings/,'settings'],[/^\/api\/dashboard$/,'dashboard'],[/^\/api\/reports/,'reports'],[/^\/api\/finance/,'finance'],
     [/^\/api\/daybook/,'daybook'],[/^\/api\/bank/,'bank'],[/^\/api\/expenses/,'expense'],[/^\/api\/expense-/,'expense'],

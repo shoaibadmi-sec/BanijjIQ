@@ -118,7 +118,13 @@ async function adjustStockToTarget(db: SherDatabase, product: ProductRow, newSto
     .bind(crypto.randomUUID(), product.product_id, Math.abs(diff), targetStock, reason).run();
 }
 
-export async function getProductsBootstrap(db: SherDatabase): Promise<Response> {
+export type ProductBootstrapVisibility = {
+  includeCosts: boolean;
+  includeSuppliers: boolean;
+  includeBankAccounts: boolean;
+};
+
+export async function getProductsBootstrap(db: SherDatabase, visibility: ProductBootstrapVisibility): Promise<Response> {
   const [products, categories, brands, units, suppliers, bankAccounts] = await Promise.all([
     db.prepare(`
       SELECT p.product_id AS productId, p.product_name AS productName, COALESCE(p.brand,'') AS brand,
@@ -146,11 +152,17 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
   ]);
 
   const availability = await getAvailabilityMap(db);
-  const productRows = (products.results ?? []).map((p: any) => ({ ...p,
-    sellableStock: availability.get(String(p.productId))?.sellable ?? Number(p.currentStock || 0),
-    pendingTracking: availability.get(String(p.productId))?.pending ?? 0,
-    expiredStock: availability.get(String(p.productId))?.expired ?? 0
-  }));
+  const productRows = (products.results ?? []).map((p: any) => {
+    const { purchasePrice, stockValue, preferredSupplierId, preferredSupplierName, ...safeProduct } = p;
+    return {
+      ...safeProduct,
+      ...(visibility.includeCosts ? { purchasePrice, stockValue } : {}),
+      ...(visibility.includeSuppliers ? { preferredSupplierId, preferredSupplierName } : {}),
+      sellableStock: availability.get(String(p.productId))?.sellable ?? Number(p.currentStock || 0),
+      pendingTracking: availability.get(String(p.productId))?.pending ?? 0,
+      expiredStock: availability.get(String(p.productId))?.expired ?? 0
+    };
+  });
 
   return json({
     ok: true,
@@ -158,8 +170,8 @@ export async function getProductsBootstrap(db: SherDatabase): Promise<Response> 
     categories: categories.results ?? [],
     brands: brands.results ?? [],
     units: units.results ?? [],
-    suppliers: suppliers.results ?? [],
-    bankAccounts: bankAccounts.results ?? [],
+    suppliers: visibility.includeSuppliers ? (suppliers.results ?? []) : [],
+    bankAccounts: visibility.includeBankAccounts ? (bankAccounts.results ?? []) : [],
     lowStockThreshold: 5,
     currencySymbol: '৳'
   });

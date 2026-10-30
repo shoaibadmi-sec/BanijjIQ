@@ -28,6 +28,7 @@ import {
 } from './tracking.service.js';
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
+import { getUserPermissions } from '../auth/permissions.js';
 import { updateProductCatalog } from './catalog.service.js';
 import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
@@ -45,7 +46,16 @@ async function readBody<T>(request: Request): Promise<T> {
 }
 
 export async function handleProductsRoute(db: SherDatabase, request: Request, path: string, user: AuthUser): Promise<Response | null> {
-  if (path === '/api/bootstrap' && request.method === 'GET') return getProductsBootstrap(db);
+  if (path === '/api/bootstrap' && request.method === 'GET') {
+    const permissions = await getUserPermissions(db, user);
+    const canView = (key: string) => permissions === null || !!permissions[key]?.view;
+    const canEdit = (key: string) => permissions === null || !!permissions[key]?.edit;
+    return getProductsBootstrap(db, {
+      includeCosts: canEdit('products') || canView('purchase') || canView('posCost'),
+      includeSuppliers: canView('suppliers') || canView('purchase'),
+      includeBankAccounts: canView('bank') || canView('purchase'),
+    });
+  }
   if (path === '/api/product-tracking' && request.method === 'GET') return getProductTrackingOverviewRoute(db);
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'GET') return getSupplierWarrantyOverviewRoute(db);
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'POST') return createSupplierWarrantyRmaRoute(db, await readBody<any>(request), user);
