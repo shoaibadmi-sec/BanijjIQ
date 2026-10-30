@@ -194,12 +194,14 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
  const financed=new Map<string,string>();
  const positiveTypes=new Set(['Owner Investment','Loan Received','Opening Owner Capital','Opening Loan']);
  const negativeTypes=new Set(['Owner Withdrawal','Loan Repayment']);
- for(const f of matchingFinance){
+ for(const f of finance){
+   const sourceInPeriod=f.date>=q.from&&f.date<=q.to;
    const direction=positiveTypes.has(f.transaction_type)?1:negativeTypes.has(f.transaction_type)?-1:0;
    const amount=Number(f.amount);
    const payment=f.payment_method==='Cash'?'cash_book':
      ['Bank','Mobile Banking'].includes(f.payment_method)?'bank_book':'';
    const linked=books.filter(x=>x.reference===f.finance_id&&x.type===f.transaction_type);
+   if(!sourceInPeriod&&!linked.some(x=>x.date>=q.from&&x.date<=q.to))continue;
    const netIn=linked.reduce((n,x)=>n+Number(x.credit)-Number(x.debit),0);
    const warnings:string[]=[];
    if(!direction||!valid(amount))warnings.push('Invalid or unsupported financing transaction.');
@@ -213,7 +215,7 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
    if(warnings.length){
      const reason='Finance '+f.finance_id+': '+warnings.join(' ');
      problems.add(reason);financed.set(f.finance_id,reason);
-   }else if(f.transaction_type==='Owner Investment'||f.transaction_type==='Opening Owner Capital')
+   }else if(sourceInPeriod&&(f.transaction_type==='Owner Investment'||f.transaction_type==='Opening Owner Capital'))
      ownerCapital+=amount;
  }
  const inPeriod=(date:string)=>date>=q.from&&date<=q.to;
