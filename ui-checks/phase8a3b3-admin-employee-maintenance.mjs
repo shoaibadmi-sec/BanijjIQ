@@ -54,7 +54,8 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
       const f=await open({width});
       try{
         await f.page.getByText('Existing Real Employee').waitFor();
-        await f.page.getByRole('button',{name:'Edit Existing Real Employee'}).click();
+        await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+        await f.page.getByRole('menuitem',{name:'Edit employee'}).click();
         const dialog=f.page.getByRole('dialog',{name:'Edit employee'});
         assert.equal(await dialog.getByRole('textbox',{name:'Employee name'}).inputValue(),'Existing Real Employee');
         assert.equal(await dialog.getByRole('textbox',{name:'Mobile number'}).inputValue(),'01000008301');
@@ -76,12 +77,14 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open();
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).click();
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Deactivate employee'}).click();
       const dialog=f.page.getByRole('dialog',{name:'Change employee status'});
       assert.equal(f.calls.filter(c=>c.method==='PUT').length,0,'no write before confirmation');
       await dialog.getByText(/Deactivate Existing Real Employee/).waitFor();
       await dialog.getByRole('button',{name:'Confirm deactivate'}).click();
-      await f.page.getByRole('button',{name:'Activate Existing Real Employee'}).waitFor({timeout:12000});
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Activate employee'}).waitFor({timeout:12000});
       assert.deepEqual(f.calls.filter(c=>c.path==='/api/users/user-staff/status'&&c.method==='PUT').map(c=>c.body),
         [{status:'Inactive'}]);
       assert.ok(f.calls.filter(c=>c.path==='/api/users'&&c.method==='GET').length>=2);
@@ -92,11 +95,13 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open({initialStatus:'Inactive'});
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      await f.page.getByRole('button',{name:'Activate Existing Real Employee'}).click();
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Activate employee'}).click();
       const dialog=f.page.getByRole('dialog',{name:'Change employee status'});
       assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
       await dialog.getByRole('button',{name:'Confirm activate'}).click();
-      await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).waitFor({timeout:12000});
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Deactivate employee'}).waitFor({timeout:12000});
       assert.deepEqual(f.calls.filter(c=>c.path==='/api/users/user-staff/status'&&c.method==='PUT').map(c=>c.body),
         [{status:'Active'}]);
       assert.ok(f.calls.filter(c=>c.path==='/api/users'&&c.method==='GET').length>=2);
@@ -107,7 +112,8 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open();
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).click();
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Deactivate employee'}).click();
       await f.page.getByRole('dialog',{name:'Change employee status'}).getByRole('button',{name:'Cancel'}).click();
       assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
       assert.equal(f.employees[0].status,'Active');
@@ -117,8 +123,8 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open({admin:false});
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      assert.equal(await f.page.getByRole('button',{name:'Edit Existing Real Employee'}).count(),0);
-      assert.equal(await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).count(),0);
+      assert.equal(await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).count(),0);
+      assert.equal(await f.page.getByRole('menuitem',{name:'Deactivate employee'}).count(),0);
       assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
     }finally{await f.ctx.close();}
   });
@@ -126,15 +132,16 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open();
     try{
       await f.page.getByText('Business Owner').waitFor();
-      assert.equal(await f.page.getByRole('button',{name:'Edit Business Owner'}).count(),0);
-      assert.equal(await f.page.getByRole('button',{name:'Deactivate Business Owner'}).count(),0);
+      assert.equal(await f.page.getByRole('button',{name:'Actions for Business Owner'}).count(),0);
+      assert.equal(await f.page.getByRole('menuitem',{name:'Deactivate employee'}).count(),0);
     }finally{await f.ctx.close();}
   });
   await withCheck('Phase 8A3B3 edit errors leave source data intact and keep form visible',async()=>{
     const f=await open({editReject:true});
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      await f.page.getByRole('button',{name:'Edit Existing Real Employee'}).click();
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+        await f.page.getByRole('menuitem',{name:'Edit employee'}).click();
       const dialog=f.page.getByRole('dialog',{name:'Edit employee'});
       await dialog.getByRole('textbox',{name:'Mobile number'}).fill('01000008309');
       await dialog.getByRole('button',{name:'Save employee'}).click();
@@ -148,7 +155,8 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open({statusReject:true});
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
-      await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).click();
+      await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).click();
+      await f.page.getByRole('menuitem',{name:'Deactivate employee'}).click();
       const dialog=f.page.getByRole('dialog',{name:'Change employee status'});
       await dialog.getByRole('button',{name:'Confirm deactivate'}).click();
       await dialog.getByRole('alert').getByText('Could not update employee status.').waitFor();
@@ -160,8 +168,8 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
     const f=await open({usersFail:true});
     try{
       await f.page.getByRole('alert').getByText('User database temporarily unavailable').waitFor({timeout:12000});
-      assert.equal(await f.page.getByRole('button',{name:/Edit Existing Real Employee/}).count(),0);
-      assert.equal(await f.page.getByRole('button',{name:/Deactivate Existing Real Employee/}).count(),0);
+      assert.equal(await f.page.getByRole('button',{name:/Actions for Existing Real Employee/}).count(),0);
+      assert.equal(await f.page.getByRole('menuitem',{name:/Deactivate employee/}).count(),0);
       assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
     }finally{await f.ctx.close();}
   });
