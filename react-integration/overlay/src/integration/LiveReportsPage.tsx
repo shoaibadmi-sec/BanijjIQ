@@ -94,6 +94,19 @@ export function LiveReportsPage(){
     &&(c.en+' '+c.bn).toLocaleLowerCase().includes(librarySearch.toLocaleLowerCase())),[group,librarySearch]);
   const activeCatalog=catalog.find(c=>c.id===key);
   const currentReport=key==='stock'||key==='receivables'||key==='payables';
+  const moneyMovement=key==='cash'||key==='bank'||key==='finance';
+  const financialReport=moneyMovement||key==='expenses';
+  const financialCards=key==='cash'?['cashReceipts','cashPayments','externalNetMovement','bankCurrentBalance']:
+    key==='bank'?['bankReceipts','bankPayments','bankCurrentBalance']:
+    key==='expenses'?['operatingExpenses']:
+    key==='finance'?['ownerCapitalIn']:[];
+  const financialLabels:Record<string,{en:string;bn:string}>={
+    cashReceipts:{en:'Cash in',bn:'ক্যাশ জমা'},cashPayments:{en:'Cash out',bn:'ক্যাশ খরচ'},
+    bankReceipts:{en:'Bank in',bn:'ব্যাংকে জমা'},bankPayments:{en:'Bank out',bn:'ব্যাংক থেকে খরচ'},
+    externalNetMovement:{en:'Net money movement',bn:'মোট টাকার পরিবর্তন'},
+    bankCurrentBalance:{en:'Current bank balance',bn:'বর্তমান ব্যাংক জের'},
+    operatingExpenses:{en:'Recorded expenses',bn:'লেখা খরচ'},ownerCapitalIn:{en:'Owner investment',bn:'মালিকের বিনিয়োগ'}
+  };
   const unsupported=!key;
   const coverage=rows?.coverage;
   const visibleSummary=summaryKey===from+':'+to?summaryMetrics:[];
@@ -212,17 +225,37 @@ export function LiveReportsPage(){
             </div>
             {unsupported&&<p className="mt-4 text-sm text-warning">{text('This report has not yet been reconciled with live D1. No preview figures are shown.','এই রিপোর্টের লাইভ হিসাব যাচাই হয়নি। ডেমো সংখ্যা দেখানো হচ্ছে না।')}</p>}
           </div>
+          {rows&&financialReport&&<div className="grid grid-cols-2 gap-2 md:grid-cols-4" aria-label={text('Recorded financial movements','আর্থিক লেনদেনের হিসাব')}>
+            {financialCards.map(metricKey=>{
+              const item=rows.metrics.find(x=>x.key===metricKey);
+              const display=!!item&&item.valueMinor!==null&&(item.status==='ready'||item.status==='needs-review');
+              const isCurrent=metricKey==='bankCurrentBalance';
+              return <div key={metricKey} data-report-metric={metricKey} className="rounded-xl border border-border bg-card p-3">
+                <p className="text-xs text-ink-500">{text(financialLabels[metricKey].en,financialLabels[metricKey].bn)}</p>
+                <p className="mt-1 text-lg font-semibold text-ink">{display?money(item.valueMinor):'—'}</p>
+                <p className="mt-1 text-xs text-ink-500">{isCurrent
+                  ?text('Current ledger snapshot · not historical','বর্তমান জের · পুরোনো নয়')
+                  :text('Selected-period posted movement','নির্বাচিত সময়ের লেনদেন')}</p>
+                {item?.status==='incomplete'&&<p className="mt-1 text-xs text-danger">{item.reason}</p>}
+              </div>;
+            })}
+          </div>}
           {rows&&<div className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[520px] text-[13px]"><thead className="bg-ink-50/50 text-ink-600">
               <tr><th scope="col" className="px-3 py-2 text-left">{text('Reference','নম্বর')}</th>
                 <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Snapshot':'Date',currentReport?'বর্তমান হিসাব':'তারিখ')}</th>
-                <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Product / Party':'Party','পণ্য / পার্টি')}</th>
-                <th scope="col" className="px-3 py-2 text-right">{text(key==='stock'?'Current FIFO value':currentReport?'Current due':'Recorded amount',
-                  key==='stock'?'বর্তমান স্টক মূল্য':currentReport?'বর্তমান বাকি':'লেখা টাকা')}</th>
+                <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Product / Party':financialReport?'Details':'Party','পণ্য / পার্টি')}</th>
+                {moneyMovement?<><th scope="col" className="px-3 py-2 text-right">{text('Money in','জমা')}</th>
+                  <th scope="col" className="px-3 py-2 text-right">{text('Money out','খরচ')}</th></>:
+                  <th scope="col" className="px-3 py-2 text-right">{text(key==='stock'?'Current FIFO value':currentReport?'Current due':'Recorded amount',
+                    key==='stock'?'বর্তমান স্টক মূল্য':currentReport?'বর্তমান বাকি':'লেখা টাকা')}</th>}
                 <th scope="col" className="px-3 py-2 text-left">{text('Status','অবস্থা')}</th></tr>
             </thead><tbody>{rows.rows.map(row=><tr className="border-t border-border" key={row.sourceModule+':'+row.sourceId}>
               <td className="px-3 py-2 font-medium text-primary">{row.sourceId}</td><td className="px-3 py-2">{row.date}</td>
-              <td className="px-3 py-2">{row.label}</td><td className="px-3 py-2 text-right">{money(row.amountMinor)}</td>
+              <td className="px-3 py-2">{row.label}</td>
+              {moneyMovement?<><td className="px-3 py-2 text-right">{row.amountMinor!==null&&row.amountMinor>0?money(row.amountMinor):'—'}</td>
+                <td className="px-3 py-2 text-right">{row.amountMinor!==null&&row.amountMinor<0?money(-row.amountMinor):'—'}</td></>:
+                <td className="px-3 py-2 text-right">{money(row.amountMinor)}</td>}
               <td className="px-3 py-2">
                 <span title={row.reason} className={row.status==='incomplete'?'text-danger':'text-ink-500'}>
                   {row.status==='incomplete'?text('Needs checking','মিলিয়ে দেখুন'):
