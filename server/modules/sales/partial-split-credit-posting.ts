@@ -104,11 +104,13 @@ export async function postCashCreditPartialSplitReturn(
   const originals=await fetchRows(
     'SELECT method,source_key,amount_cents,bank_account_id,customer_id '+
     'FROM sale_tender_allocations WHERE invoice_id=? ORDER BY line_number',input.invoiceId);
-  if(originals.length!==2||
-    originals[0].method!=='Cash'||originals[0].source_key!=='Cash'||
-    originals[0].customer_id!==''||originals[0].bank_account_id!==''||
-    originals[1].method!=='Store Credit'||originals[1].source_key!=='Store Credit'||
-    originals[1].customer_id!==sale.customer_id||originals[1].bank_account_id!==''||
+  const cashTender=originals.find(x=>x.method==='Cash');
+  const creditTender=originals.find(x=>x.method==='Store Credit');
+  if(originals.length!==2||!cashTender||!creditTender||
+    cashTender.source_key!=='Cash'||
+    cashTender.customer_id!==''||cashTender.bank_account_id!==''||
+    creditTender.source_key!=='Store Credit'||
+    creditTender.customer_id!==sale.customer_id||creditTender.bank_account_id!==''||
     originals.some(x=>!Number.isSafeInteger(Number(x.amount_cents))||Number(x.amount_cents)<=0)||
     originals.reduce((n,x)=>n+Number(x.amount_cents),0)!==cents(sale.grand_total))
     return reject('Original tender must be exactly Cash then redeemed Store Credit.');
@@ -118,10 +120,10 @@ export async function postCashCreditPartialSplitReturn(
     "SELECT entry_type,customer_id,delta_cents FROM customer_store_credit_entries WHERE source_type='Sale' AND source_id=?",input.invoiceId);
   if(originalCash.length!==1||originalCash[0].type!=='Sale'||
     originalCash[0].payment_method!=='Cash'||Number(originalCash[0].is_deleted)!==0||
-    cents(originalCash[0].debit)!==0||cents(originalCash[0].credit)!==Number(originals[0].amount_cents)||
+    cents(originalCash[0].debit)!==0||cents(originalCash[0].credit)!==Number(cashTender.amount_cents)||
     originalRedeem.length!==1||originalRedeem[0].entry_type!=='REDEEM'||
     originalRedeem[0].customer_id!==sale.customer_id||
-    Number(originalRedeem[0].delta_cents)!==-Number(originals[1].amount_cents))
+    Number(originalRedeem[0].delta_cents)!==-Number(creditTender.amount_cents))
     return reject('Original Cash receipt and Store Credit redemption must reconcile exactly.');
   const [creditBalance,legacy,receivable]=await Promise.all([
     db.prepare('SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?').bind(sale.customer_id).first<any>(),
