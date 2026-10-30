@@ -85,7 +85,7 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
   const pageSizeText = url.searchParams.get('pageSize') || '50';
   const sortBy = url.searchParams.get('sortBy') || 'created';
   const page = Number(pageText), pageSize = Number(pageSizeText);
-  if (paginate && (!/^[1-9]\\d*$/.test(pageText) || !Number.isSafeInteger(page) ||
+  if (paginate && (!/^[1-9]\d*$/.test(pageText) || !Number.isSafeInteger(page) ||
       !['50', '100'].includes(pageSizeText) || !['created', 'transaction'].includes(sortBy)))
     return json({ok:false,error:'Choose a valid page, 50/100 page size and transaction/created sort.'},400);
   const backdatedOnly = url.searchParams.get('backdatedOnly') === '1';
