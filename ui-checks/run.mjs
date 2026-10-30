@@ -103,6 +103,36 @@ function startMocking(context,calls){
           deleteAction:'',deleteId:'BTR-UI-6E-001',canEdit:false}]
       });
     }
+    if(path==='/api/expenses/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',activeCashSession:true,
+      categories:[{id:'CAT-UI-6F',name:'Shop Rent',status:'Active'}],
+      payees:[],bankAccounts:[{id:'BK-UI-6F',name:'Shop Bank',accountType:'Bank'}],
+      paymentMethods:['Cash','Bank','Mobile Banking']
+    });
+    if(path==='/api/expenses'&&request.method()==='GET')return respond({
+      ok:true,expenses:[{expenseId:'EXP-UI-6F-OLD',date:'2026-10-30',
+        categoryId:'CAT-UI-6F',category:'Shop Rent',payeeId:'',payeeName:'',
+        amount:15,paymentMethod:'Cash',bankAccountId:'',bankAccountName:'',
+        description:'Legacy shop rent',referenceNo:'',notes:'',status:'Active',
+        createdBy:'Test Cashier',createdAt:'2026-10-30 08:00:00',
+        isBackdated:false,backdatedDays:0,backdatedReason:''}]
+    });
+    if(path==='/api/expenses'&&request.method()==='POST'){
+      const data=request.postDataJSON();
+      assert.equal(data.categoryId,'CAT-UI-6F');
+      assert.equal(data.paymentMethod,'Bank');
+      assert.equal(data.bankAccountId,'BK-UI-6F');
+      assert.equal(data.amount,35.5);
+      assert.ok(typeof data.clientRequestId==='string'&&data.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload:data});
+      return respond({ok:true,id:'EXP-UI-6F-POSTED',replayed:false});
+    }
+    if(path==='/api/expenses/EXP-UI-6F-OLD/cancel'&&request.method()==='POST'){
+      const data=request.postDataJSON();
+      assert.ok(data.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload:data});
+      return respond({ok:true,id:'EXP-UI-6F-OLD'});
+    }
     // Finance 6A uses real endpoint shapes, never the pinned demo account store.
     if(path==='/api/bank/accounts'&&request.method()==='GET')return respond({
       ok:true,currencySymbol:'৳',bankAccounts:[
@@ -403,7 +433,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook], [data-live-expenses]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -417,7 +447,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook], [data-live-expenses]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -549,6 +579,36 @@ try{
       await screenshot(page,'phase6d-person-ledger-'+width);
       await inspectLayout(page,'phase6d-person-ledger-'+width);
       await audit(page,'phase6d-person-ledger-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6F real Expense posting and cancellation '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/expenses');
+      const panel=page.locator('[data-live-expenses]');
+      await panel.waitFor({timeout:12000});
+      await panel.getByText('EXP-UI-6F-OLD').waitFor({timeout:12000});
+      await page.getByRole('combobox',{name:'Expense category'}).selectOption('CAT-UI-6F');
+      await page.getByRole('spinbutton',{name:'Expense amount'}).fill('35.5');
+      await page.getByRole('combobox',{name:'Expense payment method'}).selectOption('Bank');
+      await page.getByRole('combobox',{name:'Expense bank account'}).selectOption('BK-UI-6F');
+      await page.getByRole('button',{name:'Review expense'}).click();
+      await page.getByRole('button',{name:'Confirm expense'}).click();
+      await page.getByText(/EXP-UI-6F-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/expenses').length,1);
+      await panel.getByRole('button',{name:'Cancel',exact:true}).first().click();
+      await page.getByRole('textbox',{name:'Expense cancellation reason'}).fill('Duplicate shop rent reviewed');
+      await page.getByRole('button',{name:'Confirm cancel'}).click();
+      await page.getByText(/Expense cancelled/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path.includes('/cancel')).length,1);
+      await screenshot(page,'phase6f-expenses-'+width);
+      await inspectLayout(page,'phase6f-expenses-'+width);
+      await audit(page,'phase6f-expenses-'+width);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }
