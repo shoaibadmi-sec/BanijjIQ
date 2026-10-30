@@ -15,10 +15,10 @@ export function buildDemoSeedPlan(){
   const purchase=purchaseData.purchases.find(p=>p.id==='pu117');
   if(!purchase||invoices.length!==2)throw Error('Pinned HisabIQ fixture changed: review and update seed mapping.');
   const sales=[
-    {sourceId:'s241',customerKey:'c1',customerName:'Rahman Hardware',phone:'01711-482093',
+    {sourceId:'s241',customerKey:'c1',customerName:'[DEMO] Rahman Hardware',phone:'01099000001',
       paymentType:'Due',paidAmount:0,paymentMethod:'Cash',discount:140,
       lines:[{key:'p3',qty:220,unitPrice:112},{key:'p9',qty:42,unitPrice:25}],expectedTotal:25550},
-    {sourceId:'s240',customerName:'Walk-in customer',phone:'01000000940',paymentType:'Cash',paidAmount:0,
+    {sourceId:'s240',customerName:'[DEMO] Walk-in customer',phone:'01099000010',paymentType:'Cash',paidAmount:0,
       paymentMethod:'Cash',discount:0,
       lines:[{key:'p7',qty:2,unitPrice:650},{key:'p10',qty:4,unitPrice:60},{key:'p9',qty:12,unitPrice:25}],
       expectedTotal:1840}
@@ -38,19 +38,19 @@ export function buildDemoSeedPlan(){
     const incoming=purchases.filter(x=>x.productKey===p.id).reduce((sum,x)=>sum+x.qty,0);
     const openingStock=p.stock+outgoing-incoming;
     if(!Number.isFinite(openingStock)||openingStock<0)throw Error('Unsafe opening stock for '+p.id);
-    return {sourceId:p.id,name:p.name,category:p.category,unit:p.unit,barcode:p.sku||'',
+    return {sourceId:p.id,name:'[DEMO] '+p.name,category:p.category,unit:p.unit,barcode:'DEMO-'+(p.sku||p.id),
       brand:'',openingStock,expectedStock:p.stock,minimumStock:p.minStock,
       purchasePrice:p.purchasePrice,sellingPrice:p.sellPrice,status:p.active?'Active':'Inactive'};
   });
   const partners=partyData.parties;
-  const customers=partners.filter(p=>p.roles.includes('Customer')).map(p=>({
-    sourceId:p.id,name:p.name,phone:p.phone,address:p.area}));
+  const customers=partners.filter(p=>p.roles.includes('Customer')).map((p,index)=>({
+    sourceId:p.id,name:'[DEMO] '+p.name,phone:'01099'+String(index+1).padStart(6,'0'),address:p.area}));
   const suppliers=partners.filter(p=>p.roles.includes('Supplier')).map(p=>({
-    sourceId:p.id,name:p.name,phone:p.phone,address:p.area}));
-  const vendors=partners.filter(p=>p.roles.includes('Vendor')).map(p=>({
-    sourceId:p.id,name:p.name,phone:p.phone}));
+    sourceId:p.id,name:'[DEMO] '+p.name,phone:p.phone,address:p.area}));
+  const vendors=partners.filter(p=>p.roles.includes('Vendor')).map((p,index)=>({
+    sourceId:p.id,name:'[DEMO] '+p.name,phone:'01098'+String(index+1).padStart(6,'0')}));
   const accounts=financeData.financeAccounts.filter(a=>a.type!=='Cash').map(a=>({
-    sourceId:a.id,name:a.name,accountType:a.type,bankName:a.institution,
+    sourceId:a.id,name:'[DEMO] '+a.name,accountType:a.type,bankName:a.institution,
     accountNumber:a.number,openingBalance:a.openingBalance}));
   const cashAccount=financeData.financeAccounts.find(a=>a.type==='Cash');
   const expense=purchaseData.expenses.find(e=>e.id==='e59');
@@ -58,10 +58,10 @@ export function buildDemoSeedPlan(){
   return {
     sourceCommit:'9a8dc1ac4e85ac4e60f254e068bd67c2a805673f',
     openingCash:cashAccount?.openingBalance??0,products,customers,suppliers,vendors,accounts,purchases,sales,
-    expense:{sourceId:expense.id,category:expense.category,payee:expense.payee,
+    expense:{sourceId:expense.id,category:'[DEMO] '+expense.category,payee:'[DEMO] '+expense.payee,
       description:expense.note||'Demo rental expense',amount:expense.amount,accountKey:'acc-dbl'},
     financePeople:financeData.financePeople.filter(p=>p.roles.includes('Owner')||p.roles.includes('Lender'))
-      .map(p=>({sourceId:p.id,name:p.name,phone:p.phone,personType:p.roles.includes('Owner')?'Owner':'Lender'})),
+      .map(p=>({sourceId:p.id,name:'[DEMO] '+p.name,phone:p.phone,personType:p.roles.includes('Owner')?'Owner':'Lender'})),
     excluded:[
       'historical dashboard/chart totals are designed values, not journal entries',
       'tracked serial/expiry/warranty details not seeded: product records are untracked test fixtures',
@@ -76,7 +76,7 @@ export function buildDemoSeedPlan(){
 
 /**
  * Post through the same authenticated API handlers used by HisabIQ.
- * Reject populated previews to avoid overwriting users' previously entered test records.
+ * Append tagged [DEMO] records without overwriting existing preview records; refuse a second import.
  * Failed imports deliberately stop; do not automatically clear an existing database.
  */
 export async function executeDemoSeed(api,plan){
@@ -91,16 +91,20 @@ export async function executeDemoSeed(api,plan){
   if(!Array.isArray(bootstrap.products)||!Array.isArray(pos.customers)||
     !Array.isArray(pos.bankAccounts)||!Array.isArray(pos.vendors))
     throw Error('Live backend bootstrap is incomplete; no demo import permitted.');
-  if(bootstrap.products.length||pos.customers.length||pos.bankAccounts.length||
-    pos.vendors.length||pos.activeSession)
-    throw Error('Preview database already contains live records or an open session; seed requires an empty isolated database.');
   const customersPage=await safe('GET','/api/customers');
   const suppliersPage=await safe('GET','/api/suppliers');
   if(!Array.isArray(customersPage.customers)||!Array.isArray(suppliersPage.suppliers))
-    throw Error('Cannot verify empty party tables; no demo import permitted.');
-  if(customersPage.customers.length||suppliersPage.suppliers.length)
-    throw Error('Preview database is non-empty: customers/suppliers already exist.');
-  await safe('POST','/api/pos/cash-session/start',{openingCash:plan.openingCash});
+    throw Error('Cannot verify party tables; no demo import permitted.');
+  // Add to populated previews safely, never overwrite existing records or import twice.
+  const existing=[
+    ...bootstrap.products,...pos.customers,...pos.bankAccounts,...pos.vendors,
+    ...customersPage.customers,...suppliersPage.suppliers
+  ];
+  if(existing.some(record=>Object.values(record).some(value=>
+      typeof value==='string'&&(value.startsWith('[DEMO] ')||value.startsWith('DEMO-')))))
+    throw Error('Preview database already contains [DEMO] seed data; import twice is unsafe.');
+  if(!pos.activeSession)
+    await safe('POST','/api/pos/cash-session/start',{openingCash:0});
   const ids={products:new Map(),customers:new Map(),suppliers:new Map(),accounts:new Map()};
   for(const account of plan.accounts){
     const result=await safe('POST','/api/bank/accounts',{
