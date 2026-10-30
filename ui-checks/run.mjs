@@ -313,7 +313,7 @@ function startMocking(context,calls){
           receivedAt:'2026-10-28 10:00:00',originalQuantity:3,remainingQuantity:3,unitCost:35,
           batchNumber:null,expiryDate:null,serials:[]}
       ]});
-    const adjustMatch=path.match(/^\\/api\\/products\\/([^/]+)\\/adjust-stock$/);
+    const adjustMatch=path.match(/^\/api\/products\/([^/]+)\/adjust-stock$/);
     if(adjustMatch&&request.method()==='POST'){
       const product=productData.find(p=>p.productId===decodeURIComponent(adjustMatch[1]));
       assert.ok(product,'only a source product can be adjusted');
