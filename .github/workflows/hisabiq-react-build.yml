@@ -30,6 +30,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: apps/hisabiq-web/package-lock.json
+      - name: Verify safe SQL migration versioning before any database run
+        run: |
+          node scripts/check-migration-sequence.mjs migrations
+          node --test tests/phase7g-migration-sequence.test.mjs
       - name: Verify pinned React submodule and integration adapter
         run: |
           git submodule status
@@ -51,6 +55,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test tests/phase7g-migration-runtime.test.ts
           node --import tsx --test tests/preview-demo-seed.integration.test.ts
           node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security
