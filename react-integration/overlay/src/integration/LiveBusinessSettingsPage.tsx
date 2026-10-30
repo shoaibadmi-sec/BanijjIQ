@@ -159,11 +159,11 @@ export function LiveBusinessSettingsPage() {
                         <div key={field.key}>
                           <SettingsField label={field.label} bn={field.bn} language={language}>
                             {(fieldId, descriptionId) => field.key === 'Address' ?
-                              <textarea id={fieldId} aria-describedby={descriptionId}
+                              <textarea id={fieldId} aria-label={field.label} aria-describedby={descriptionId}
                                 className="min-h-20 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-ink disabled:opacity-70"
                                 value={draft[field.key]} disabled={!canEdit || saving}
                                 onChange={event => setDraft(current => current && ({ ...current, [field.key]: event.target.value }))} /> :
-                              <Input id={fieldId} aria-describedby={descriptionId}
+                              <Input id={fieldId} aria-label={field.label} aria-describedby={descriptionId}
                                 className="h-9 w-full" value={draft[field.key]}
                                 disabled={!canEdit || saving}
                                 onChange={event => setDraft(current => current && ({ ...current, [field.key]: event.target.value }))} />
