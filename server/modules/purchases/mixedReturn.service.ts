@@ -163,7 +163,8 @@ export async function completeMixedPurchaseReturn(
  const value=Number(total)/10000;
  if(value>Number(supplier.due)+0.000001)
   return fail('Supplier credit exceeds current payable. Cash refund reconciliation is required.',409);
- const returnId='PRTN-'+crypto.randomUUID();
+ // Use a separate namespace: legacy PRTN-###### numbering parses digits from IDs.
+ const returnId='MPRTN-'+crypto.randomUUID();
  const batch:SqlPreparedStatement[]=[];
  batch.push(db.prepare(`INSERT INTO purchase_returns
   (return_id,return_date,purchase_id,supplier_id,supplier_name,total_return_amount,
