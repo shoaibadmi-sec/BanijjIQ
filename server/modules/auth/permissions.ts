@@ -41,6 +41,27 @@ export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<
   try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
 }
 
+// A delegated manager may never grant a stronger permission than their own.
+function permissionWindowRank(value:DeleteWindowCode|boolean|undefined):number{
+  if(value===true||value==='unlimited')return 1000;
+  if(value===false||value===undefined||value==='disabled')return 0;
+  return value==='same'?1:Number(value)+1;
+}
+
+export async function canDelegatePermissions(db:SherDatabase,actor:AuthUser,target:RolePermissions):Promise<boolean>{
+  if(actor.role==='admin')return true;
+  const own=await getUserPermissions(db,actor);
+  return Object.entries(target).every(([moduleKey,requested])=>{
+    const granted=own?.[moduleKey];
+    return !!granted
+      &&(!requested.view||granted.view)
+      &&(!requested.add||granted.add)
+      &&(!requested.edit||granted.edit)
+      && permissionWindowRank(requested.delete)<=permissionWindowRank(granted.delete)
+      && permissionWindowRank(requested.backdate)<=permissionWindowRank(granted.backdate);
+  });
+}
+
 export async function buildClientUser(db:SherDatabase,user:AuthUser):Promise<AuthUser & {allowedModules:string[]|null;permissions:RolePermissions|null}>{
   const permissions=await getUserPermissions(db,user);
   return {...user,allowedModules:permissions===null?null:Object.keys(permissions).filter(k=>permissions[k]?.view),permissions};
