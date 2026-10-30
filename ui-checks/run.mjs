@@ -709,6 +709,8 @@ try{
         await screenshot(page,'products-'+width+'-'+theme);
         await audit(page,'products-'+width+'-'+theme);
         if(width===390&&theme==='light'){
+          assert.equal(await page.getByRole('region',{name:'Live stock alerts'}).count(),0,
+            'Pinned Products must not gain unapproved alert panels');
           const search=page.getByRole('textbox',{name:'Search products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
