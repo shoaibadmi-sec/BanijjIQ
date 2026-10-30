@@ -15,7 +15,7 @@ test('source Finance transfer dialog awaits one real API posting before closing'
  assert.match(page,/await onSave\(/);
  assert.match(page,/disabled=\{pending\}/);
  assert.match(page,/date: businessToday\(\)/);
- assert.doesNotMatch(page,/id: `TRF-\$\{String\(42/);
+ assert.match(page,/const payload=toVerifiedTransferPost\(transfer,clientRequestId\)/, 'Server posting must use source account IDs and stable request ID, not preview transfer ID');
  const adapter=read('react-integration/overlay/src/integration/phase6FinancePosting.ts');
  assert.match(adapter,/toVerifiedTransferPost/);
  assert.match(adapter,/Number.isSafeInteger/);
