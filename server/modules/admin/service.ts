@@ -76,16 +76,20 @@ export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Prom
 }
 export async function createManagedUserRoute(db:SherDatabase,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','add');if(denied)return denied;
-  const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role),password=String(input.password||'');
-  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
-  if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
+  const name=cleanText(input.name),mobile=cleanText(input.mobile),password=String(input.password||'');
+  if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');
   if(password.length<6)return error('Password must be at least 6 characters.');
-  if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const resolved=await resolveEmployeeRoles(db,input,actor);if(resolved instanceof Response)return resolved;
+  const {role,roleIds}=resolved;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? LIMIT 1`).bind(mobile).first<any>())return error('A user with this mobile number already exists.');
   const id=crypto.randomUUID(),hashed=await hashPassword(password);
-  await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
-    .bind(id,name,mobile,hashed.hash,hashed.salt,role,actor.fullName||actor.phone).run();
-  await db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_USER','USER',?,?)`).bind(actor.userId,id,`Created ${name}`).run();
+  await db.batch([
+    db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
+      .bind(id,name,mobile,hashed.hash,hashed.salt,role,actor.fullName||actor.phone),
+    ...roleIds.filter(r=>r!=='admin').map(r=>db.prepare(`INSERT INTO app_user_roles(user_id,role_name) VALUES (?,?)`).bind(id,r)),
+    db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_USER','USER',?,?)`)
+      .bind(actor.userId,id,`Created ${name}`)
+  ]);
   return json({ok:true,id});
 }
 export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
