@@ -13,7 +13,7 @@ import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary,
 const mapToBackend: Record<string,LiveReportBackendKey> = {
   'sales-register':'sales',purchases:'purchase',stock:'stock',receivables:'receivables',
   payables:'payables','product-profit':'profit','profit-loss':'profit',
-  'cash-book':'cash',expenses:'expenses','business-audit':'audit'
+  'cash-book':'cash','finance-movements':'finance',expenses:'expenses','business-audit':'audit'
 };
 const money=(minor:number|null)=>minor===null?'—':'৳'+(minor/100).toLocaleString('en-BD',{minimumFractionDigits:0,maximumFractionDigits:2});
 const choices=[...reportCatalog.filter(r=>r.id!=='overview').map(r=>({id:r.id,en:r.en,bn:r.bn,group:r.group})),
