@@ -28,6 +28,35 @@ async function validAssignableRole(db:SherDatabase,role:string):Promise<boolean>
   if(role==='admin')return true;
   return !!(await db.prepare(`SELECT 1 ok FROM app_roles WHERE role_name=? LIMIT 1`).bind(role).first<any>());
 }
+type ValidEmployeeRoles={role:string;roleIds:string[]};
+async function resolveEmployeeRoles(db:SherDatabase,input:any,actor:AuthUser,
+  previous?:{role:string;roleIds:string[]}):Promise<ValidEmployeeRoles|Response>{
+  const explicit=input?.roleIds!==undefined;
+  if(explicit && !Array.isArray(input.roleIds))return error('Select employee roles.');
+  const legacy=cleanText(input?.role);
+  const requested:unknown[]=explicit?input.roleIds:
+    previous&&legacy===previous.role?previous.roleIds:[legacy];
+  if(!requested.length || requested.length>8 || requested.some(r=>typeof r!=='string'||!r.trim()))
+    return error('Choose between one and eight roles.');
+  const roles:string[]=[];
+  for(const raw of requested){
+    const name=cleanText(raw);
+    if(name==='admin'){roles.push(name);continue;}
+    const found=await db.prepare(`SELECT role_name,status FROM app_roles WHERE role_name=? LIMIT 1`)
+      .bind(name).first<{role_name:string;status:string}>();
+    if(!found)return error('Role not found.');
+    if(explicit&&found.status!=='Active')return error('Inactive roles cannot be assigned.');
+    roles.push(found.role_name);
+  }
+  if(new Set(roles.map(r=>r.toLowerCase())).size!==roles.length)
+    return error('Employee roles must be unique.');
+  if(roles.includes('admin') && (roles.length!==1 || actor.role!=='admin'))
+    return error('Only an Administrator can assign the Administrator role.',403);
+  if(roles.length>1 && actor.role!=='admin')
+    return error('Only an Administrator can assign multiple roles.',403);
+  if(explicit&&legacy&&legacy!==roles[0])return error('Primary role and roleIds do not match.');
+  return {role:roles[0],roleIds:roles};
+}
 export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'users','view');if(denied)return denied;
   const [ur,rr]=await Promise.all([
