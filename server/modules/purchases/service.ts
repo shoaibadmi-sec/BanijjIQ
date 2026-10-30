@@ -33,6 +33,12 @@ function money(value: unknown): number {
   return Math.round(n * 10000) / 10000;
 }
 
+function validPurchaseDiscount(value: unknown, subtotal: number): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value) &&
+    value >= 0 && value <= subtotal &&
+    Math.abs(value * 10000 - Math.round(value * 10000)) <= 0.000001);
+}
+
 function qty(value: unknown): number {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -117,8 +123,26 @@ export async function createSupplierRoute(db: SherDatabase, input: { name?: stri
 export async function createPurchase(db: SherDatabase, input: PurchaseInput, user: AuthUser): Promise<Response> {
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Add at least one product line.');
-  if (Number(input.paidAmount ?? 0) !== 0)
-    return error('Purchase-time payment is not posted to a cash/bank ledger. Create the due purchase and use Supplier Settlements.',409);
+  const requestedPayment=input.paidAmount??0;
+  if(typeof requestedPayment!=='number'||!Number.isFinite(requestedPayment)||
+     requestedPayment<0||requestedPayment>1000000000||
+     Math.abs(requestedPayment*10000-Math.round(requestedPayment*10000))>0.000001)
+    return error('Enter a valid purchase payment with up to four decimals.');
+  const paidAtPurchase=requestedPayment>0;
+  const paymentRequestId=paidAtPurchase?cleanText(input.clientRequestId):'';
+  const paymentPayload=paidAtPurchase?JSON.stringify(input):'';
+  if(paidAtPurchase){
+    if(!/^[0-9a-f-]{32,36}$/i.test(paymentRequestId))
+      return error('Unique payment request ID required.');
+    if(!cleanText(input.supplierId))
+      return error('Select a saved supplier before making a purchase payment.');
+    const prior=await db.prepare(`SELECT purchase_id,grand_total,due_amount,payment_payload_json
+      FROM purchases WHERE payment_request_id=?`).bind(paymentRequestId)
+      .first<{purchase_id:string;grand_total:number;due_amount:number;payment_payload_json:string}>();
+    if(prior)return prior.payment_payload_json===paymentPayload
+      ?json({ok:true,purchaseId:prior.purchase_id,grandTotal:prior.grand_total,dueAmount:prior.due_amount,idempotent:true})
+      :error('Purchase payment request ID was reused with different details.',409);
+  }
   const mixedPurchase=items.some(i=>i.unitQuantities!==undefined||
     i.unitProfileRevision!==undefined||i.priceUnit!==undefined);
   if(mixedPurchase&&!cleanText(input.supplierId))
@@ -215,34 +239,50 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
-  const discount = Math.min(money(input.discount), subtotal);
+  if (!validPurchaseDiscount(input.discount, subtotal))
+    return error('Discount must be a non-negative amount within the subtotal, using up to four decimals.');
+  const discount = input.discount === undefined ? 0 : input.discount;
   const grandTotal = Math.max(0, Math.round((subtotal - discount) * 10000) / 10000);
-  const paidAmount = Math.min(money(input.paidAmount), grandTotal);
-  const dueAmount = Math.max(0, Math.round((grandTotal - paidAmount) * 10000) / 10000);
+  if(requestedPayment>grandTotal)return error('Purchase payment exceeds invoice total.',409);
+  const paidAmount=requestedPayment;
+  const dueAmount=Math.round((grandTotal-paidAmount)*10000)/10000;
   const paymentStatus = dueAmount <= 0 ? 'Paid' : (paidAmount > 0 ? 'Partial' : 'Due');
   const paymentMethod = paidAmount > 0 ? cleanText(input.paymentMethod || 'Cash') : '';
-  const bankAccountId = cleanText(input.bankAccountId);
-  let bankAccountName = '';
-  if (paidAmount > 0 && (paymentMethod === 'Bank' || paymentMethod === 'Mobile Banking')) {
-    if (!bankAccountId) return error('Bank account is required for bank/mobile payment.');
-    const bank = await db.prepare(`SELECT account_name AS name FROM bank_accounts WHERE bank_account_id = ? AND status = 'Active' LIMIT 1`).bind(bankAccountId).first<{ name: string }>();
-    if (!bank) return error('Bank account not found.');
-    bankAccountName = bank.name;
+  const bankAccountId=paidAtPurchase?cleanText(input.bankAccountId):'';
+  let bankAccountName='';
+  if(paidAtPurchase){
+    if(!['Cash','Bank','Mobile Banking'].includes(paymentMethod))
+      return error('Invalid purchase payment method.');
+    if(!(await hasActiveCashSession(db)))
+      return error('Open a cash session before paying for purchases.',409);
+    if(paymentMethod==='Cash'&&bankAccountId)
+      return error('Cash payment must not have a bank account.');
+    if(paymentMethod!=='Cash'){
+      if(!bankAccountId)return error('Select a bank/mobile account.');
+      const bank=await db.prepare(`SELECT account_name AS name,current_balance AS balance
+        FROM bank_accounts WHERE bank_account_id=? AND status='Active'`)
+        .bind(bankAccountId).first<{name:string;balance:number}>();
+      if(!bank)return error('Active payment account not found.',409);
+      if(Number(bank.balance)<paidAmount)return error('Insufficient bank/mobile funds.',409);
+      bankAccountName=bank.name;
+    }
   }
-
   const purchaseId = await nextPurchaseId(db);
+  const paymentLedgerId=paidAtPurchase?crypto.randomUUID():'';
   const batch: SqlPreparedStatement[] = [];
   batch.push(db.prepare(`
     INSERT INTO purchases (
       purchase_id, purchase_date, supplier_id, supplier_name, subtotal, discount, grand_total,
       paid_amount, due_amount, payment_status, note, status, payment_method,
       bank_account_id, bank_account_name, is_backdated, backdated_days, backdated_reason,
-      purchase_plan_order_id, created_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Completed', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      purchase_plan_order_id, created_by, created_at, updated_at,
+      payment_request_id,payment_payload_json,payment_ledger_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Completed', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?, ?, ?)
   `).bind(
     purchaseId, purchaseDate, supplier.supplierId, supplier.supplierName, subtotal, discount, grandTotal,
     paidAmount, dueAmount, paymentStatus, cleanText(input.notes || input.note), paymentMethod,
-    bankAccountId, bankAccountName, purchaseDate < today ? 1 : 0, purchaseDate < today ? 1 : 0, cleanText(input.backdatedReason), purchasePlanOrderId, user.userId
+    bankAccountId, bankAccountName, purchaseDate < today ? 1 : 0, purchaseDate < today ? 1 : 0, cleanText(input.backdatedReason), purchasePlanOrderId, user.userId,
+    paymentRequestId,paymentPayload,paymentLedgerId
   ));
 
   for (const line of normalized) {
@@ -277,12 +317,44 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     `).bind(newStock, line.unitPrice, line.sellingPrice, line.sellingPrice, line.product.product_id));
   }
 
-  if (dueAmount > 0) {
-    batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due + ?, updated_at = datetime('now') WHERE supplier_id = ?`).bind(dueAmount, supplier.supplierId));
-    batch.push(db.prepare(`
-      INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, datetime('now'), ?, ?, 'Purchase', ?, ?, 0, (SELECT current_due FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))
-    `).bind(crypto.randomUUID(), supplier.supplierId, supplier.supplierName, purchaseId, dueAmount, supplier.supplierId, '', user.userId));
+  if(grandTotal>0){
+    // Full purchase debit followed by real money-backed credit, all in one D1 transaction.
+    batch.push(db.prepare(`UPDATE suppliers SET current_due=current_due+?,updated_at=datetime('now')
+      WHERE supplier_id=?`).bind(grandTotal,supplier.supplierId));
+    batch.push(db.prepare(`INSERT INTO supplier_ledger
+      (ledger_id,date,supplier_id,supplier_name,type,reference,debit,credit,balance,notes,created_by,created_at)
+      VALUES (?,?,?,?,'Purchase',?,?,0,
+        (SELECT current_due FROM suppliers WHERE supplier_id=?),'',?,datetime('now'))`)
+      .bind(crypto.randomUUID(),purchaseDate,supplier.supplierId,supplier.supplierName,
+        purchaseId,grandTotal,supplier.supplierId,user.userId));
+    if(paidAtPurchase){
+      batch.push(db.prepare(`UPDATE suppliers SET current_due=current_due-?,updated_at=datetime('now')
+        WHERE supplier_id=?`).bind(paidAmount,supplier.supplierId));
+      batch.push(db.prepare(`INSERT INTO supplier_ledger
+        (ledger_id,date,supplier_id,supplier_name,type,reference,debit,credit,balance,
+         notes,payment_method,bank_account_id,created_by,created_at)
+        VALUES (?,?,?,?,'Purchase Payment',?,0,?,
+          (SELECT current_due FROM suppliers WHERE supplier_id=?),'',?,?,?,datetime('now'))`)
+        .bind(paymentLedgerId,purchaseDate,supplier.supplierId,supplier.supplierName,
+          purchaseId,paidAmount,supplier.supplierId,paymentMethod,bankAccountId,user.userId));
+      if(paymentMethod==='Cash'){
+        batch.push(db.prepare(`INSERT INTO cash_book
+          (entry_id,date,type,reference,description,debit,credit,payment_method,created_at)
+          VALUES (?,?,'Supplier Payment',?,?,?,0,'Cash',datetime('now'))`)
+          .bind(crypto.randomUUID(),purchaseDate,paymentLedgerId,
+            'Purchase payment '+purchaseId,paidAmount));
+      }else{
+        batch.push(db.prepare(`UPDATE bank_accounts SET current_balance=current_balance-?
+          WHERE bank_account_id=?`).bind(paidAmount,bankAccountId));
+        batch.push(db.prepare(`INSERT INTO bank_book
+          (entry_id,bank_account_id,date,type,reference,description,debit,credit,
+           bank_account_name,balance,created_by,created_at)
+          VALUES (?,?,?,'Supplier Payment',?,?,?,0,?,
+           (SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),?,datetime('now'))`)
+          .bind(crypto.randomUUID(),bankAccountId,purchaseDate,paymentLedgerId,
+            'Purchase payment '+purchaseId,paidAmount,bankAccountName,bankAccountId,user.userId));
+      }
+    }
   }
 
   if (purchasePlanOrderId) {
@@ -296,8 +368,23 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
   }
 
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'CREATE_PURCHASE', 'PURCHASE', ?, ?)` ).bind(user.userId, purchaseId, purchasePlanOrderId ? `Purchase grand total ${grandTotal}; source order ${purchasePlanOrderId}` : `Purchase grand total ${grandTotal}`));
-  await db.batch(batch);
-  return json({ ok: true, purchaseId, grandTotal, dueAmount });
+  try{await db.batch(batch);}
+  catch(e){
+    if(/supplier_due_unreconciled/i.test(String(e)))
+      return error('Supplier balance does not match its ledger. Reconcile before purchasing.',409);
+    if(paidAtPurchase){
+      const prior=await db.prepare(`SELECT purchase_id,grand_total,due_amount,payment_payload_json
+        FROM purchases WHERE payment_request_id=?`).bind(paymentRequestId)
+        .first<{purchase_id:string;grand_total:number;due_amount:number;payment_payload_json:string}>();
+      if(prior)return prior.payment_payload_json===paymentPayload
+        ?json({ok:true,purchaseId:prior.purchase_id,grandTotal:prior.grand_total,dueAmount:prior.due_amount,idempotent:true})
+        :error('Purchase payment request was reused with different details.',409);
+      if(/constraint|negative|insufficient|unreconciled|cash_session_closed|changed|paid_purchase/i.test(String(e)))
+        return error('Purchase payment or supplier balance changed. Refresh safely.',409);
+    }
+    throw e;
+  }
+  return json({ok:true,purchaseId,grandTotal,dueAmount});
 }
 
 export async function getPurchases(db: SherDatabase): Promise<Response> {
@@ -508,7 +595,9 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
-  const discount = Math.min(money(input.discount), subtotal);
+  if (!validPurchaseDiscount(input.discount, subtotal))
+    return error('Discount must be a non-negative amount within the subtotal, using up to four decimals.');
+  const discount = input.discount === undefined ? 0 : input.discount;
   const grandTotal = Math.max(0, Math.round((subtotal - discount) * 10000) / 10000);
   const paidAmount = Math.min(money(input.paidAmount), grandTotal);
   const dueAmount = Math.max(0, Math.round((grandTotal - paidAmount) * 10000) / 10000);

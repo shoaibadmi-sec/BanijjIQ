@@ -331,6 +331,246 @@ test('4F money safety: forbid unposted paid purchases, paid edits and cash refun
  });
 });
 
+test('4I Cash: paid purchase posts invoice, full supplier debit, payment credit and cash book atomically',async()=>{
+ await fixture(async({api,one,count,db,supplier,p1})=>{
+  const requestId=crypto.randomUUID();
+  const body={supplierId:supplier.id,paidAmount:40,paymentMethod:'Cash',
+   clientRequestId:requestId,items:[{productId:p1.productId,qty:2,unitPrice:50}]};
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   supplierLedger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   invoices:count('purchases'),purchaseItems:count('purchase_items'),
+   lots:count('stock_lots'),cash:count('cash_book'),bank:count('bank_book')
+  });
+  const initial=snapshot();
+  const closed=await api('POST','/api/purchases',body);
+  assert.equal(closed.status,409,'Purchase-time payment requires an open cash session');
+  assert.deepEqual(snapshot(),initial,'Session rejection must not post inventory or money');
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')").run('CS-4I-CASH');
+  const purchase=await api('POST','/api/purchases',body);
+  safe(purchase);
+  assert.equal(purchase.grandTotal,100);
+  assert.equal(purchase.dueAmount,60);
+  const row=one('SELECT paid_amount AS paid,due_amount AS due,payment_status AS status, payment_request_id AS requestId FROM purchases WHERE purchase_id=?',purchase.purchaseId);
+  assert.deepEqual(row,{paid:40,due:60,status:'Partial',requestId});
+  assert.deepEqual(snapshot(),{...initial,due:60,supplierLedger:60,stock:2,invoices:1,purchaseItems:1,lots:1,cash:1});
+  const entries=db.native.prepare('SELECT ledger_id AS id,type,reference,debit,credit,balance FROM supplier_ledger WHERE supplier_id=? ORDER BY rowid').all(supplier.id) as any[];
+  assert.deepEqual(entries.map(x=>[x.type,x.debit,x.credit,x.balance]),[
+   ['Purchase',100,0,100],['Purchase Payment',0,40,60]]);
+  assert.equal(entries[0].reference,purchase.purchaseId);
+  assert.equal(entries[1].reference,purchase.purchaseId);
+  assert.deepEqual(one('SELECT type,debit,credit,reference FROM cash_book'),
+   {type:'Supplier Payment',debit:40,credit:0,reference:entries[1].id});
+  const beforeReplay=snapshot();
+  const replay=await api('POST','/api/purchases',body);
+  safe(replay);
+  assert.equal(replay.idempotent,true);
+  assert.equal(replay.purchaseId,purchase.purchaseId);
+  assert.deepEqual(snapshot(),beforeReplay,'Retry cannot double-charge or duplicate stock');
+  const changed=await api('POST','/api/purchases',{...body,paidAmount:41});
+  assert.equal(changed.status,409);
+  assert.deepEqual(snapshot(),beforeReplay);
+  assert.notEqual((await api('DELETE','/api/purchases/'+purchase.purchaseId,{reason:'Trying to delete a paid purchase'})).status,200);
+  assert.notEqual((await api('PUT','/api/purchases/'+purchase.purchaseId,{...body,reason:'Trying to edit a paid purchase'})).status,200);
+  assert.deepEqual(snapshot(),beforeReplay);
+ });
+});
+
+test('4I Bank: insufficient funds and journal failure leave zero partial records; retry posts once',async()=>{
+ await fixture(async({api,one,count,db,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')").run('CS-4I-BANK');
+  db.native.prepare(`INSERT INTO bank_accounts
+   (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type)
+   VALUES ('BANK-4I','4I Current','4I Test',200,200,'Active','Bank')`).run();
+  const payload={supplierId:supplier.id,clientRequestId:crypto.randomUUID(),
+   paidAmount:70,paymentMethod:'Bank',bankAccountId:'BANK-4I',
+   items:[{productId:p1.productId,qty:3,unitPrice:100}]};
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   bankBalance:one('SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id=?','BANK-4I').n,
+   purchases:count('purchases'),items:count('purchase_items'),lots:count('stock_lots'),
+   bankBook:count('bank_book'),cashBook:count('cash_book'),audits:count('audit_logs')
+  });
+  const before=snapshot();
+  for(const x of [
+    {...payload,paidAmount:301,clientRequestId:crypto.randomUUID()},
+    {...payload,paidAmount:201,clientRequestId:crypto.randomUUID()},
+    {...payload,paidAmount:70.00001,clientRequestId:crypto.randomUUID()},
+    {...payload,paymentMethod:'Card',clientRequestId:crypto.randomUUID()},
+    {...payload,clientRequestId:'missing'},
+    {...payload,bankAccountId:'INVALID',clientRequestId:crypto.randomUUID()}
+  ]){
+   const response=await api('POST','/api/purchases',x);
+   assert.notEqual(response.status,200,JSON.stringify({x,response}));
+   assert.deepEqual(snapshot(),before,'Invalid paid purchase cannot affect finance or stock');
+  }
+  db.native.exec(`CREATE TRIGGER reject_purchase_money_4i BEFORE INSERT ON bank_book
+   WHEN NEW.type='Supplier Payment' BEGIN SELECT RAISE(ABORT,'4i-injected-bank-failure'); END;`);
+  const failed=await api('POST','/api/purchases',payload);
+  assert.notEqual(failed.status,200,'A failed bank journal must block the entire purchase');
+  assert.deepEqual(snapshot(),before,'Bank-book failure must roll back stock, invoice, due and bank balances');
+  db.native.exec('DROP TRIGGER reject_purchase_money_4i');
+  const purchase=await api('POST','/api/purchases',payload);
+  safe(purchase);
+  assert.deepEqual(snapshot(),{...before,due:230,ledger:230,stock:3,bankBalance:130,
+   purchases:1,items:1,lots:1,bankBook:1,cashBook:0,audits:before.audits+1});
+  const payment=one("SELECT ledger_id AS id,credit,bank_account_id AS bankAccountId FROM supplier_ledger WHERE type='Purchase Payment'");
+  assert.equal(payment.credit,70);
+  assert.equal(payment.bankAccountId,'BANK-4I');
+  assert.deepEqual(one('SELECT bank_account_id AS bankId,type,reference,debit,credit,balance FROM bank_book'),
+   {bankId:'BANK-4I',type:'Supplier Payment',reference:payment.id,debit:70,credit:0,balance:130});
+  const stable=snapshot();
+  const [oneReplay,twoReplay]=await Promise.all([
+   api('POST','/api/purchases',payload),api('POST','/api/purchases',payload)]);
+  safe(oneReplay);safe(twoReplay);
+  assert.equal(oneReplay.purchaseId,purchase.purchaseId);
+  assert.equal(twoReplay.purchaseId,purchase.purchaseId);
+  assert.deepEqual(snapshot(),stable,'Concurrent retries cannot double-post invoices or cash movements');
+ });
+});
+
+test('4I business: reject a due purchase when supplier master and ledger disagree',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  const first=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});
+  safe(first);
+  db.native.prepare('UPDATE suppliers SET current_due=? WHERE supplier_id=?').run(95,supplier.id);
+  const snapshot=()=>({
+   master:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   invoices:count('purchases'),lines:count('purchase_items'),lots:count('stock_lots'),
+   movements:count('stock_movements'),audit:count('audit_logs')
+  });
+  const before=snapshot();
+  assert.equal(before.master,95);assert.equal(before.ledger,100);
+  const invalid=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(invalid.status,409,'Unreconciled supplier cannot receive another purchase invoice');
+  assert.deepEqual(snapshot(),before,'Rejected purchase must not change any journal or stock');
+ });
+});
+
+test('4I functions: invalid discounts must not silently change purchase invoice totals',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:count('supplier_ledger'),
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   purchases:count('purchases'),lots:count('stock_lots'),audit:count('audit_logs')
+  });
+  const before=snapshot();
+  const base={supplierId:supplier.id,paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]};
+  for(const discount of [-1,0.00001,101,'10',null]){
+   const result=await api('POST','/api/purchases',{...base,discount});
+   assert.equal(result.status,400,'Invalid discount '+String(discount)+' cannot post');
+   assert.deepEqual(snapshot(),before,'Invalid discount cannot alter inventory or money');
+  }
+  const valid=await api('POST','/api/purchases',{...base,discount:10});
+  safe(valid);
+  assert.equal(valid.grandTotal,90);
+  assert.equal(valid.dueAmount,90);
+  assert.equal(one('SELECT discount AS n FROM purchases WHERE purchase_id=?',valid.purchaseId).n,10);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,90);
+ });
+});
+
+test('4I functions: invalid invoice-edit discount must preserve original purchase and ledger',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const create=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(create);
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   invoice:one('SELECT discount,grand_total,paid_amount,due_amount FROM purchases WHERE purchase_id=?',create.purchaseId),
+   lines:count('purchase_items'),lots:count('stock_lots'),edits:count('invoice_edit_logs'),
+   audits:count('audit_logs'),stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n
+  });
+  const before=snapshot();
+  for(const discount of [-1,0.00001,101,'10',null]){
+   const edit=await api('PUT','/api/purchases/'+create.purchaseId,{
+    supplierId:supplier.id,reason:'Attempt invalid discount',
+    discount,paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]
+   });
+   assert.equal(edit.status,400,'Malformed discount '+String(discount)+' must not be saved');
+   assert.deepEqual(snapshot(),before,'Rejected edit must leave invoice, journal and stock unchanged');
+  }
+ });
+});
+
+test('4I Cash: money-book insert failure rolls back a fully paid purchase and can be retried',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')").run('CS-4I-ROLLBACK');
+  const payload={supplierId:supplier.id,paidAmount:100,paymentMethod:'Cash',
+   clientRequestId:crypto.randomUUID(),items:[{productId:p1.productId,qty:2,unitPrice:50}]};
+  const snapshot=()=>({
+   supplier:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:count('supplier_ledger'),stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   invoices:count('purchases'),lines:count('purchase_items'),lots:count('stock_lots'),
+   cash:count('cash_book'),audits:count('audit_logs')
+  });
+  const before=snapshot();
+  db.native.exec(`CREATE TRIGGER stop_cash_4i BEFORE INSERT ON cash_book
+   WHEN NEW.type='Supplier Payment' BEGIN SELECT RAISE(ABORT,'4i-cash-journal-failure'); END;`);
+  const failed=await api('POST','/api/purchases',payload);
+  assert.notEqual(failed.status,200,'A failed Cash journal must reject the invoice');
+  assert.deepEqual(snapshot(),before,'No stock, money, supplier or audit changes may survive');
+  db.native.exec('DROP TRIGGER stop_cash_4i');
+  const posted=await api('POST','/api/purchases',payload);
+  safe(posted);
+  assert.equal(posted.dueAmount,0);
+  assert.deepEqual(snapshot(),{...before,supplier:0,ledger:2,stock:2,
+   invoices:1,lines:1,lots:1,cash:1,audits:before.audits+1});
+  assert.deepEqual(db.native.prepare('SELECT debit,credit,balance FROM supplier_ledger ORDER BY rowid').all(),
+   [{debit:100,credit:0,balance:100},{debit:0,credit:100,balance:0}]);
+  assert.deepEqual(one('SELECT paid_amount AS paid,due_amount AS due,payment_status AS status FROM purchases WHERE purchase_id=?',posted.purchaseId),
+   {paid:100,due:0,status:'Paid'});
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM cash_book').n,100);
+  const replay=await api('POST','/api/purchases',payload);
+  safe(replay);assert.equal(replay.purchaseId,posted.purchaseId);assert.equal(replay.idempotent,true);
+  assert.equal(count('cash_book'),1,'A replay cannot debit the cash balance twice');
+ });
+});
+
+test('4I accounting: multiple purchases reconcile supplier, bank, cash and FIFO by hand',async()=>{
+ await fixture(async({api,db,one,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')")
+   .run('CS-4I-ACCOUNT');
+  db.native.prepare(`INSERT INTO bank_accounts
+   (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type)
+   VALUES ('BANK-4I-ACCOUNT','Current','4I Bank',500,500,'Active','Bank')`).run();
+  const due=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(due);
+  const cash=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:40,
+   clientRequestId:crypto.randomUUID(),paymentMethod:'Cash',discount:10,
+   items:[{productId:p1.productId,qty:1,unitPrice:80}]});safe(cash);
+  const bank=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:90,
+   clientRequestId:crypto.randomUUID(),paymentMethod:'Bank',bankAccountId:'BANK-4I-ACCOUNT',
+   items:[{productId:p1.productId,qty:3,unitPrice:40}]});safe(bank);
+  assert.deepEqual([due.grandTotal,cash.grandTotal,bank.grandTotal],[100,70,120]);
+  assert.deepEqual([due.dueAmount,cash.dueAmount,bank.dueAmount],[100,30,30]);
+  const ledger=db.native.prepare('SELECT type,debit,credit,balance FROM supplier_ledger WHERE supplier_id=? ORDER BY rowid')
+   .all(supplier.id) as Array<{type:string;debit:number;credit:number;balance:number}>;
+  assert.deepEqual(ledger.map(x=>[x.type,x.debit,x.credit,x.balance]),[
+   ['Purchase',100,0,100],['Purchase',70,0,170],['Purchase Payment',0,40,130],
+   ['Purchase',120,0,250],['Purchase Payment',0,90,160]
+  ]);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,160);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,160);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,6);
+  assert.deepEqual(db.native.prepare("SELECT original_quantity AS n,unit_cost AS cost FROM stock_lots WHERE product_id=? AND source_type='PURCHASE' ORDER BY rowid").all(p1.productId),
+   [{n:2,cost:50},{n:1,cost:80},{n:3,cost:40}]);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM cash_book').n,40);
+  assert.equal(one('SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id=?','BANK-4I-ACCOUNT').n,410);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM bank_book WHERE bank_account_id=?','BANK-4I-ACCOUNT').n,90);
+  assert.deepEqual(db.native.prepare('SELECT paid_amount AS paid,due_amount AS due,payment_status AS status FROM purchases ORDER BY rowid').all(),
+   [{paid:0,due:100,status:'Due'},{paid:40,due:30,status:'Partial'},{paid:90,due:30,status:'Partial'}]);
+ });
+});
+
 test('4F historical paid purchase cannot be deleted without reversing its posted supplier payment',async()=>{
  await fixture(async({api,one,count,db,supplier,p1})=>{
   const p=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,discount:0,

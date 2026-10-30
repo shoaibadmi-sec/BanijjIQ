@@ -26,6 +26,7 @@ export type PurchaseInput = {
   backdatedReason?: string;
   discount?: number;
   paidAmount?: number;
+  clientRequestId?: string; // Required for paid purchases; unique retry key.
   notes?: string;
   note?: string;
   paymentMethod?: string;
