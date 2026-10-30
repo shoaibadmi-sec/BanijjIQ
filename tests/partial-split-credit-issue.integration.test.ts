@@ -206,3 +206,52 @@ test('G2-Q accepts original Cash and Store Credit tenders in either row order',a
     assert.equal((f.q.prepare("SELECT debit n FROM cash_book WHERE reference='SRT-CR-REVERSE-TENDER'").get() as any).n,4);
   }finally{f.db.close();}
 });
+
+
+test('G2-Q concurrent same-id retries commit one Cash refund and one Store Credit ISSUE',async()=>{
+  const f=fixture(false);
+  const request={invoiceId:'CR-S',productId:'CR-P',quantity:1,
+    requestId:'CR-CONCURRENT-SAME',reason:'One original-source refund despite concurrent retries'};
+  try{
+    const results=await Promise.all([
+      postCashCreditPartialSplitReturn(f.db,request),
+      postCashCreditPartialSplitReturn(f.db,request)
+    ]);
+    assert.equal(results.filter(r=>r.alreadyPosted===false).length,1);
+    assert.equal(results.filter(r=>r.alreadyPosted===true).length,1);
+    assert.equal(f.count('sales_returns'),2);
+    assert.equal((f.q.prepare(
+      "SELECT COALESCE(SUM(debit),0) n FROM cash_book WHERE reference='SRT-CR-CONCURRENT-SAME'"
+    ).get() as any).n,4);
+    assert.equal((f.q.prepare(
+      "SELECT COALESCE(SUM(delta_cents),0) n FROM customer_store_credit_entries WHERE source_id='SRT-CR-CONCURRENT-SAME'"
+    ).get() as any).n,600);
+    assert.equal((f.q.prepare("SELECT current_stock n FROM products WHERE product_id='CR-P'").get() as any).n,6);
+  }finally{f.db.close();}
+});
+
+test('G2-Q competing partial returns cannot restore or refund more than originally sold',async()=>{
+  const f=fixture(false);
+  const request={invoiceId:'CR-S',productId:'CR-P',quantity:3,
+    reason:'Original-source concurrent quantity cap must hold'};
+  try{
+    const attempts=await Promise.allSettled([
+      postCashCreditPartialSplitReturn(f.db,{...request,requestId:'CR-CONCURRENT-THREE-A'}),
+      postCashCreditPartialSplitReturn(f.db,{...request,requestId:'CR-CONCURRENT-THREE-B'})
+    ]);
+    assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(attempts.filter(r=>r.status==='rejected').length,1);
+    assert.equal(f.count('sales_returns'),2,'at most 3 of the original 5 units can be returned');
+    assert.equal((f.q.prepare("SELECT current_stock n FROM products WHERE product_id='CR-P'").get() as any).n,8);
+    assert.equal((f.q.prepare("SELECT remaining_quantity n FROM stock_lots WHERE lot_id='CR-L'").get() as any).n,8);
+    assert.equal((f.q.prepare(
+      "SELECT COUNT(*) n FROM audit_logs WHERE action='POST_PARTIAL_SPLIT_RETURN'"
+    ).get() as any).n,1);
+    assert.equal((f.q.prepare(
+      "SELECT COALESCE(SUM(delta_cents),0) n FROM customer_store_credit_entries WHERE source_type='Sales Return' AND source_id LIKE 'SRT-CR-CONCURRENT-THREE-%'"
+    ).get() as any).n,1800,'no duplicate Store Credit issuance');
+    assert.equal((f.q.prepare(
+      "SELECT COALESCE(SUM(debit),0) n FROM cash_book WHERE reference LIKE 'SRT-CR-CONCURRENT-THREE-%'"
+    ).get() as any).n,12,'no duplicate Cash payout');
+  }finally{f.db.close();}
+});
