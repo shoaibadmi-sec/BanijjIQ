@@ -223,28 +223,112 @@ export async function addBankManualEntryRoute(db:SherDatabase,input:BankManualIn
 
 export async function reverseBankEntryRoute(db:SherDatabase,entryId:string,reasonRaw:string,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before reversing a bank entry.');const reason=cleanText(reasonRaw);if(!reason)return error('Enter a reason for reversing this entry.');
-  const e=await db.prepare(`SELECT * FROM bank_book WHERE entry_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(entryId).first<any>();if(!e)return error('Entry not found.',404);if(String(e.status||'Active')==='Reversed')return error('This entry has already been reversed.');if(cleanText(e.reversal_of))return error('This entry is itself a reversal and cannot be reversed again.');const exists=await db.prepare(`SELECT 1 x FROM bank_book WHERE reversal_of=? LIMIT 1`).bind(entryId).first();if(exists)return error('A reversal already exists for this entry.');
+  const e=await db.prepare(`SELECT * FROM bank_book WHERE entry_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(entryId).first<any>();if(!e)return error('Entry not found.',404);if(String(e.type||'').startsWith('Transfer'))return error('Transfer legs must be reversed together from the original transfer.',409);if(String(e.status||'Active')==='Reversed')return error('This entry has already been reversed.');if(cleanText(e.reversal_of))return error('This entry is itself a reversal and cannot be reversed again.');const exists=await db.prepare(`SELECT 1 x FROM bank_book WHERE reversal_of=? LIMIT 1`).bind(entryId).first();if(exists)return error('A reversal already exists for this entry.');
   const debit=Number(e.debit||0),credit=Number(e.credit||0);if(!debit&&!credit)return error('This entry has no amount to reverse.');
   await addBankBookExact(db,String(e.bank_account_id),{type:'Reversal',reference:entryId,description:`Reversal of ${entryId} — ${reason}`,debit:credit,credit:debit,notes:reason,createdBy:user.fullName,reversalOf:entryId});
   await db.prepare(`UPDATE bank_book SET status='Reversed' WHERE entry_id=?`).bind(entryId).run();return json({ok:true,entryId});
 }
 
+
+function bankTransferTicks(value: unknown): number | null {
+  const amount = Number(value);
+  const ticks = Math.round(amount * 10000);
+  return value !== null && value !== undefined && Number.isFinite(amount) &&
+    Number.isSafeInteger(ticks) && ticks > 0 &&
+    Math.abs(amount * 10000 - ticks) < 0.00001 ? ticks : null;
+}
+function bankRequestId(raw: unknown): string {
+  const id = cleanText(raw);
+  return /^[A-Za-z0-9._:-]{8,120}$/.test(id) ? id : '';
+}
+async function lookupBankRequest(db: SherDatabase, requestId: string) {
+  return db.prepare('SELECT transfer_id,request_fingerprint FROM bank_transfers WHERE client_request_id=? LIMIT 1')
+    .bind(requestId).first<{transfer_id:string;request_fingerprint:string}>();
+}
 export async function transferBankRoute(db:SherDatabase,input:BankTransferInput,user:AuthUser):Promise<Response>{
-  if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before recording a bank transfer.');const fromId=cleanText(input.fromAccountId),toId=cleanText(input.toAccountId);if(!fromId||!toId)return error('Choose both a from and to account.');if(fromId===toId)return error('Choose two different bank accounts.');const amount=money(input.amount);if(amount<=0)return error('Enter a valid transfer amount.');
-  const [from,to]=await Promise.all([db.prepare(`SELECT * FROM bank_accounts WHERE bank_account_id=? LIMIT 1`).bind(fromId).first<any>(),db.prepare(`SELECT * FROM bank_accounts WHERE bank_account_id=? LIMIT 1`).bind(toId).first<any>()]);if(!from)return error('From account not found.');if(!to)return error('To account not found.');const transferId=bankId('BTR'),date=todayDate(),fromNext=Math.round((Number(from.current_balance||0)-amount)*10000)/10000,toNext=Math.round((Number(to.current_balance||0)+amount)*10000)/10000;
-  await db.batch([
-    db.prepare(`INSERT INTO bank_transfers(transfer_id,transfer_date,from_account_id,from_account_name,to_account_id,to_account_name,amount,notes,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`).bind(transferId,date,fromId,String(from.account_name),toId,String(to.account_name),amount,cleanText(input.notes),user.fullName),
-    db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?, 'Transfer Out',?,?,?,0,?,'Active',?,0)`).bind(bankId('BB'),fromId,String(from.account_name),date,transferId,`Transfer to ${String(to.account_name)}`,amount,fromNext,user.fullName),
-    db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?, 'Transfer In',?,?,0,?,?,'Active',?,0)`).bind(bankId('BB'),toId,String(to.account_name),date,transferId,`Transfer from ${String(from.account_name)}`,amount,toNext,user.fullName),
-    db.prepare(`UPDATE bank_accounts SET current_balance=? WHERE bank_account_id=?`).bind(fromNext,fromId),
-    db.prepare(`UPDATE bank_accounts SET current_balance=? WHERE bank_account_id=?`).bind(toNext,toId)
-  ]);return json({ok:true,id:transferId});
+  const fromId=cleanText(input.fromAccountId),toId=cleanText(input.toAccountId),requestId=bankRequestId(input.clientRequestId);
+  if(!requestId)return error('A valid clientRequestId is required for safe transfer retries.');
+  if(!fromId||!toId||fromId===toId)return error('Choose two different bank accounts.');
+  const ticks=bankTransferTicks(input.amount);
+  if(ticks===null)return error('Enter a positive amount with at most four decimal places.');
+  const amount=ticks/10000,notes=cleanText(input.notes),fingerprint=JSON.stringify([fromId,toId,ticks,notes]);
+  const existing=await lookupBankRequest(db,requestId);
+  if(existing)return existing.request_fingerprint===fingerprint?
+    json({ok:true,id:existing.transfer_id,replayed:true}):
+    error('Client request ID was already used for different transfer details.',409);
+  if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before recording a bank transfer.');
+  const [from,to]=await Promise.all([
+    db.prepare('SELECT bank_account_id,account_name,status FROM bank_accounts WHERE bank_account_id=? LIMIT 1').bind(fromId).first<any>(),
+    db.prepare('SELECT bank_account_id,account_name,status FROM bank_accounts WHERE bank_account_id=? LIMIT 1').bind(toId).first<any>()
+  ]);
+  if(!from||!to||from.status!=='Active'||to.status!=='Active')
+    return error('Both transfer accounts must exist and be active.');
+  const transferId=bankId('BTR'),date=todayDate();
+  // DB trigger checks the current source balance within this same atomic D1 batch,
+  // not a stale preflight balance. The unique request key prevents double posting.
+  try {
+    await db.batch([
+      db.prepare('INSERT INTO bank_transfers(transfer_id,transfer_date,from_account_id,from_account_name,to_account_id,to_account_name,amount,notes,created_by,created_at,client_request_id,request_fingerprint) VALUES (?,?,?,?,?,?,?,?,?,datetime(\'now\'),?,?)')
+        .bind(transferId,date,fromId,String(from.account_name),toId,String(to.account_name),amount,notes,user.fullName,requestId,fingerprint),
+      db.prepare('INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?,\'Transfer Out\',?,?,?,0,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)-?,4),\'Active\',?,0)')
+        .bind(bankId('BB'),fromId,String(from.account_name),date,transferId,'Transfer to '+String(to.account_name),amount,fromId,amount,user.fullName),
+      db.prepare('INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?,\'Transfer In\',?,?,0,?,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)+?,4),\'Active\',?,0)')
+        .bind(bankId('BB'),toId,String(to.account_name),date,transferId,'Transfer from '+String(from.account_name),amount,toId,amount,user.fullName),
+      db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance-?,4) WHERE bank_account_id=?')
+        .bind(amount,fromId),
+      db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance+?,4) WHERE bank_account_id=?')
+        .bind(amount,toId)
+    ]);
+  } catch {
+    const retry=await lookupBankRequest(db,requestId);
+    if(retry)return retry.request_fingerprint===fingerprint?
+      json({ok:true,id:retry.transfer_id,replayed:true}):
+      error('Client request ID was already used for different transfer details.',409);
+    return error('Transfer not posted: account balance changed or one ledger entry failed.',409);
+  }
+  return json({ok:true,id:transferId,replayed:false});
 }
 
-export async function getBankTransfersRoute(db:SherDatabase):Promise<Response>{const r=await db.prepare(`SELECT * FROM bank_transfers ORDER BY transfer_date DESC,created_at DESC`).all<any>();return json({ok:true,transfers:(r.results||[]).map((t:any)=>({transferId:String(t.transfer_id),date:String(t.transfer_date),fromAccountId:String(t.from_account_id),fromAccountName:String(t.from_account_name),toAccountId:String(t.to_account_id),toAccountName:String(t.to_account_name),amount:Number(t.amount||0),notes:String(t.notes||''),createdBy:String(t.created_by||''),createdAt:String(t.created_at||'')}))});}
+export async function reverseBankTransferRoute(db:SherDatabase,transferId:string,reasonRaw:string,user:AuthUser):Promise<Response>{
+  const reason=cleanText(reasonRaw);
+  if(reason.length<8)return error('Enter a reversal reason (at least eight characters).');
+  const t=await db.prepare('SELECT * FROM bank_transfers WHERE transfer_id=? LIMIT 1').bind(transferId).first<any>();
+  if(!t)return error('Transfer not found.',404);
+  if(cleanText(t.reversed_at))return error('Transfer has already been reversed.',409);
+  if(!(await getOpenCashSession(db)))return error('Start a cash session before reversing a transfer.');
+  const amount=Number(t.amount);
+  if(bankTransferTicks(amount)===null)return error('Transfer amount cannot be reconciled.',409);
+  const fromId=String(t.from_account_id),toId=String(t.to_account_id),date=todayDate();
+  try {
+    await db.batch([
+      db.prepare('UPDATE bank_transfers SET reversed_at=datetime(\'now\'),reversed_by=?,reversal_reason=? WHERE transfer_id=? AND reversed_at=\'\'')
+        .bind(user.fullName,reason,transferId),
+      db.prepare('INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?,\'Transfer Reversal In\',?,?,0,?,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)+?,4),\'Active\',?,0)')
+        .bind(bankId('BB'),fromId,String(t.from_account_name),date,transferId,'Reversal of '+transferId+' — '+reason,amount,fromId,amount,user.fullName),
+      db.prepare('INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES (?,?,?,?,\'Transfer Reversal Out\',?,?,?,0,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)-?,4),\'Active\',?,0)')
+        .bind(bankId('BB'),toId,String(t.to_account_name),date,transferId,'Reversal of '+transferId+' — '+reason,amount,toId,amount,user.fullName),
+      db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance+?,4) WHERE bank_account_id=?').bind(amount,fromId),
+      db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance-?,4) WHERE bank_account_id=?').bind(amount,toId),
+      db.prepare('INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,?,?,?,?)')
+        .bind(user.userId,'BANK_TRANSFER_REVERSE','BANK_TRANSFER',transferId,reason)
+    ]);
+  } catch {
+    return error('Transfer reversal not posted: funds or ledger state changed.',409);
+  }
+  return json({ok:true,id:transferId,reversed:true});
+}
 
-
-
+export async function getBankTransfersRoute(db:SherDatabase):Promise<Response>{
+  const r=await db.prepare('SELECT * FROM bank_transfers ORDER BY transfer_date DESC,created_at DESC,transfer_id DESC LIMIT 1000').all<any>();
+  return json({ok:true,transfers:(r.results||[]).map((t:any)=>({
+    transferId:String(t.transfer_id),date:String(t.transfer_date),
+    fromAccountId:String(t.from_account_id),fromAccountName:String(t.from_account_name),
+    toAccountId:String(t.to_account_id),toAccountName:String(t.to_account_name),
+    amount:Number(t.amount||0),notes:String(t.notes||''),createdBy:String(t.created_by||''),
+    createdAt:String(t.created_at||''),clientRequestId:String(t.client_request_id||''),
+    reversedAt:String(t.reversed_at||''),reversalReason:String(t.reversal_reason||'')
+  }))});
+}
 
 // -----------------------------------------------------------------------------
 // Business Finance / Finance Ledger
