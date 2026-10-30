@@ -60,6 +60,8 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(rows.rows[0].paidMinor,4500,'Paid comes from persisted sales.paid_amount');
     assert.equal(rows.rows[0].dueMinor,7500,'Due comes from persisted sales.due_amount');
     assert.equal(rows.rows[0].sourceModule,'sales');
+    assert.equal(rows.rows[0].customerPhone,'01000000121',
+      'Source invoice identity is required for Customer Performance; never merge same-name buyers');
     assert.equal(rows.coverage.status,'needs-review');
     // Phase 5H3: existing HisabIQ Purchase Register must show the saved
     // supplier invoice split, not fabricate data from the browser demo store.
