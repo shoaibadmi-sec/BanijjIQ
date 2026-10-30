@@ -70,3 +70,14 @@ test('G2-I source allocation is append-only with no mutable accounting amount or
     assert.equal(f.count(),1);
   }finally{f.db.close();}
 });
+
+test('G2-I rejects a source budget when original invoice total and immutable tender sum drift',()=>{
+  const f=fixture();
+  try{
+    f.returned('PART-R1',1000);
+    f.sql.prepare("UPDATE sales SET subtotal=40,grand_total=40,paid_amount=40 WHERE invoice_id='PART-SALE'").run();
+    assert.throws(()=>f.source('PART-R1','Cash',400),/PARTIAL_SPLIT_SOURCE_CONFLICT/,
+      'source cap cannot trust a mutated invoice total when tenders still prove 50 BDT');
+    assert.equal(f.count(),0);
+  }finally{f.db.close();}
+});
