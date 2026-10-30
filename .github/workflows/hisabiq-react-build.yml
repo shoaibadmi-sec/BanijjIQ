@@ -1,26 +1,7 @@
 name: HisabIQ React / BanijjIQ API integration
 on:
+  # All pull requests must run CI; no path filter may bypass financial/security review.
   pull_request:
-    paths:
-      - '.gitmodules'
-      - 'apps/hisabiq-web'
-      - 'react-integration/**'
-      - 'ui-checks/**'
-      - 'scripts/preview/**'
-      - 'docs/hisabiq-react-phase14.md'
-      - 'docs/hosted-react-preview.md'
-      - 'wrangler.hisabiq-preview.generated.jsonc'
-      - 'd1-checks/**'
-      - 'wrangler.d1-ci.jsonc'
-      - 'server/modules/reporting/**'
-      - 'server/modules/products/**'
-      - 'server/modules/sales/**'
-      - 'server/modules/purchases/**'
-      - 'migrations/**'
-      - 'tests/**'
-      - 'scripts/prepare-hisabiq-react.mjs'
-      - '.github/workflows/hisabiq-react-build.yml'
-      - 'package.json'
   workflow_dispatch:
     inputs:
       deploy_hosted_preview:
