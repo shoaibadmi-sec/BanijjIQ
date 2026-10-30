@@ -434,7 +434,9 @@ try{
       const page=await ctx.newPage();
       await page.goto(base+'/#/app/finance');
       const finance=page.locator('[data-live-finance]');await finance.waitFor({timeout:10000});
-      await page.getByText('Finance Test Owner').waitFor({timeout:10000});
+      const personSelector=page.getByRole('combobox',{name:'Finance person'});
+      await personSelector.waitFor({timeout:10000});
+      assert.equal(await personSelector.locator('option[value="PERSON-1"]').count(),1);
       assert.ok((await finance.innerText()).includes('Shop Bank'));
       assert.ok((await finance.innerText()).includes('125.6234'));
       assert.ok((await finance.innerText()).includes('Disputed Bank'));
