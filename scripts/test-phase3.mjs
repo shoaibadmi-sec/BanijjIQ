@@ -24,6 +24,7 @@ const tests=[
   'tests/store-credit-outstanding-impact.integration.test.ts',
   'tests/store-credit-historical-compensation.integration.test.ts',
   'tests/split-sale-tenders.integration.test.ts',
+  'tests/partial-split-refund-allocation.integration.test.ts',
   'tests/phase3-split-refund-permissions.integration.test.ts'
 ];
 function run(label,cmd,args,cwd=root){
