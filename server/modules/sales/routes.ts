@@ -1,6 +1,7 @@
 import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
+import {getStoreCreditCasesRoute,getStoreCreditCaseDetailRoute} from './store-credit-cases.js';
 import {
   closeCashSessionRoute, completeSaleRoute, completeSalesReturnRoute, deleteSaleRoute,
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
@@ -28,6 +29,11 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   if (path === '/api/sales-returns' && request.method === 'POST') return completeSalesReturnRoute(db, await readBody<any>(request), user);
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
+  if(path==='/api/pos/store-credit/reconciliation/cases' && request.method==='GET')
+    return getStoreCreditCasesRoute(db,user,url);
+  const caseMatch=path.match(/^\/api\/pos\/store-credit\/reconciliation\/cases\/([^/]+)$/);
+  if(caseMatch && request.method==='GET')
+    return getStoreCreditCaseDetailRoute(db,user,decodeURIComponent(caseMatch[1]));
   if(path==='/api/pos/store-credit/reconciliation' && request.method==='GET')
     return getStoreCreditReconciliationRoute(db,user);
   const creditMatch=path.match(/^\/api\/pos\/store-credit\/([^/]+)$/);
