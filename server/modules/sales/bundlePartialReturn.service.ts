@@ -74,14 +74,47 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
   db.prepare('SELECT return_id FROM sales_returns WHERE invoice_id=?').bind(invoiceId).all<{return_id:string}>()
  ]);
  const lines=lineRows.results??[],recipes=recipeRows.results??[],sources=sourcesRows.results??[],priorSets=previousRows.results??[];
- if(lines.length!==1||lines[0].product_type!=='Bundle'||recipes.length<1||sources.length<1||existingFull||
+ const bundles=lines.filter(row=>row.product_type==='Bundle');
+ // A mixed cart can contain ONE saved virtual bundle and ordinary Standard lines.
+ // Returning the bundle must never restore the ordinary sale's physical FIFO draws.
+ if(bundles.length!==1||lines.some(row=>row.product_type!=='Bundle'&&row.product_type!=='Standard')||
+    recipes.length<1||sources.length<1||existingFull||
     cashRows.results?.length!==1||Number(cashRows.results[0].debit)!==0||
     cashRows.results[0].credit!==sale.paid_amount)
-  return fail('Partial return requires a single-bundle-only original cash invoice and complete original FIFO history.',409);
- const line=lines[0];let soldSets:number,totalReturned:number;
+  return fail('Whole-set refunds require exactly one bundle and supported Standard cart lines with original cash FIFO history.',409);
+ const line=bundles[0];let soldSets:number,totalReturned:number;
  try{
   soldSets=whole(line.quantity);unitPrice=cents(line.unit_price);
-  if(soldSets*unitPrice!==grand||cents(line.line_total)!==grand)throw Error('Original bundle cash sale amount is inconsistent.');
+  const visibleIds=new Set<string>(),expectedSources=new Map<string,number>();
+  let originalInvoiceMinor=0;
+  for(const item of lines){
+   if(visibleIds.has(item.product_id))throw Error('Duplicate visible invoice products are unsupported.');
+   visibleIds.add(item.product_id);
+   const count=whole(item.quantity),price=cents(item.unit_price),total=cents(item.line_total);
+   if(!Number.isSafeInteger(count*price)||count*price!==total)
+    throw Error('Original visible invoice quantities and amounts do not reconcile.');
+   originalInvoiceMinor+=total;
+   if(item.product_type==='Standard')expectedSources.set(JSON.stringify([item.product_id,item.product_id]),count);
+  }
+  if(!Number.isSafeInteger(originalInvoiceMinor)||originalInvoiceMinor!==grand||
+     soldSets*unitPrice!==cents(line.line_total))
+   throw Error('Original mixed-cart invoice amount does not reconcile.');
+  for(const recipe of recipes){
+   const k=JSON.stringify([recipe.bundle_id,recipe.component_id]);
+   if(expectedSources.has(k))throw Error('Duplicate immutable bundle recipe component.');
+   expectedSources.set(k,recipe.component_quantity);
+  }
+  const sourcedQty=new Map<string,number>();
+  for(const source of sources){
+   const k=JSON.stringify([source.visible_product_id,source.component_id]);
+   if(!expectedSources.has(k)||source.quantity<=0||!Number.isSafeInteger(source.quantity)||
+      !Number.isFinite(source.unit_cost)||source.unit_cost<=0||
+      cents(source.quantity*source.unit_cost)!==source.cost_minor)
+    throw Error('Original mixed-cart FIFO has missing or unrecognized physical source.');
+   sourcedQty.set(k,(sourcedQty.get(k)||0)+source.quantity);
+  }
+  for(const [key,qty] of expectedSources)
+   if(sourcedQty.get(key)!==qty)throw Error('Original physical source quantities do not match the visible invoice or saved bundle recipe.');
   totalReturned=priorSets.reduce((n,x)=>n+whole(x.sets_returned),0);
   if(priorSets.some(x=>x.bundle_id!==line.product_id)||
      existingReturns.results?.length!==priorSets.length)throw Error('Unrecognized return history for this bundle.');
@@ -98,7 +131,8 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
   const returned=new Map(priorAlloc.map(x=>[x.source_allocation_id,x.qty]));
   const draws:Draw[]=[];
   for(const source of sources){
-   if(source.visible_product_id!==line.product_id||!needs.has(source.component_id)||
+   if(source.visible_product_id!==line.product_id)continue; // Never return standalone allocations.
+   if(!needs.has(source.component_id)||
       !Number.isSafeInteger(source.quantity)||source.quantity<1||
       source.unit_cost<=0||cents(source.unit_cost)!==source.unit_cost*100||
       cents(source.quantity*source.unit_cost)!==source.cost_minor)
