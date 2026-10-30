@@ -224,12 +224,15 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     reason:string,linked:EvidenceSource[])=>{
     metrics.push({key,valueMinor:value,status:metricStatus,reason,asOf:q.to,sources:linked});
   };
-  // Even when cost is incomplete, a validated sale's source amounts are
-  // visible. They must never be represented as reconciled profit.
-  add('grossSales',gross,verified?'ready':'needs-review','Recorded net-of-discount invoice totals; not cash receipts.',sources);
-  add('discounts',discounts,verified?'ready':'needs-review','Invoice-level discounts, already included in grossSales.',sources);
-  add('returns',refund,verified?'ready':'needs-review','Actual return refund amounts; no second discount factor.',sources);
-  add('netSales',net,verified?'ready':'needs-review','Invoice cohort totals less linked recorded refunds.',sources);
+  // Do not show a sampled period total as if it covered all posted invoices.
+  // Source-specific invoice rows below remain individually verifiable.
+  const completeCohort=totalRows<=5000;
+  const cohortStatus:ReportStatus=completeCohort?(verified?'ready':'needs-review'):'incomplete';
+  const cohortReason=(reason:string)=>completeCohort?reason:explanation;
+  add('grossSales',completeCohort?gross:null,cohortStatus,cohortReason('Recorded net-of-discount invoice totals; not cash receipts.'),sources);
+  add('discounts',completeCohort?discounts:null,cohortStatus,cohortReason('Invoice-level discounts, already included in grossSales.'),sources);
+  add('returns',completeCohort?refund:null,cohortStatus,cohortReason('Actual return refund amounts; no second discount factor.'),sources);
+  add('netSales',completeCohort?net:null,cohortStatus,cohortReason('Invoice cohort totals less linked recorded refunds.'),sources);
   add('fifoCogs',verified?cogs:null,status,explanation,sources);
   add('grossProfit',verified?net-cogs:null,status,explanation,sources);
   add('operatingExpenses',expensesProven?expenses:null,expensesProven?'ready':'incomplete',
