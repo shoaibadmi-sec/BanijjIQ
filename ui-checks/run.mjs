@@ -817,6 +817,54 @@ try{
     assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/purchases').length,0);
     await ctx.close();
   });
+  await withCheck('Phase 4I-B Mobile Banking and uncertain payment never auto-retry',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:940},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    let sessionOpen=false,attempts=0,posted=null;
+    await ctx.route('**/api/purchases/supplier-settlements/supplier/SUP-UI-001',route=>
+      route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+        ok:true,supplier:{id:'SUP-UI-001',name:'Khan Hardware',currentDue:100},
+        ledgerDue:100,needsReconciliation:false,activeSession:sessionOpen,
+        bankAccounts:[{id:'MOBILE-UI-1',name:'Shop mobile account',type:'Mobile Banking',currentBalance:120}],
+        settlements:[]
+      })}));
+    await ctx.route('**/api/purchases',route=>{
+      if(route.request().method()!=='POST')return route.fallback();
+      posted=route.request().postDataJSON();attempts++;
+      return route.fulfill({status:503,contentType:'application/json',
+        body:JSON.stringify({ok:false,error:'Temporary network outcome unknown'})});
+    });
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/purchases/new');
+    await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+    await page.getByRole('combobox',{name:'Search supplier name, phone or ID'}).fill('Khan');
+    await page.getByRole('option',{name:/Khan Hardware/}).click();
+    await page.getByRole('combobox',{name:'Product'}).selectOption('PRD-000001');
+    await page.getByRole('spinbutton',{name:'Purchase quantity'}).fill('3');
+    await page.getByRole('spinbutton',{name:'Purchase unit cost'}).fill('80');
+    await page.getByRole('combobox',{name:'Purchase payment method'}).selectOption('Cash');
+    await page.getByRole('spinbutton',{name:'Purchase paid amount'}).fill('40');
+    await page.getByText(/Open a cash session before paying/).waitFor();
+    assert.equal(await page.getByRole('button',{name:/Confirm Paid Purchase/}).isDisabled(),true);
+    assert.equal(attempts,0,'Closed cash sessions must never POST a purchase payment');
+    sessionOpen=true;
+    await page.getByRole('combobox',{name:'Purchase payment method'}).selectOption('Mobile Banking');
+    await page.getByRole('combobox',{name:'Purchase bank account'}).selectOption('MOBILE-UI-1');
+    await page.getByRole('button',{name:/Confirm Paid Purchase/}).click();
+    await page.getByText(/Network\/server outcome uncertain/).waitFor({timeout:12000});
+    assert.equal(attempts,1,'Uncertain outcome must not automatically post again');
+    assert.equal(posted.paymentMethod,'Mobile Banking');
+    assert.equal(posted.bankAccountId,'MOBILE-UI-1');
+    assert.equal(posted.paidAmount,40);
+    assert.match(posted.clientRequestId,/^[0-9a-f-]{32,36}$/i);
+    assert.equal(await page.getByRole('button',{name:/Confirm Paid Purchase/}).isDisabled(),true);
+    await page.getByRole('button',{name:'Check Purchase History'}).click();
+    await page.locator('[data-live-purchases]').waitFor({timeout:12000});
+    assert.equal(attempts,1,'Checking history must not re-submit the money movement');
+    results.apiCalls.push({method:'ASSERT',path:'/api/purchases/mobile-payment-unknown',payload:posted});
+    await ctx.close();
+  });
   for(const width of [390,768,1440]){
     await withCheck('Phase 4B joined 3-unit purchase and price unit '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
