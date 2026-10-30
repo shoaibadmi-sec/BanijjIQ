@@ -536,6 +536,63 @@ test('4I financial audit: D1 reversal-state trigger rejects tampered original Ca
  });
 });
 
+test('4I-C7: D1 refuses a Cash refund when the original source payment has duplicate book entries',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-C7','Open')").run('CS-4I-C7');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const source=one('SELECT payment_ledger_id AS id FROM purchases WHERE purchase_id=?',purchase.purchaseId);
+  assert.ok(source.id,'A posted paid purchase has an immutable source ledger ID');
+  db.native.prepare("INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,created_at) SELECT ?,date,type,reference,description,debit,credit,payment_method,datetime('now') FROM cash_book WHERE reference=? AND type='Supplier Payment'")
+   .run(crypto.randomUUID(),source.id);
+  assert.equal(one("SELECT COUNT(*) AS n FROM cash_book WHERE reference=? AND type='Supplier Payment'",source.id).n,2);
+  const snapshot=()=>({stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   cash:count('cash_book'),refunds:count('purchase_returns'),audit:count('audit_logs')});
+  const before=snapshot();
+  const directInsert=()=>db.native.prepare("INSERT INTO purchase_returns (return_id,return_date,purchase_id,supplier_id,supplier_name,total_return_amount,refund_method,reason,refund_request_id,refund_payload_json,refund_source_ledger_id,refund_bank_account_id) SELECT ?,date('now'),purchase_id,supplier_id,supplier_name,50,'Cash','Verified money-source invariant',?,'source-test',payment_ledger_id,'' FROM purchases WHERE purchase_id=?")
+   .run('PRTN-C7-INVALID',crypto.randomUUID(),purchase.purchaseId);
+  assert.throws(directInsert,/purchase_refund_original_source_not_unique/,
+   'A direct D1 insert must fail closed when two original Cash payment records claim the same source');
+  assert.deepEqual(snapshot(),before);
+  const route=await api('POST','/api/purchase-returns',{
+   purchaseId:purchase.purchaseId,refundMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   reason:'Original duplicate payment source',items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(route.status,409,JSON.stringify(route));
+  assert.equal(count('purchase_returns'),0,'Neither direct SQL nor the HTTP route may record duplicate-source money');
+ });
+});
+
+test('4I-C7: D1 refuses a Bank refund with a duplicated original source bank-book row',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-C7','Open')").run('CS-4I-C7-BANK');
+  db.native.prepare("INSERT INTO bank_accounts (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type) VALUES ('BANK-4I-C7','Original','Test',200,200,'Active','Bank')").run();
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Bank',bankAccountId:'BANK-4I-C7',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const source=one('SELECT payment_ledger_id AS id FROM purchases WHERE purchase_id=?',purchase.purchaseId);
+  db.native.prepare("INSERT INTO bank_book (entry_id,bank_account_id,date,type,reference,description,debit,credit,bank_account_name,balance,created_by,created_at) SELECT ?,bank_account_id,date,type,reference,description,debit,credit,bank_account_name,balance,created_by,datetime('now') FROM bank_book WHERE reference=? AND type='Supplier Payment'")
+   .run(crypto.randomUUID(),source.id);
+  assert.equal(one("SELECT COUNT(*) AS n FROM bank_book WHERE reference=? AND type='Supplier Payment'",source.id).n,2);
+  const snapshot=()=>({bank:one("SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id='BANK-4I-C7'").n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   bankRows:count('bank_book'),refunds:count('purchase_returns'),audit:count('audit_logs')});
+  const before=snapshot();
+  const directInsert=()=>db.native.prepare("INSERT INTO purchase_returns (return_id,return_date,purchase_id,supplier_id,supplier_name,total_return_amount,refund_method,reason,refund_request_id,refund_payload_json,refund_source_ledger_id,refund_bank_account_id) SELECT ?,date('now'),purchase_id,supplier_id,supplier_name,50,'Bank','Verified money-source invariant',?,'source-test',payment_ledger_id,'BANK-4I-C7' FROM purchases WHERE purchase_id=?")
+   .run('PRTN-C7-BANK-INVALID',crypto.randomUUID(),purchase.purchaseId);
+  assert.throws(directInsert,/purchase_refund_original_source_not_unique/);
+  assert.deepEqual(snapshot(),before,'Direct database guard must leave bank and inventory intact');
+  const posted=await api('POST','/api/purchase-returns',{
+   purchaseId:purchase.purchaseId,refundMethod:'Bank',bankAccountId:'BANK-4I-C7',
+   clientRequestId:crypto.randomUUID(),reason:'Duplicate original bank payment source',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(posted.status,409,JSON.stringify(posted));
+  assert.deepEqual(snapshot(),before,'HTTP endpoint also refuses duplicate original bank source');
+ });
+});
+
 test('4I-C6: original refund replay after reversal cannot masquerade as an active paid receipt',async()=>{
  await fixture(async({api,db,one,count,supplier,p1})=>{
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-C6','Open')").run('CS-4I-C6');
