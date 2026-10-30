@@ -25,7 +25,7 @@ function fixture(){
   const source=(id:string,method:string,amount:number,invoice='PART-SALE',
     customer=method==='Store Credit'?'PART-C':'',account='',key=method)=>{
     sql.prepare('INSERT INTO split_partial_refund_allocations(allocation_id,return_id,invoice_id,method,amount_cents,bank_account_id,customer_id,source_key) VALUES (?,?,?,?,?,?,?,?)')
-      .run(id+'-'+key,id,invoice,method,amount,account,customer,key);
+      .run(id+'-'+invoice+'-'+key,id,invoice,method,amount,account,customer,key);
   };
   const count=()=>Number((sql.prepare('SELECT COUNT(*) n FROM split_partial_refund_allocations').get() as any).n);
   return {db,sql,returned,source,count};
