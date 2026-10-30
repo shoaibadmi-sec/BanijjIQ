@@ -115,3 +115,163 @@ export async function getStoreCreditCaseDetailRoute(
       customerLedger:ledger.results||[],liabilityJournal:journal.results||[]
     }});
 }
+
+export type StoreCreditCaseResolutionInput = {
+  decision?:'verified-settled'|'verified-outstanding'|'reject';
+  reason?:string;
+  evidenceIds?:string[];
+  expectedVersion?:number;
+};
+
+/**
+ * A financial reconciliation decision is NOT permission to issue liability.
+ * Verified outstanding legacy credits require a separately reviewed, atomic
+ * receivable + liability compensating entry and therefore fail closed here.
+ *
+ * The only affirmative settlement supported in this first audited step is
+ * a historical Store Credit return whose original cash sale and actual cash
+ * return refund can both be proved from intact source books.
+ */
+export async function resolveStoreCreditCaseRoute(
+  db:SherDatabase,user:AuthUser,rawId:string,input:StoreCreditCaseResolutionInput
+):Promise<Response>{
+  if(user.role!=='admin'||user.status!=='Active')
+    return fail('Administrator permission is required.',403);
+  const parsed=parseId(rawId);
+  if(!parsed)return fail('Credit reconciliation case not found.',404);
+  if(!input||typeof input!=='object')
+    return fail('A reconciliation decision is required.');
+  if(!['verified-settled','verified-outstanding','reject'].includes(String(input.decision||'')))
+    return fail('Invalid reconciliation decision.');
+  if(input.expectedVersion!==1)
+    return fail('The reconciliation case review version is stale.',409);
+  const reason=typeof input.reason==='string'?input.reason.trim():'';
+  if(reason.length<12||reason.length>500)return fail('An audit reason of 12–500 characters is required.');
+  const ids=input.evidenceIds;
+  if(!Array.isArray(ids)||ids.length<1||ids.length>20||
+    ids.some(id=>typeof id!=='string'||id.length<3||id.length>256)||
+    new Set(ids).size!==ids.length)
+    return fail('Provide distinct source evidence identifiers.');
+  if(input.decision==='verified-outstanding')
+    return fail('Creating spendable historical credit needs a separate finance-approved compensation workflow.',409);
+  const flag=await findStoreCreditReviewFlag(
+    db,parsed.flagCode,parsed.customerId,parsed.referenceId);
+  if(!flag)return fail('Credit reconciliation case not found.',404);
+  const caseId=caseIdOf(flag);
+  const previous=await db.prepare(
+    'SELECT status,version FROM store_credit_reconciliation_cases WHERE case_id=?'
+  ).bind(caseId).first<{status:string;version:number}>();
+  if(previous)return fail('This historical credit case has already been reviewed.',409);
+
+  const requiredSource=(flag.flagCode==='LEGACY_UNJOURNALED_RETURN'
+    ?'return:':flag.flagCode==='LEGACY_RECEIVABLE_CREDIT'
+    ?'ledger:':flag.flagCode==='NEGATIVE_RECEIVABLE'||flag.flagCode==='NEGATIVE_LIABILITY'
+    ?'customer:':flag.flagCode==='CREDIT_SALE_WITHOUT_REDEMPTION'||
+      flag.flagCode==='CREDIT_SALE_HAS_CASH_RECEIPT'||flag.flagCode==='CREDIT_SALE_HAS_BANK_RECEIPT'
+    ?'sale:':'journal:')+flag.referenceId;
+  if(!ids.includes(requiredSource))
+    return fail('The named original source document is required.',409);
+
+  let sourceReturn:any=null,sourceSale:any=null,refund:any=null;
+  if(input.decision==='verified-settled'){
+    if(flag.flagCode!=='LEGACY_UNJOURNALED_RETURN')
+      return fail('Only an independently refunded legacy return can be marked verified settled.',409);
+    sourceReturn=await db.prepare(
+      'SELECT return_id,invoice_id,customer_id,refund_method,total_return_amount FROM sales_returns WHERE return_id=?'
+    ).bind(flag.referenceId).first<any>();
+    if(!sourceReturn||sourceReturn.customer_id!==flag.customerId||
+      sourceReturn.refund_method!=='Store Credit')
+      return fail('Return source could not be independently verified.',409);
+    sourceSale=await db.prepare(
+      'SELECT invoice_id,customer_id,grand_total,paid_amount,due_amount,payment_method,status,is_deleted FROM sales WHERE invoice_id=?'
+    ).bind(sourceReturn.invoice_id).first<any>();
+    const totalCents=Math.round(Number(sourceReturn.total_return_amount)*100);
+    if(!sourceSale||sourceSale.customer_id!==flag.customerId||
+      sourceSale.payment_method!=='Cash'||sourceSale.status!=='Completed'||
+      Number(sourceSale.is_deleted)!==0||
+      Math.round(Number(sourceSale.paid_amount)*100)!==Math.round(Number(sourceSale.grand_total)*100)||
+      Number(sourceSale.due_amount)!==0||
+      !Number.isSafeInteger(totalCents)||totalCents<=0||
+      totalCents!==flag.expectedCents)
+      return fail('Paid original cash sale and return do not reconcile.',409);
+
+    // Reviewer must name the exact refund, not merely the original cash sale.
+    const refundIds=ids.filter(id=>id.startsWith('cash:'));
+    if(refundIds.length!==1||!ids.includes('sale:'+sourceSale.invoice_id)||
+       !ids.includes('return:'+sourceReturn.return_id))
+      return fail('Original invoice, return and one actual refund are required.',409);
+    refund=await db.prepare(
+      "SELECT entry_id,reference,debit,credit FROM cash_book "+
+      "WHERE entry_id=? AND reference=? AND type='Sales Return' AND is_deleted=0 "+
+      "AND credit=0 AND CAST(ROUND(debit*100) AS INTEGER)=?"
+    ).bind(refundIds[0].slice(5),sourceReturn.return_id,totalCents).first<any>();
+    const proof=await db.prepare(
+      "SELECT COUNT(*) n,CAST(ROUND(COALESCE(SUM(credit),0)*100) AS INTEGER) paid "+
+      "FROM cash_book WHERE reference=? AND type='Sale' AND is_deleted=0 AND debit=0"
+    ).bind(sourceSale.invoice_id).first<any>();
+    const alreadyJournaled=await db.prepare(
+      "SELECT COUNT(*) n FROM customer_store_credit_entries "+
+      "WHERE source_type='Sales Return' AND source_id=?"
+    ).bind(sourceReturn.return_id).first<any>();
+    if(!refund||Number(proof?.n)!==1||
+      Number(proof?.paid)!==Math.round(Number(sourceSale.paid_amount)*100)||
+      Number(alreadyJournaled?.n)>0)
+      return fail('Verified refund and original payment evidence is incomplete.',409);
+  }
+
+  const status=input.decision==='verified-settled'?'verified_settled':'rejected';
+  const snapshot=JSON.stringify({
+    decision:input.decision,evidenceIds:ids,originalFlag:flag,
+    originalSale:sourceSale?{invoiceId:sourceSale.invoice_id,paidAmount:sourceSale.paid_amount}:null,
+    originalReturn:sourceReturn?{returnId:sourceReturn.return_id,amount:sourceReturn.total_return_amount}:null,
+    verifiedRefundEntryId:refund?.entry_id||null
+  });
+  const insertPrefix='INSERT INTO store_credit_reconciliation_cases '+
+    '(case_id,flag_code,customer_id,reference_id,status,evidence_json,review_reason,'+
+    'created_by,reviewed_by,reviewed_at,version) ';
+  // Recheck the financial proof inside the D1 batch, not only in earlier
+  // SELECTs. A changed/deleted source must produce zero case inserts.
+  const statement=input.decision==='verified-settled'
+    ?db.prepare(insertPrefix+
+      "SELECT ?,?,?,?,?,?,?,?,?,datetime('now'),2 FROM sales_returns sr "+
+      "JOIN sales s ON s.invoice_id=sr.invoice_id "+
+      "WHERE sr.return_id=? AND sr.customer_id=? AND sr.refund_method='Store Credit' "+
+      "AND s.customer_id=? AND s.payment_method='Cash' AND s.is_deleted=0 "+
+      "AND s.status='Completed' AND s.paid_amount=s.grand_total AND s.due_amount=0 "+
+      "AND CAST(ROUND(sr.total_return_amount*100) AS INTEGER)=? "+
+      "AND EXISTS (SELECT 1 FROM cash_book orig WHERE orig.reference=s.invoice_id "+
+      "AND orig.type='Sale' AND orig.is_deleted=0 AND orig.debit=0 "+
+      "GROUP BY orig.reference HAVING COUNT(*)=1 AND "+
+      "CAST(ROUND(SUM(orig.credit)*100) AS INTEGER)=CAST(ROUND(s.paid_amount*100) AS INTEGER)) "+
+      "AND EXISTS (SELECT 1 FROM cash_book cb WHERE cb.entry_id=? "+
+      "AND cb.reference=sr.return_id AND cb.type='Sales Return' AND cb.is_deleted=0 "+
+      "AND cb.credit=0 AND CAST(ROUND(cb.debit*100) AS INTEGER)=?) "+
+      "AND NOT EXISTS (SELECT 1 FROM customer_store_credit_entries e "+
+      "WHERE e.source_type='Sales Return' AND e.source_id=sr.return_id)"
+    ).bind(caseId,flag.flagCode,flag.customerId,flag.referenceId,status,
+      snapshot,reason,user.userId,user.userId,sourceReturn.return_id,
+      flag.customerId,flag.customerId,flag.expectedCents,refund.entry_id,flag.expectedCents)
+    :db.prepare(insertPrefix+
+      "SELECT ?,?,?,?,?,?,?,?,?,datetime('now'),2 WHERE EXISTS "+
+      "(SELECT 1 FROM customers WHERE customer_id=?)"
+    ).bind(caseId,flag.flagCode,flag.customerId,flag.referenceId,status,
+      snapshot,reason,user.userId,user.userId,flag.customerId);
+  const audit=db.prepare(
+    "INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) "+
+    "SELECT ?,'REVIEW_STORE_CREDIT_CASE','STORE_CREDIT_CASE',?,? "+
+    "FROM store_credit_reconciliation_cases WHERE case_id=? AND reviewed_by=? AND version=2"
+  ).bind(user.userId,caseId,status+': '+reason+'; '+ids.join(', '),caseId,user.userId);
+  try{
+    const results=await db.batch([statement,audit]);
+    if(Number(results[0]?.meta?.changes)!==1||Number(results[1]?.meta?.changes)!==1)
+      return fail('Original source evidence changed during review.',409);
+  }catch(err){
+    const msg=String(err);
+    if(msg.includes('UNIQUE constraint failed')||msg.includes('constraint'))
+      return fail('Credit case was already reviewed or the source has changed.',409);
+    throw err;
+  }
+  return json({ok:true,readOnly:false,creditIssuedCents:0,case:{
+    ...asCase(flag,status),version:2,reviewedBy:user.userId,reason
+  }});
+}
