@@ -159,3 +159,21 @@ test('5G22: altered Finance source posting date must withhold period totals and 
    'Report GET must not alter tampered source, journals or money balances');
  }finally{db.close();}
 });
+
+test('5G22: Finance source outside the selected period cannot hide its in-period Cash journal mismatch',async()=>{
+ const db=fixture();try{
+  // October journal remains posted, but its financing source is falsely dated in September.
+  db.native.prepare("UPDATE finance_transactions SET date='2026-09-30' WHERE finance_id='FIN-001'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  for(const report of ['cash','finance'] as const){
+   const page=await readCashExpenses(db,query(report));
+   assert.equal(page.coverage.status,'incomplete',report+' must detect an in-period journal whose Finance source is outside the reporting window');
+   assert.match(page.coverage.reason,/finance|posting|date/i);
+   assert.equal(metric(page,'cashReceipts').valueMinor,null);
+   assert.equal(metric(page,'ownerCapitalIn').valueMinor,null);
+   if(report==='finance')assert.equal(page.totalRows,0,'September source must not become an October Finance row');
+  }
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+   'Reporting must be read-only even for out-of-period Finance sources');
+ }finally{db.close();}
+});
