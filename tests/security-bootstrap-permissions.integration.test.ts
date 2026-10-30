@@ -22,6 +22,8 @@ test('product bootstrap enforces least privilege without breaking POS', async (t
     });
     assert.equal(setup.status, 200, JSON.stringify(setup));
     const adminToken = setup.token as string;
+    const cashSession = await api('POST', '/api/pos/cash-session/start', adminToken, { openingCash: 0 });
+    assert.equal(cashSession.status, 200, JSON.stringify(cashSession));
     const supplier = await api('POST', '/api/suppliers', adminToken, {
       name: 'Synthetic Sensitive Supplier', phone: '01000002620', openingBalance: 37,
     });
