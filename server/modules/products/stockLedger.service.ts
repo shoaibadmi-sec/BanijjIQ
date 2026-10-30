@@ -25,7 +25,7 @@ function quantity(value: number|null):number|null {
  * A read-only quantity ledger over existing stock sources. No inferred movement
  * records, historical valuation, or per-lot running balance reconstruction.
  */
-export async function readStockLedger(db:SherDatabase,productId:string,page=1,pageSize:50) {
+export async function readStockLedger(db:SherDatabase,productId:string,page=1,pageSize:50|100=50) {
   const product=await db.prepare(
     'SELECT product_id,product_name,current_stock FROM products WHERE product_id=? AND is_deleted=0'
   ).bind(productId).first<Product>();
