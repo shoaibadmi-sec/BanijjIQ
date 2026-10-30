@@ -277,16 +277,60 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id=?").run(bank.id);
       }
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
-      const blockedPost=await api('POST','/api/sales-management/'+saleId+'/split-reversal',{
-        reason:'Exact refund requires independently verified posting safeguards'
-      });
-      assert.equal(blockedPost.status,409,JSON.stringify(blockedPost));
-      assert.match(String(blockedPost.error),/source|refund|not yet|disabled/i);
-      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
-      // Until G2-H can reissue each source, never refund credit-funded splits
-      // in Cash or delete/edit an immutable multi-source invoice.
+      // G2-H Task 2: a final audit fault must roll back FIFO restore,
+      // all money-source refunds, credit reissue, and reversal idempotency.
+      const before={
+        returns:row('SELECT COUNT(*) n FROM sales_returns').n,
+        cash:row('SELECT COUNT(*) n FROM cash_book').n,
+        bank:row('SELECT COUNT(*) n FROM bank_book').n,
+        credit:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n
+      };
+      db.native.exec("CREATE TRIGGER split_refund_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='REVERSE_SPLIT_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_AUDIT_FAULT'); END");
+      const url='/api/sales-management/'+saleId+'/split-reversal';
+      const reversalBody={reason:'Refund exactly to verified original payment sources'};
+      const failed=await api('POST',url,reversalBody);
+      assert.equal(failed.ok,false,JSON.stringify(failed));
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+      assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
+      assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+      assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      db.native.exec('DROP TRIGGER split_refund_audit_fault');
+      const reversed=await api('POST',url,reversalBody);
+      assert.equal(reversed.ok,true,JSON.stringify(reversed));
+      assert.equal(reversed.refundCents,profile==='cash-credit'?2000:3000);
+      assert.equal(reversed.creditReissueCents,profile==='cash-credit'?3000:2000);
+      const returnId=reversed.returnId;
+      assert.equal(row('SELECT status s FROM sales WHERE invoice_id=?',saleId).s,'Reversed');
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,20);
+      assert.equal(row('SELECT COUNT(*) n FROM sale_reversal_logs WHERE invoice_id=?',saleId).n,1);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,1);
+      assert.deepEqual((db.native.prepare(
+        'SELECT method,amount_cents,bank_account_id FROM sales_return_refund_allocations WHERE return_id=? ORDER BY line_number'
+      ).all(returnId) as any[]).map(x=>[x.method,x.amount_cents,x.bank_account_id||'']),
+        tenders.map(x=>[x.method,x.amountCents,x.bankAccountId||'']));
+      assert.equal(row("SELECT COALESCE(SUM(debit),0) n FROM cash_book WHERE reference=? AND type='Sales Return'",returnId).n,
+        profile==='cash-credit'?20:0);
+      assert.equal(row("SELECT COALESCE(SUM(debit),0) n FROM bank_book WHERE reference=? AND type='Sales Return'",returnId).n,
+        profile==='cash-credit'?0:30);
+      if(bank){
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank.id).n,100);
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',mobile.id).n,100);
+      }
+      assert.equal(row(
+        "SELECT COALESCE(SUM(delta_cents),0) n FROM customer_store_credit_entries WHERE entry_type='ISSUE' AND source_type='Sales Return' AND source_id=?",returnId
+      ).n,profile==='cash-credit'?3000:2000);
+      assert.equal(row(
+        "SELECT COALESCE(SUM(delta_cents),0) n FROM customer_store_credit_entries WHERE customer_id='SPLIT-CUS'"
+      ).n,3000);
+      const again=await api('POST',url,reversalBody);
+      assert.equal(again.status,409,JSON.stringify(again));
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,1);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations WHERE return_id=?',returnId).n,tenders.length);
+      // Legacy single-source return/edit/delete remain blocked even after reversal.
       assert.equal((await api('POST','/api/sales-returns',{
-        invoiceId:saleId,refundMethod:'Cash',reason:'Reversal must preserve exact tender sources',
+        invoiceId:saleId,refundMethod:'Cash',reason:'Cannot refund source multiple times',
         items:[{productId:product.productId,qty:1,unitPrice:10}]
       })).status,409);
       assert.equal((await api('PUT','/api/sales-management/'+saleId,{
@@ -297,7 +341,7 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       assert.equal((await api('DELETE','/api/sales-management/'+saleId,{
         reason:'Unreconciled split tender cannot be deleted'
       })).status,409);
-      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,20);
     }finally{db.close();}
   });
 }
