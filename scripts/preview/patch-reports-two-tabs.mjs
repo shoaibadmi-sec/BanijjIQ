@@ -70,7 +70,7 @@ export function patchReportsPage(source) {
     'reviewWorkspace?<BusinessReview data={data}/>:<>',
     "reviewWorkspace?(data.sales.length>0?<BusinessReview data={data}/>:<p role=\"status\" className=\"text-sm text-ink-500\">{text('Business Audit needs verified backend source coverage. No demo totals are shown.','অডিটের মূল তথ্য যাচাই হওয়া দরকার। ডেমো হিসাব দেখানো হচ্ছে না।')}</p>):<>");
   next = replaceOnce(next,
-    "{screen!=='library'&&screen!=='sales-lab'&&<MagicReportsView key={screen+':'+storageKey} screen={screen} data={data} filters={filters} onFilters={update} onDetail={setDetail} onReport={selectReport} onScreen={selectScreen} scopeKey={storageKey}/>} ",
+    "{screen!=='library'&&screen!=='sales-lab'&&<MagicReportsView key={screen+':'+storageKey} screen={screen} data={data} filters={filters} onFilters={update} onDetail={setDetail} onReport={selectReport} onScreen={selectScreen} scopeKey={storageKey}/>}",
     "{screen!=='library'&&screen!=='sales-lab'&&(data.sales.length>0?<MagicReportsView key={screen+':'+storageKey} screen={screen} data={data} filters={filters} onFilters={update} onDetail={setDetail} onReport={selectReport} onScreen={selectScreen} scopeKey={storageKey}/>:<p role=\"status\" className=\"text-sm text-ink-500\">{text('Live charts are unavailable until verified detailed source history is connected.','যাচাই করা মূল তথ্য না আসা পর্যন্ত চার্ট দেখানো যাচ্ছে না।')}</p>)} ");
   next = replaceOnce(next,
     "{screen==='library'&&<ReportResults definition={definition}",
