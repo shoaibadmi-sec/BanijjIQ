@@ -56,6 +56,14 @@ export function patchNativeParties(source){
  for(let i=0;i<callbacks.length;i++)
   s=between(s,"        "+callbacks[i]+"=","        "+ends[i]+"=","        "+callbacks[i]+"={()=>blockUnconnectedAction()}\n");
  s=between(s,"      onImport={parties=>","/>","      onImport={()=>blockUnconnectedAction()}");
+ // Unconnected quick-add/import editors must never mutate the browser demo stores.
+ const disallowed=' title="Available after server-side Party write integration" disabled';
+ s=s.replaceAll('onClick={()=>setImportOpen(true)}',disallowed);
+ s=s.replaceAll('onClick={()=>{setChooserOpen(false);setImportOpen(true);}}',disallowed);
+ s=s.replaceAll('onClick={()=>setEditing(null)}',disallowed);
+ s=s.replaceAll('onClick={()=>{setChooserOpen(false);setEditing(null);}}',disallowed);
+ s=once(s,'onEditParty={()=>setEditing(party)}','onEditParty={blockUnconnectedAction}');
+
  for(const banned of ['availableParties','availablePurchases','getPartyPreviewSnapshot','dispatchPartyPreview','demoPermissions','subscribePartyPreview'])
   if(s.includes(banned))throw Error('Unconverted Party demo source: '+banned);
  return s;
