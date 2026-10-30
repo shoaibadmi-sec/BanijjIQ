@@ -1,4 +1,4 @@
-import type { SherDatabase } from '../../db/types.js';
+import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { BankAccountInput, BankManualInput, BankTransferInput, FinancePersonInput, FinanceInput, FinanceTxType } from './types.js';
 import { getLedgerPrintHeader, ledgerDateWhere, ledgerHistoryMeta, parseLedgerHistory } from '../../core/ledgerHistory.js';
@@ -432,24 +432,54 @@ function validateFinanceDate(input:FinanceInput):{date:string;isBackdated:boolea
   const isBackdated=date<todayDate(), reason=cleanText(input.backdatedReason); if(isBackdated&&!reason)return error('A reason is required when dating a finance entry in the past.');
   return {date,isBackdated,backdatedDays:isBackdated?dayDiff(date,todayDate()):0,reason};
 }
-async function postFinanceMoney(db:SherDatabase,financeId:string,type:FinanceTxType,method:string,bank:any,amount:number,personName:string,date:string,user:AuthUser,back?:{isBackdated:boolean;backdatedDays:number;reason:string}):Promise<void>{
-  const description=`${type.label}${personName?` — ${personName}`:''}`;
-  if(method==='Cash'){
-    await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted,created_at) VALUES(?,?,?,?,?,?,?,?,0,datetime('now'))`)
-      .bind(bankId('CB'),date,type.key,financeId,description,type.direction==='out'?amount:0,type.direction==='in'?amount:0,'Cash').run();
-  }else{
-    await addBankBookExact(db,cleanText(bank.bank_account_id),{type:type.key,reference:financeId,description,debit:type.direction==='out'?amount:0,credit:type.direction==='in'?amount:0,date,createdBy:user.fullName,isBackdated:!!back?.isBackdated,backdatedDays:back?.backdatedDays||0,backdatedReason:back?.reason||''});
-  }
+// Reversal plans are only prepared if the original source money posting is unambiguous.
+// The caller always executes the result in the SAME D1 batch as the finance header and audit.
+async function financeReversalPlan(db:SherDatabase,tx:any):Promise<SqlPreparedStatement[]|Response>{
+  const type=financeType(cleanText(tx.transaction_type));
+  const ticks=bankTransferTicks(tx.amount);
+  if(!type||ticks===null)return error('Original financing amount needs reconciliation.',409);
+  const id=cleanText(tx.finance_id);
+  const [cashR,bankR]=await Promise.all([
+    db.prepare("SELECT * FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>(),
+    db.prepare("SELECT * FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>()
+  ]);
+  const cash=cashR.results||[],bank=bankR.results||[];
+  const source=tx.payment_method==='Cash'?cash:bank;
+  if(source.length!==1||(tx.payment_method==='Cash'?bank.length!==0:cash.length!==0))
+    return error('Original finance source posting is missing or duplicated.',409);
+  const leg=source[0],amount=ticks/10000;
+  const debit=type.direction==='out'?amount:0,credit=type.direction==='in'?amount:0;
+  if(cleanText(leg.date)!==cleanText(tx.date)||cleanText(leg.type)!==type.key||
+     Math.abs(Number(leg.debit)-debit)>0.0000001||Math.abs(Number(leg.credit)-credit)>0.0000001)
+    return error('Original finance source amount does not match.',409);
+  if(tx.payment_method!=='Cash'&&
+     (cleanText(leg.bank_account_id)!==cleanText(tx.bank_account_id)||cleanText(leg.status)!=='Active'))
+    return error('Original finance bank source does not match.',409);
+  if(tx.payment_method==='Cash'&&cleanText(leg.payment_method)!=='Cash')
+    return error('Original finance cash source does not match.',409);
+  if(tx.payment_method==='Cash')
+    return [db.prepare("UPDATE cash_book SET is_deleted=1 WHERE entry_id=? AND is_deleted=0").bind(leg.entry_id)];
+  return [
+    db.prepare("UPDATE bank_book SET is_deleted=1,status='Reversed',notes=CASE WHEN notes='' THEN 'Finance entry reversed' ELSE notes||' — Finance entry reversed' END WHERE entry_id=? AND is_deleted=0").bind(leg.entry_id),
+    db.prepare("UPDATE bank_accounts SET current_balance=ROUND(current_balance-?,4) WHERE bank_account_id=?")
+      .bind(credit-debit,leg.bank_account_id)
+  ];
 }
-async function reverseFinanceMoney(db:SherDatabase,financeId:string,user:AuthUser,reason:string):Promise<void>{
-  await db.prepare(`UPDATE cash_book SET is_deleted=1 WHERE reference=? AND COALESCE(is_deleted,0)=0`).bind(financeId).run();
-  const r=await db.prepare(`SELECT entry_id,bank_account_id,debit,credit FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0`).bind(financeId).all<any>();
-  for(const e of r.results||[]){
-    const a=await db.prepare(`SELECT current_balance FROM bank_accounts WHERE bank_account_id=? LIMIT 1`).bind(e.bank_account_id).first<any>();
-    if(a){const next=Math.round((dbNumber(a.current_balance)-(dbNumber(e.credit)-dbNumber(e.debit)))*10000)/10000;await db.prepare(`UPDATE bank_accounts SET current_balance=? WHERE bank_account_id=?`).bind(next,e.bank_account_id).run();}
-    await db.prepare(`UPDATE bank_book SET is_deleted=1,status='Reversed',notes=CASE WHEN notes='' THEN ? ELSE notes||' — '||? END WHERE entry_id=?`).bind(reason,reason,e.entry_id).run();
-  }
-  await db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES(?,?,?,?,?)`).bind(user.userId,'FINANCE_REVERSE','FINANCE',financeId,reason).run();
+function financeSourcePostStatements(db:SherDatabase,id:string,type:FinanceTxType,method:string,bank:any,
+  amount:number,personName:string,date:string,user:AuthUser):SqlPreparedStatement[]{
+  const debit=type.direction==='out'?amount:0,credit=type.direction==='in'?amount:0,
+    desc=type.label+' — '+personName;
+  if(method==='Cash')return [
+    db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted,created_at) VALUES(?,?,?,?,?,?,?,'Cash',0,datetime('now'))")
+      .bind(bankId('CB'),date,type.key,id,desc,debit,credit)
+  ];
+  const accountId=cleanText(bank.bank_account_id);
+  return [
+    db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) VALUES(?,?,?,?,?,?,?,?,?,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)+?,4),'Active',?,0)")
+      .bind(bankId('BB'),accountId,cleanText(bank.account_name),date,type.key,id,desc,debit,credit,accountId,credit-debit,user.fullName),
+    db.prepare("UPDATE bank_accounts SET current_balance=ROUND(current_balance+?,4) WHERE bank_account_id=? AND status='Active'")
+      .bind(credit-debit,accountId)
+  ];
 }
 
 export async function addFinanceTransactionRoute(db:SherDatabase,input:FinanceInput,user:AuthUser):Promise<Response>{
@@ -638,19 +668,59 @@ export async function getFinanceTransactionRoute(db:SherDatabase,id:string):Prom
 }
 export async function updateFinanceTransactionRoute(db:SherDatabase,id:string,input:FinanceInput,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start the POS Cash Session before editing a finance transaction.');
-  const old=await db.prepare(`SELECT * FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first<any>(); if(!old)return error('Transaction not found.',404);
-  const type=financeType(cleanText(input.transactionType)); if(!type)return error('Choose a valid transaction type.'); const amount=money(input.amount); if(!(amount>0))return error('Enter a valid amount.');
-  const personId=cleanText(input.personId); const person=await resolveFinancePerson(db,personId); if(!person)return error('Person not found.'); const method=FINANCE_PAYMENT_METHODS.includes(cleanText(input.paymentMethod))?cleanText(input.paymentMethod):''; if(!method)return error('Choose a valid payment method.');
-  let bank:any;try{bank=await resolveFinanceBank(db,method,cleanText(input.bankAccountId));}catch(e){return error(e instanceof Error?e.message:'Bank account error.');} const dv=validateFinanceDate(input);if(dv instanceof Response)return dv;
-  await reverseFinanceMoney(db,id,user,'Finance entry edited');
-  await db.prepare(`UPDATE finance_transactions SET date=?,transaction_type=?,person_id=?,person_name=?,payment_method=?,bank_account_id=?,bank_account_name=?,amount=?,reference_no=?,notes=?,is_backdated=?,backdated_days=?,backdated_reason=? WHERE finance_id=?`)
-    .bind(dv.date,type.key,personId,cleanText(person.person_name),method,cleanText(bank.bank_account_id),cleanText(bank.account_name),amount,cleanText(input.referenceNo),cleanText(input.notes),dv.isBackdated?1:0,dv.backdatedDays,dv.reason,id).run();
-  await postFinanceMoney(db,id,type,method,bank,amount,cleanText(person.person_name),dv.date,user,dv); const balances=await financeBalances(db);return json({ok:true,financeId:id,...balances});
+  const old=await db.prepare("SELECT * FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1")
+    .bind(id).first<any>();
+  if(!old)return error('Transaction not found.',404);
+  const type=financeType(cleanText(input.transactionType)),ticks=bankTransferTicks(input.amount);
+  if(!type||ticks===null)return error('Choose a valid transaction and positive amount.');
+  const personId=cleanText(input.personId),person=await resolveFinancePerson(db,personId);
+  if(!person||person.status!=='Active')return error('Choose an active owner or lender.');
+  if(type.account!==(person.person_type==='Lender'?'loan':'capital'))
+    return error('Owner transactions require an Owner and loan transactions a Lender.');
+  const method=cleanText(input.paymentMethod);
+  if(!FINANCE_PAYMENT_METHODS.includes(method))return error('Choose a valid payment method.');
+  let bank:any;
+  try{bank=await resolveFinanceBank(db,method,cleanText(input.bankAccountId));}
+  catch(e){return error(e instanceof Error?e.message:'Bank account error.');}
+  if(method!=='Cash'&&(bank.status!=='Active'||bank.account_type!==method))
+    return error('Choose an active bank/mobile account of the selected type.');
+  const date=validateFinanceDate(input);if(date instanceof Response)return date;
+  const reversal=await financeReversalPlan(db,old);
+  if(reversal instanceof Response)return reversal;
+  const amount=ticks/10000,name=cleanText(person.person_name);
+  const auditNote='Changed '+cleanText(old.transaction_type)+' '+old.amount+
+    ' to '+type.key+' '+amount+'; original bank/cash entry reversed';
+  const statements:SqlPreparedStatement[]=[
+    ...reversal,
+    db.prepare("UPDATE finance_transactions SET date=?,transaction_type=?,person_id=?,person_name=?,payment_method=?,bank_account_id=?,bank_account_name=?,amount=?,reference_no=?,notes=?,is_backdated=?,backdated_days=?,backdated_reason=?,request_fingerprint='edited' WHERE finance_id=? AND is_deleted=0")
+      .bind(date.date,type.key,personId,name,method,cleanText(bank.bank_account_id),cleanText(bank.account_name),
+        amount,cleanText(input.referenceNo),cleanText(input.notes),date.isBackdated?1:0,date.backdatedDays,date.reason,id),
+    ...financeSourcePostStatements(db,id,type,method,bank,amount,name,date.date,user),
+    db.prepare("INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES(?,'FINANCE_REVERSE','FINANCE',?,?)")
+      .bind(user.userId,id,auditNote)
+  ];
+  try{await db.batch(statements);}
+  catch{return error('Finance update not committed: original source, funds or audit changed.',409);}
+  const balances=await financeBalances(db);return json({ok:true,financeId:id,...balances});
 }
-export async function deleteFinanceTransactionRoute(db:SherDatabase,id:string,reason:string,user:AuthUser):Promise<Response>{
-  if(!(await getOpenCashSession(db)))return error('Start the POS Cash Session before deleting a finance transaction.'); if(!reason)return error('Enter a reason for deleting this transaction.');
-  const row=await db.prepare(`SELECT finance_id FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first();if(!row)return error('Transaction not found.',404);
-  await reverseFinanceMoney(db,id,user,reason);await db.prepare(`UPDATE finance_transactions SET is_deleted=1,delete_reason=?,deleted_by=?,deleted_at=datetime('now') WHERE finance_id=?`).bind(reason,user.fullName,id).run();
+export async function deleteFinanceTransactionRoute(db:SherDatabase,id:string,reasonRaw:string,user:AuthUser):Promise<Response>{
+  if(!(await getOpenCashSession(db)))return error('Start the POS Cash Session before deleting a finance transaction.');
+  const reason=cleanText(reasonRaw);
+  if(reason.length<8)return error('Enter a reason for cancelling this financing (at least 8 characters).');
+  const row=await db.prepare("SELECT * FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1")
+    .bind(id).first<any>();
+  if(!row)return error('Transaction not found.',404);
+  const reversal=await financeReversalPlan(db,row);
+  if(reversal instanceof Response)return reversal;
+  try{
+    await db.batch([
+      ...reversal,
+      db.prepare("UPDATE finance_transactions SET is_deleted=1,delete_reason=?,deleted_by=?,deleted_at=datetime('now') WHERE finance_id=? AND is_deleted=0")
+        .bind(reason,user.fullName,id),
+      db.prepare("INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES(?,'FINANCE_REVERSE','FINANCE',?,?)")
+        .bind(user.userId,id,reason)
+    ]);
+  }catch{return error('Finance reversal not committed: original funds or audit changed.',409);}
   const balances=await financeBalances(db);return json({ok:true,financeId:id,...balances});
 }
 
