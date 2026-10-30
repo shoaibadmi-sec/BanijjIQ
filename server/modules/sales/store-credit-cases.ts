@@ -209,12 +209,17 @@ export async function resolveStoreCreditCaseRoute(
       "SELECT COUNT(*) n,CAST(ROUND(COALESCE(SUM(credit),0)*100) AS INTEGER) paid "+
       "FROM cash_book WHERE reference=? AND type='Sale' AND is_deleted=0 AND debit=0"
     ).bind(sourceSale.invoice_id).first<any>();
+    const payout=await db.prepare(
+      "SELECT COUNT(*) n,CAST(ROUND(COALESCE(SUM(debit),0)*100) AS INTEGER) cents "+
+      "FROM cash_book WHERE reference=? AND type='Sales Return' AND is_deleted=0"
+    ).bind(sourceReturn.return_id).first<any>();
     const alreadyJournaled=await db.prepare(
       "SELECT COUNT(*) n FROM customer_store_credit_entries "+
       "WHERE source_type='Sales Return' AND source_id=?"
     ).bind(sourceReturn.return_id).first<any>();
     if(!refund||Number(proof?.n)!==1||
       Number(proof?.paid)!==Math.round(Number(sourceSale.paid_amount)*100)||
+      Number(payout?.n)!==1||Number(payout?.cents)!==totalCents||
       Number(alreadyJournaled?.n)>0)
       return fail('Verified refund and original payment evidence is incomplete.',409);
   }
@@ -246,6 +251,8 @@ export async function resolveStoreCreditCaseRoute(
       "AND EXISTS (SELECT 1 FROM cash_book cb WHERE cb.entry_id=? "+
       "AND cb.reference=sr.return_id AND cb.type='Sales Return' AND cb.is_deleted=0 "+
       "AND cb.credit=0 AND CAST(ROUND(cb.debit*100) AS INTEGER)=?) "+
+      "AND (SELECT COUNT(*) FROM cash_book cb "+
+      "WHERE cb.reference=sr.return_id AND cb.type='Sales Return' AND cb.is_deleted=0)=1 "+
       "AND NOT EXISTS (SELECT 1 FROM customer_store_credit_entries e "+
       "WHERE e.source_type='Sales Return' AND e.source_id=sr.return_id)"
     ).bind(caseId,flag.flagCode,flag.customerId,flag.referenceId,status,
