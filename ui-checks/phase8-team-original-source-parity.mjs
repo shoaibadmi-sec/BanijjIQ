@@ -45,10 +45,12 @@ export async function runPhase8TeamSourceParityChecks({browser,base,withCheck}){
         await f.page.getByRole('dialog',{name:'Employee columns'}).waitFor();
         await f.page.getByRole('dialog',{name:'Employee columns'}).getByRole('button',{name:'Done'}).click();
         await p.getByRole('button',{name:'Filters'}).click();
-        await p.getByRole('combobox',{name:'Employee status'}).selectOption('disabled');
+        await p.getByRole('combobox',{name:'Employee status'}).click();
+        await f.page.getByRole('listbox',{name:'Employee status options'}).getByRole('option',{name:'Disabled'}).click();
         await p.getByText('Verified Office Operator').waitFor();
         assert.equal(await p.getByText('Verified Warehouse Keeper').count(),0);
-        await p.getByRole('combobox',{name:'Employee status'}).selectOption('');
+        await p.getByRole('combobox',{name:'Employee status'}).click();
+        await f.page.getByRole('listbox',{name:'Employee status options'}).getByRole('option',{name:'All statuses'}).click();
         await p.getByRole('textbox',{name:'Search employees'}).fill('Verified Warehouse Keeper');
         assert.equal(await p.getByText('Verified Office Operator').count(),0);
         await p.getByRole('button',{name:'View access for Verified Warehouse Keeper'}).click();
@@ -75,6 +77,7 @@ export async function runPhase8TeamSourceParityChecks({browser,base,withCheck}){
     try{
       const p=f.page.locator('[data-live-team-settings]');
       await p.getByRole('alert').getByText('Employees database unavailable').waitFor({timeout:12000});
+      await p.getByRole('tab',{name:/Roles & permissions/}).click();
       await p.getByRole('alert').getByText('Roles database unavailable').waitFor({timeout:12000});
       assert.equal(await p.getByText('Verified Warehouse Keeper').count(),0);
       assert.equal(await p.getByText('Mahmud Hasan').count(),0);
