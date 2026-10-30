@@ -2,7 +2,7 @@
  * Missing, inconsistent, or unapproved amounts are unavailable, never replaced by demo totals.
  */
 const amount=(metric,allowed)=>metric&&allowed.includes(metric.status)&&
-  metric.valueMinor!==null&&Number.isSafeInteger(metric.valueMinor)&&metric.valueMinor>=0
+  metric.valueMinor!==null&&Number.isSafeInteger(metric.valueMinor)
     ?metric.valueMinor/100:null;
 export function loadDashboardMetrics(metrics,products){
   const byKey=new Map((metrics??[]).map(metric=>[metric.key,metric]));
