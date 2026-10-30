@@ -103,3 +103,16 @@ test('search-filtered stock rows do not report whole-business inventory as selec
   assert.match(metric(filtered,'inventoryValue').reason,/filter|search/i);
  }finally{db.close();}
 });
+
+test('master and debit-credit sum match but stale final running ledger balance still withholds dues',async()=>{
+ const db=fixture();
+ try{
+  db.native.prepare("INSERT INTO suppliers(supplier_id,supplier_name,current_due) VALUES ('SUP-STALE','Running balance mismatch',100)").run();
+  db.native.prepare("INSERT INTO supplier_ledger(ledger_id,date,supplier_id,supplier_name,type,debit,credit,balance) VALUES ('SLED-STALE','2026-10-25','SUP-STALE','Running balance mismatch','Purchase',100,0,200)").run();
+  const page=await readStockDues(db,query('payables'));
+  assert.equal(page.totalRows,1);
+  assert.equal(page.rows[0].amountMinor,null);
+  assert.equal(page.coverage.status,'incomplete');
+  assert.match(page.coverage.reason,/running balance|ledger/i);
+ }finally{db.close();}
+});
