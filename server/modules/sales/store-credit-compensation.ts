@@ -21,6 +21,10 @@ export async function commitVerifiedOutstandingCredit(
   if(expectedVersion!==1)return fail('Review version conflict.');
   const parsed=parseId(rawId);
   if(!parsed)return fail('Credit case not found.',404);
+  const alreadyReviewed=await db.prepare(
+    'SELECT case_id FROM store_credit_reconciliation_cases WHERE case_id=?'
+  ).bind(rawId).first<any>();
+  if(alreadyReviewed)return fail('Historical case is already reviewed.');
   const flag=await findStoreCreditReviewFlag(
     db,parsed.flagCode,parsed.customerId,parsed.referenceId);
   if(!flag)return fail('Credit case not found.',404);
