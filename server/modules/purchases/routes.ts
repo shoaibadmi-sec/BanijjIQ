@@ -3,6 +3,7 @@ import type { AuthUser } from '../auth/types.js';
 import type { PurchaseInput, PurchaseReturnInput } from './types.js';
 import type { PurchasePlanActionInput, PurchasePlanSaveInput, PurchasePlannerAnalysisInput } from './planner.types.js';
 import { searchPurchaseSuppliersRoute } from './supplier-search.js';
+import {reversePaidPurchaseRefund} from './refundReversal.service.js';
 import { readUnitProfile } from '../products/unitProfile.service.js';
 import { createSupplierSettlement, listSupplierSettlements, reverseSupplierSettlement, type SettleInput } from './supplierSettlement.service.js';
 import {
@@ -84,6 +85,10 @@ export async function handlePurchasesRoute(db: SherDatabase, request: Request, p
   }
   if (path === '/api/purchases' && request.method === 'GET') return getPurchases(db);
   if (path === '/api/purchases' && request.method === 'POST') return createPurchase(db, await readBody<PurchaseInput>(request), user);
+  const refundReversalMatch=path.match(/^\/api\/purchase-returns\/([^/]+)\/reverse$/);
+  if(refundReversalMatch&&request.method==='POST')
+    return reversePaidPurchaseRefund(db,decodeURIComponent(refundReversalMatch[1]),
+      await readBody<{clientRequestId?:string;reason?:string}>(request),user);
   if (path === '/api/purchase-returns' && request.method === 'GET') return getPurchaseReturnHistory(db);
   if (path === '/api/purchase-returns' && request.method === 'POST') return completePurchaseReturnRoute(db, await readBody<PurchaseReturnInput>(request), user);
   if (path === '/api/suppliers' && request.method === 'GET') return getSuppliersPageRoute(db);

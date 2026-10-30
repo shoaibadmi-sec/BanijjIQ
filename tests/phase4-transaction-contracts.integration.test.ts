@@ -331,6 +331,339 @@ test('4F money safety: forbid unposted paid purchases, paid edits and cash refun
  });
 });
 
+test('4I-C1: fully paid purchase cannot create negative supplier due through Supplier Credit',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC1','Open')")
+   .run('CS-4IC1-PAID');
+  const paid=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:100,
+   paymentMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(paid);
+  const state=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_type='PURCHASE' AND source_ref=?",paid.purchaseId).n,
+   invoice:one('SELECT returned_amount AS returned FROM purchases WHERE purchase_id=?',paid.purchaseId),
+   returns:count('purchase_returns'),returnLines:count('purchase_return_items'),
+   cash:count('cash_book'),audit:count('audit_logs')
+  });
+  const before=state();
+  assert.equal(before.due,0);assert.equal(before.ledger,0);
+  const input={purchaseId:paid.purchaseId,reason:'Supplier goods damaged',items:[
+   {productId:p1.productId,qty:1,unitPrice:50}]};
+  const unbackedCredit=await api('POST','/api/purchase-returns',{
+   ...input,refundMethod:'Supplier Credit'});
+  assert.equal(unbackedCredit.status,409,
+   'Already-paid goods cannot turn into a negative supplier payable without an explicit receivable');
+  assert.deepEqual(state(),before,'Rejected supplier credit must not alter FIFO stock, due, cash or audit');
+  const unpostedCash=await api('POST','/api/purchase-returns',{
+   ...input,refundMethod:'Cash'});
+  assert.equal(unpostedCash.status,409,'Cash refund remains blocked until an actual receipt is posted');
+  assert.deepEqual(state(),before);
+ });
+});
+
+test('4I-C1: supplier credit return rejects tampered supplier master/ledger without stock effects',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  const due=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(due);
+  db.native.prepare('UPDATE suppliers SET current_due=? WHERE supplier_id=?').run(90,supplier.id);
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lots:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=?",due.purchaseId).n,
+   returns:count('purchase_returns'),returnItems:count('purchase_return_items'),audit:count('audit_logs')
+  });
+  const original=snapshot();
+  assert.equal(original.due,90);assert.equal(original.ledger,100);
+  const response=await api('POST','/api/purchase-returns',{
+   purchaseId:due.purchaseId,refundMethod:'Supplier Credit',reason:'Defective parts',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(response.status,409,'Return must not further corrupt unreconciled supplier payables');
+  assert.deepEqual(snapshot(),original,'Rejected return must leave supplier, stock, and audit unchanged');
+ });
+});
+
+test('4I-C2 Cash: paid purchase refund is a real money-in receipt, never a second supplier credit',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC2','Open')")
+   .run('CS-4IC2-CASH');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paidAmount:100,paymentMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const payload={purchaseId:purchase.purchaseId,refundMethod:'Cash',
+   clientRequestId:crypto.randomUUID(),reason:'Defective fastener',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]};
+  const beforeAudit=count('audit_logs');
+  const refund=await api('POST','/api/purchase-returns',payload);safe(refund);
+  assert.equal(refund.totalReturnAmount,50);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,0);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,0);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,1);
+  assert.equal(one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,50);
+  assert.equal(one("SELECT COUNT(*) AS n FROM purchase_returns WHERE purchase_id=?",purchase.purchaseId).n,1);
+  assert.deepEqual(one("SELECT type,debit,credit FROM cash_book WHERE type='Supplier Refund'"),
+   {type:'Supplier Refund',debit:0,credit:50});
+  assert.equal(count('cash_book'),2,'One original cash payment out, one real refund in');
+  assert.equal(count('audit_logs'),beforeAudit+1);
+  const stable={book:count('cash_book'),returnCount:count('purchase_returns'),
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   audit:count('audit_logs')};
+  const replay=await api('POST','/api/purchase-returns',payload);safe(replay);
+  assert.equal(replay.returnId,refund.returnId);
+  assert.deepEqual({book:count('cash_book'),returnCount:count('purchase_returns'),
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   audit:count('audit_logs')},stable,'Same receipt request must not double-pay or double-remove stock');
+  assert.equal((await api('POST','/api/purchase-returns',{...payload,reason:'Changed reason'})).status,409);
+ });
+});
+
+test('4I-C2 Bank: refund arrives in the verified original account; tampered source refuses all writes',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC2','Open')")
+   .run('CS-4IC2-BANK');
+  db.native.prepare(`INSERT INTO bank_accounts
+   (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type)
+   VALUES ('BANK-4IC2','Original','Business',200,200,'Active','Bank')`).run();
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paidAmount:100,paymentMethod:'Bank',bankAccountId:'BANK-4IC2',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const snapshot=()=>({balance:one("SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id='BANK-4IC2'").n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+   book:count('bank_book'),returns:count('purchase_returns'),audit:count('audit_logs')});
+  const before=snapshot();
+  assert.equal(before.balance,100);
+  const payload={purchaseId:purchase.purchaseId,refundMethod:'Bank',bankAccountId:'BANK-4IC2',
+   clientRequestId:crypto.randomUUID(),reason:'Damaged product',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]};
+  db.native.prepare("UPDATE bank_book SET type='Unverified' WHERE type='Supplier Payment'").run();
+  const corrupted=snapshot();
+  assert.equal((await api('POST','/api/purchase-returns',payload)).status,409);
+  assert.deepEqual(snapshot(),corrupted,'Broken original source must not post a second receipt');
+  db.native.prepare("UPDATE bank_book SET type='Supplier Payment' WHERE type='Unverified'").run();
+  const refund=await api('POST','/api/purchase-returns',payload);safe(refund);
+  assert.deepEqual(snapshot(),{...before,balance:150,stock:1,returned:50,book:before.book+1,
+   returns:before.returns+1,audit:before.audit+1});
+  assert.deepEqual(one("SELECT type,debit,credit,bank_account_id AS account FROM bank_book WHERE type='Supplier Refund'"),
+   {type:'Supplier Refund',debit:0,credit:50,account:'BANK-4IC2'});
+ });
+});
+
+test('4I-C2 Cash: failed money-book journal rolls back refund stock, invoice and audit',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC2','Open')")
+   .run('CS-4IC2-ROLLBACK');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paidAmount:100,paymentMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const snapshot=()=>({stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=?",purchase.purchaseId).n,
+   invoice:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   cash:count('cash_book'),returns:count('purchase_returns'),items:count('purchase_return_items'),
+   movements:count('stock_movements'),audit:count('audit_logs')});
+  const before=snapshot();
+  db.native.exec(`CREATE TRIGGER reject_refund_receipt BEFORE INSERT ON cash_book
+   WHEN NEW.type='Supplier Refund' BEGIN SELECT RAISE(ABORT,'injected-refund-journal-failure'); END;`);
+  const payload={purchaseId:purchase.purchaseId,refundMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   reason:'Not as described',items:[{productId:p1.productId,qty:1,unitPrice:50}]};
+  const failed=await api('POST','/api/purchase-returns',payload);
+  assert.notEqual(failed.status,200,'Failed receipt must not return success');
+  assert.deepEqual(snapshot(),before,'Money-journal failure must roll back inventory and payable');
+  db.native.exec('DROP TRIGGER reject_refund_receipt');
+  safe(await api('POST','/api/purchase-returns',payload));
+  assert.equal(snapshot().stock,1);
+  assert.equal(snapshot().cash,before.cash+1);
+ });
+});
+
+test('4I financial audit: altered original Cash book method blocks reversal without accounting changes',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-AUDIT','Open')").run('CS-4I-AUDIT');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const refund=await api('POST','/api/purchase-returns',{purchaseId:purchase.purchaseId,
+   refundMethod:'Cash',reason:'Supplier returned fifty taka',
+   clientRequestId:crypto.randomUUID(),items:[{productId:p1.productId,qty:1,unitPrice:50}]});safe(refund);
+  const path='/api/purchase-returns/'+refund.returnId+'/reverse';
+  const reversal={clientRequestId:crypto.randomUUID(),reason:'Supplier goods restored'};
+  const payment=one("SELECT entry_id AS id,payment_method AS method FROM cash_book WHERE type='Supplier Payment'");
+  assert.equal(payment.method,'Cash');
+  const changed=db.native.prepare("UPDATE cash_book SET payment_method='Bank' WHERE entry_id=?").run(payment.id);
+  assert.equal(changed.changes,1,'Fixture changes only the original money-book source provenance');
+  const snapshot=()=>({
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one('SELECT remaining_quantity AS n FROM stock_lots WHERE source_ref=?',purchase.purchaseId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   payable:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+   refundStatus:one('SELECT refund_status AS s FROM purchase_returns WHERE return_id=?',refund.returnId).s,
+   cashRows:count('cash_book'),movements:count('stock_movements'),audit:count('audit_logs')
+  });
+  const before=snapshot();
+  assert.equal(before.stock,1);assert.equal(before.lot,1);assert.equal(before.returned,50);
+  const rejected=await api('POST',path,reversal);
+  assert.equal(rejected.status,409,JSON.stringify(rejected));
+  assert.deepEqual(snapshot(),before,'Unverified cash-source reversal cannot restore stock or move funds');
+  db.native.prepare("UPDATE cash_book SET payment_method='Cash' WHERE entry_id=?").run(payment.id);
+  const restored=await api('POST',path,reversal);safe(restored);
+  assert.equal(snapshot().refundStatus,'Reversed');
+  assert.equal(snapshot().cashRows,before.cashRows+1,'Verified original Cash source creates exactly one compensating money-out entry');
+ });
+});
+
+test('4I financial audit: D1 reversal-state trigger rejects tampered original Cash money-book source',async()=>{
+ await fixture(async({api,db,one,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-AUDIT','Open')").run('CS-4I-AUDIT-TRIGGER');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const refund=await api('POST','/api/purchase-returns',{purchaseId:purchase.purchaseId,
+   refundMethod:'Cash',reason:'Original supplier return',
+   clientRequestId:crypto.randomUUID(),items:[{productId:p1.productId,qty:1,unitPrice:50}]});safe(refund);
+  db.native.prepare("UPDATE cash_book SET payment_method='Bank' WHERE type='Supplier Payment'").run();
+  const attempt=()=>db.native.prepare(`UPDATE purchase_returns SET refund_status='Reversed',
+   reversal_request_id=?,reversal_reason='Goods returned by supplier'
+   WHERE return_id=?`).run(crypto.randomUUID(),refund.returnId);
+  assert.throws(attempt,/purchase_refund_reversal_original_cash_source_changed/,
+    'SQLite/D1 write guard must reject changed original cash payment even if service checks are bypassed');
+  assert.equal(one('SELECT refund_status AS s FROM purchase_returns WHERE return_id=?',refund.returnId).s,'Posted');
+  assert.equal(one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,50);
+ });
+});
+
+test('4I-C6: original refund replay after reversal cannot masquerade as an active paid receipt',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I-C6','Open')").run('CS-4I-C6');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const request={purchaseId:purchase.purchaseId,refundMethod:'Cash',
+   reason:'Defective original bolt',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]};
+  const refund=await api('POST','/api/purchase-returns',request);safe(refund);
+  const postedRetry=await api('POST','/api/purchase-returns',request);safe(postedRetry);
+  assert.equal(postedRetry.idempotent,true,'Before reversal same request remains idempotent');
+  safe(await api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',{
+   clientRequestId:crypto.randomUUID(),reason:'Restored original goods'}));
+  const snapshot=()=>({
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   payable:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+   status:one('SELECT refund_status AS n FROM purchase_returns WHERE return_id=?',refund.returnId).n,
+   cash:count('cash_book'),moves:count('stock_movements'),audit:count('audit_logs')
+  });
+  const before=snapshot();assert.equal(before.status,'Reversed');assert.equal(before.returned,0);
+  const replay=await api('POST','/api/purchase-returns',request);
+  assert.equal(replay.status,409,JSON.stringify(replay));
+  assert.match(replay.error,/revers/i);
+  assert.deepEqual(snapshot(),before,'Original reversed request cannot create an active receipt or change stock');
+  const newRequest=await api('POST','/api/purchase-returns',{
+   ...request,clientRequestId:crypto.randomUUID(),reason:'New authorized return'});
+  safe(newRequest);
+  assert.notEqual(newRequest.returnId,refund.returnId,'A new justified refund requires a new ID and transaction');
+  assert.equal(snapshot().returned,50);
+ });
+});
+
+test('4I-C3 Cash: reversal restores original FIFO stock and exactly compensates cash refund, with immutable retries',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC3','Open')").run('CS-4IC3');
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+    paymentMethod:'Cash',paidAmount:100,clientRequestId:crypto.randomUUID(),
+    items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const refund=await api('POST','/api/purchase-returns',{purchaseId:purchase.purchaseId,
+    refundMethod:'Cash',reason:'Supplier damaged one item',clientRequestId:crypto.randomUUID(),
+    items:[{productId:p1.productId,qty:1,unitPrice:50}]});safe(refund);
+  const request={clientRequestId:crypto.randomUUID(),reason:'Supplier returned the goods to us'};
+  const snapshot=()=>({
+    due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+    ledger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+    stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+    lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=?",purchase.purchaseId).n,
+    returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+    status:one('SELECT refund_status AS s FROM purchase_returns WHERE return_id=?',refund.returnId).s,
+    cash:count('cash_book'),returns:count('purchase_returns'),movements:count('stock_movements'),
+    audit:count('audit_logs')
+  });
+  const original=snapshot();
+  assert.equal(original.stock,1);assert.equal(original.lot,1);assert.equal(original.returned,50);
+  const reversed=await api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',request);safe(reversed);
+  assert.equal(reversed.returnId,refund.returnId);
+  assert.deepEqual(snapshot(),{...original,stock:2,lot:2,returned:0,status:'Reversed',
+    cash:original.cash+1,movements:original.movements+1,audit:original.audit+1});
+  assert.deepEqual(one("SELECT type,debit,credit FROM cash_book WHERE type='Supplier Refund Reversal'"),
+    {type:'Supplier Refund Reversal',debit:50,credit:0});
+  assert.equal(count('purchase_return_items'),1,'Original return evidence stays append-only');
+  const availability=await api('GET','/api/purchases/'+purchase.purchaseId+'/return-data');safe(availability);
+  assert.equal(availability.purchase.items[0].previouslyReturnedQty,0);
+  const history=await api('GET','/api/purchase-returns');safe(history);
+  assert.equal(history.returns.find((x:any)=>x.returnId===refund.returnId).refundStatus,'Reversed');
+  const stable=snapshot();
+  const [again,parallel]=await Promise.all([
+    api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',request),
+    api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',request)]);
+  safe(again);safe(parallel);assert.equal(again.idempotent,true);assert.equal(parallel.idempotent,true);
+  assert.deepEqual(snapshot(),stable,'Replay never restores stock or pays a second time');
+  assert.equal((await api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',
+    {...request,reason:'Different reason'})).status,409);
+  assert.equal((await api('POST','/api/purchase-returns/'+refund.returnId+'/reverse',
+    {clientRequestId:crypto.randomUUID(),reason:request.reason})).status,409);
+  assert.deepEqual(snapshot(),stable,'Conflicting retry cannot change any book');
+ });
+});
+
+test('4I-C3 Bank: reject wrong original refund source, stale balance and failed journal atomically',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC3','Open')").run('CS-4IC3-BANK');
+  db.native.prepare(`INSERT INTO bank_accounts
+    (bank_account_id,account_name,bank_name,opening_balance,current_balance,status,account_type)
+    VALUES ('BANK-4IC3','Current','Test',200,200,'Active','Bank')`).run();
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+    paymentMethod:'Bank',bankAccountId:'BANK-4IC3',paidAmount:100,clientRequestId:crypto.randomUUID(),
+    items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(purchase);
+  const refund=await api('POST','/api/purchase-returns',{purchaseId:purchase.purchaseId,
+    refundMethod:'Bank',bankAccountId:'BANK-4IC3',clientRequestId:crypto.randomUUID(),
+    reason:'Damaged original lot',items:[{productId:p1.productId,qty:1,unitPrice:50}]});safe(refund);
+  const request={clientRequestId:crypto.randomUUID(),reason:'Original goods restored by supplier'};
+  const path='/api/purchase-returns/'+refund.returnId+'/reverse';
+  const snapshot=()=>({bank:one("SELECT current_balance AS n FROM bank_accounts WHERE bank_account_id='BANK-4IC3'").n,
+    due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+    stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+    lot:one('SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=?',purchase.purchaseId).n,
+    returned:one('SELECT returned_amount AS n FROM purchases WHERE purchase_id=?',purchase.purchaseId).n,
+    status:one('SELECT refund_status AS s FROM purchase_returns WHERE return_id=?',refund.returnId).s,
+    books:count('bank_book'),movements:count('stock_movements'),audit:count('audit_logs')});
+  const original=snapshot();assert.equal(original.bank,150);
+  db.native.prepare("UPDATE bank_book SET type='Unverified' WHERE type='Supplier Refund'").run();
+  const tampered=snapshot();
+  assert.equal((await api('POST',path,request)).status,409);
+  assert.deepEqual(snapshot(),tampered);
+  db.native.prepare("UPDATE bank_book SET type='Supplier Refund' WHERE type='Unverified'").run();
+  db.native.prepare("UPDATE bank_accounts SET current_balance=40 WHERE bank_account_id='BANK-4IC3'").run();
+  const insufficient=snapshot();
+  assert.equal((await api('POST',path,request)).status,409);
+  assert.deepEqual(snapshot(),insufficient);
+  db.native.prepare("UPDATE bank_accounts SET current_balance=150 WHERE bank_account_id='BANK-4IC3'").run();
+  db.native.exec(`CREATE TRIGGER reject_refund_reversal BEFORE INSERT ON bank_book
+    WHEN NEW.type='Supplier Refund Reversal' BEGIN SELECT RAISE(ABORT,'injected-reversal-failure'); END;`);
+  const beforeFail=snapshot();
+  assert.notEqual((await api('POST',path,request)).status,200);
+  assert.deepEqual(snapshot(),beforeFail,'Bank-book insert failure must rollback FIFO restoration and return status');
+  db.native.exec('DROP TRIGGER reject_refund_reversal');
+  const done=await api('POST',path,request);safe(done);
+  assert.deepEqual(snapshot(),{...original,bank:100,stock:2,lot:2,returned:0,
+    status:'Reversed',books:original.books+1,movements:original.movements+1,audit:original.audit+1});
+  assert.deepEqual(one("SELECT type,debit,credit,bank_account_id AS bankId FROM bank_book WHERE type='Supplier Refund Reversal'"),
+    {type:'Supplier Refund Reversal',debit:50,credit:0,bankId:'BANK-4IC3'});
+ });
+});
+
 test('4I Cash: paid purchase posts invoice, full supplier debit, payment credit and cash book atomically',async()=>{
  await fixture(async({api,one,count,db,supplier,p1})=>{
   const requestId=crypto.randomUUID();

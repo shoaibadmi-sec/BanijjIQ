@@ -272,6 +272,8 @@ async function expenseSourceMatches(db:SherDatabase,expense:any):Promise<boolean
   }
   return method==='Cash'||bankNet.get(accountId)===amountTicks;
 }
+async function writeExpenseCashDelta(db:SherDatabase,id:string,delta:number):Promise<void>{if(!delta)return;await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Expense Update',?,?,?,?,'Cash',0)`).bind(expenseId('CB'),todayDate(),id,delta>0?`Additional cash for expense update ${id}`:`Cash reversed from expense update ${id}`,delta>0?delta:0,delta<0?Math.abs(delta):0).run();}
+async function writeExpenseBankDelta(db:SherDatabase,id:string,bankId:string,delta:number):Promise<void>{if(!delta)return;await db.batch([db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Expense Update',?,?,?,?,0)`).bind(expenseId('BB'),bankId,todayDate(),id,delta>0?`Additional funds for expense update ${id}`:`Funds reversed from expense update ${id}`,delta>0?delta:0,delta<0?Math.abs(delta):0),db.prepare(`UPDATE bank_accounts SET current_balance=current_balance-? WHERE bank_account_id=?`).bind(delta,bankId)]);}
 
 export async function updateExpenseRoute(db:SherDatabase,id:string,input:ExpenseInput):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start the cash session before editing an expense.');

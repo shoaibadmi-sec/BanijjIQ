@@ -689,7 +689,7 @@ export async function getPurchaseForReturn(db: SherDatabase, purchaseId: string)
   if (!purchase) return error('Purchase not found.');
   const rows = await db.prepare(`
     SELECT pi.product_id AS productId, pi.product_name AS productName, SUM(pi.quantity) AS boughtQty, AVG(pi.purchase_price) AS unitPrice,
-           COALESCE((SELECT SUM(return_quantity) FROM purchase_return_items pri WHERE pri.purchase_id=pi.purchase_id AND pri.product_id=pi.product_id),0) AS previouslyReturnedQty
+           COALESCE((SELECT SUM(pri.return_quantity) FROM purchase_return_items pri JOIN purchase_returns pr ON pr.return_id=pri.return_id WHERE pri.purchase_id=pi.purchase_id AND pri.product_id=pi.product_id AND pr.refund_status='Posted' AND COALESCE(pr.is_deleted,0)=0),0) AS previouslyReturnedQty
     FROM purchase_items pi WHERE pi.purchase_id=? GROUP BY pi.product_id, pi.product_name
   `).bind(purchaseId).all();
   const items: any[] = [];
@@ -765,9 +765,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Select at least one product to return.');
   const refundMethod = cleanText(input.refundMethod || 'Supplier Credit');
-  if (refundMethod !== 'Cash' && refundMethod !== 'Supplier Credit') return error('Choose a refund method.');
-  if (refundMethod === 'Cash')
-    return error('Cash purchase returns require an audited money receipt. Use Supplier Credit until cash-book posting is implemented.',409);
+  const paidRefund = ['Cash','Bank','Mobile Banking'].includes(refundMethod);
+  if (!paidRefund && refundMethod !== 'Supplier Credit') return error('Choose a refund method.');
   const reason = cleanText(input.reason);
   if (!reason) return error('Enter a return reason.');
   const returnDate = cleanText(input.date) || new Date().toISOString().slice(0, 10);
@@ -775,8 +774,70 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (returnDate < today && !cleanText(input.backdatedReason)) return error('Reason for backdating is required.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
-  if(await hasMixedUnitPurchase(db,purchaseId))
+  if(await hasMixedUnitPurchase(db,purchaseId)){
+    if(paidRefund)return error('Paid mixed-unit refunds require source allocations and are not enabled.',409);
     return completeMixedPurchaseReturn(db,input,user);
+  }
+  const refundRequestId=cleanText(input.clientRequestId);
+  const refundAccountId=cleanText(input.bankAccountId);
+  const refundPayload=JSON.stringify({purchaseId,refundMethod,bankAccountId:refundAccountId,
+    date:cleanText(input.date),backdatedReason:cleanText(input.backdatedReason),
+    reason,notes:cleanText(input.notes),items});
+  if(paidRefund){
+    if(!/^[0-9a-f-]{32,36}$/i.test(refundRequestId))
+      return error('Use a unique refund request ID; a money receipt cannot be posted without it.',409);
+    const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount,refund_status FROM purchase_returns WHERE refund_request_id=?')
+      .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number;refund_status:string}>();
+    if(prior)return prior.refund_status!=='Posted'
+      ?error('Refund was already reversed. Review the historical receipt before a new request.',409)
+      :prior.refund_payload_json===refundPayload
+      ?json({ok:true,returnId:prior.return_id,totalReturnAmount:prior.total_return_amount,idempotent:true})
+      :error('Refund request ID was already used for different details.',409);
+    const paid=Number(purchase.paid_amount||0),total=Number(purchase.grand_total||0);
+    if(String(purchase.status)!=='Completed'||paid<=0||Math.abs(paid-total)>0.0001||
+      Number(purchase.due_amount||0)!==0||Number(purchase.discount||0)!==0||
+      String(purchase.payment_method)!==refundMethod||!cleanText(purchase.payment_ledger_id))
+      return error('Refund requires a fully paid, undiscounted purchase with its original payment method.',409);
+    if((refundMethod==='Cash'&&refundAccountId!=='')||
+       (refundMethod!=='Cash'&&refundAccountId!==cleanText(purchase.bank_account_id)))
+      return error('Refund must use the original payment account.',409);
+    if(!await hasActiveCashSession(db))return error('Open a cash session before receiving a refund.',409);
+    const supplier=await db.prepare(`SELECT current_due FROM suppliers WHERE supplier_id=? AND status='Active' AND COALESCE(is_deleted,0)=0`)
+      .bind(String(purchase.supplier_id)).first<{current_due:number}>();
+    const ledgerTotal=await db.prepare(`SELECT COALESCE(SUM(debit-credit),0) AS due FROM supplier_ledger
+      WHERE supplier_id=? AND COALESCE(is_deleted,0)=0`).bind(String(purchase.supplier_id)).first<{due:number}>();
+    if(!supplier||!Number.isFinite(Number(supplier.current_due))||
+      Math.abs(Number(supplier.current_due)-Number(ledgerTotal?.due||0))>0.0001)
+      return error('Supplier payable ledger must reconcile before a refund.',409);
+    const sourceLedger=await db.prepare(`SELECT type,reference,supplier_id,debit,credit,payment_method,bank_account_id
+      FROM supplier_ledger WHERE ledger_id=? AND COALESCE(is_deleted,0)=0`)
+      .bind(cleanText(purchase.payment_ledger_id)).first<any>();
+    if(!sourceLedger||sourceLedger.type!=='Purchase Payment'||sourceLedger.reference!==purchaseId||
+      sourceLedger.supplier_id!==purchase.supplier_id||Number(sourceLedger.debit)!==0||
+      Math.abs(Number(sourceLedger.credit)-paid)>0.0001||
+      sourceLedger.payment_method!==refundMethod||
+      String(sourceLedger.bank_account_id||'')!==cleanText(purchase.bank_account_id))
+      return error('Original purchase payment ledger was altered. Reconcile first.',409);
+    const sourceBook=refundMethod==='Cash'?'cash_book':'bank_book';
+    const book=await db.prepare(`SELECT type,reference,debit,credit${refundMethod==='Cash'?'':',bank_account_id'}
+      FROM ${sourceBook} WHERE reference=? AND COALESCE(is_deleted,0)=0`)
+      .bind(cleanText(purchase.payment_ledger_id)).all<any>();
+    const source=book.results[0];
+    if(book.results.length!==1||source?.type!=='Supplier Payment'||
+      source.reference!==purchase.payment_ledger_id||Math.abs(Number(source.debit)-paid)>0.0001||
+      Number(source.credit)!==0||
+      (refundMethod!=='Cash'&&source.bank_account_id!==refundAccountId))
+      return error('Original cash/bank payment source does not match. Reconcile first.',409);
+    if(refundMethod!=='Cash'){
+      const bank=await db.prepare(`SELECT current_balance FROM bank_accounts
+        WHERE bank_account_id=? AND status='Active' AND account_type=?`)
+        .bind(refundAccountId,refundMethod).first<{current_balance:number}>();
+      const latest=await db.prepare(`SELECT balance FROM bank_book WHERE bank_account_id=? AND COALESCE(is_deleted,0)=0
+        ORDER BY created_at DESC,rowid DESC LIMIT 1`).bind(refundAccountId).first<{balance:number}>();
+      if(!bank||!latest||Math.abs(Number(bank.current_balance)-Number(latest.balance))>0.0001)
+        return error('Original refund account is inactive or unreconciled.',409);
+    }
+  }
   const availableResp = await getPurchaseForReturn(db, purchaseId);
   const availableData = await availableResp.clone().json() as any;
   if (!availableData.ok) return availableResp;
@@ -784,19 +845,34 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   const returnId = await nextPurchaseReturnId(db);
   const batch: SqlPreparedStatement[] = [];
   let totalReturnAmount = 0;
+  const seenProducts=new Set<string>();
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
     const productId = cleanText(item.productId);
     const quantity = qty(item.qty ?? item.quantity);
     const price = money(item.unitPrice ?? item.returnPrice);
     if (!productId || quantity <= 0) return error(`Line ${i + 1}: return quantity must be greater than zero.`);
+    if(paidRefund){
+      if(seenProducts.has(productId))return error('Duplicate refund product lines are not allowed.',409);
+      seenProducts.add(productId);
+      const rawQuantity=item.qty??item.quantity,rawPrice=item.unitPrice??item.returnPrice;
+      if(typeof rawQuantity!=='number'||typeof rawPrice!=='number'||
+        !Number.isFinite(rawQuantity)||!Number.isFinite(rawPrice)||
+        Math.abs(rawQuantity*10000-Math.round(rawQuantity*10000))>0.000001||
+        Math.abs(rawPrice*10000-Math.round(rawPrice*10000))>0.000001)
+        return error('Refund quantity and original unit cost must be exact to four decimals.',409);
+    }
     const av: any = available.get(productId);
     if (!av) return error(`Line ${i + 1}: product was not part of this purchase.`);
+    if(paidRefund&&Math.abs(price-money(av.unitPrice))>0.0001)
+      return error('Cash/bank refunds must use the original purchase line cost.',409);
     if (quantity > qty(av.availableQty)) return error(`${av.productName}: only ${av.availableQty} available to return.`);
     const product = await db.prepare(`SELECT current_stock, product_name FROM products WHERE product_id=?`).bind(productId).first<{ current_stock: number; product_name: string }>();
     const newStock = Math.round((Number(product?.current_stock || 0) - quantity) * 10000) / 10000;
     if (newStock < 0) return error(`${product?.product_name || av.productName}: only ${product?.current_stock || 0} in stock — cannot return more than on hand.`);
     const trackingProduct = await db.prepare(`SELECT track_serial AS trackSerial, track_expiry AS trackExpiry FROM products WHERE product_id=?`).bind(productId).first<any>();
+    if(paidRefund&&(Number(trackingProduct?.trackSerial || 0)||Number(trackingProduct?.trackExpiry || 0)))
+      return error('Tracked serial/expiry paid refunds are not enabled.',409);
     if (Number(trackingProduct?.trackSerial || 0) || Number(trackingProduct?.trackExpiry || 0)) {
       let tracked;
       try { tracked = await reduceTrackedPurchaseLots(db, purchaseId, productId, quantity, item.serialNumbers); }
@@ -823,9 +899,46 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
       .bind(returnId, purchaseId, productId, String(av.productName), quantity, price, lineTotal));
   }
   totalReturnAmount = Math.round(totalReturnAmount * 10000) / 10000;
-  batch.push(db.prepare(`INSERT INTO purchase_returns (return_id, return_date, purchase_id, supplier_id, supplier_name, total_return_amount, refund_method, reason, notes, processed_by, is_backdated, backdated_reason, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`).bind(returnId, returnDate, purchaseId, String(purchase.supplier_id || ''), String(purchase.supplier_name || ''), totalReturnAmount, refundMethod, reason, cleanText(input.notes), user.userId, returnDate < today ? 1 : 0, cleanText(input.backdatedReason)));
+  if(paidRefund&&(totalReturnAmount<=0||
+    totalReturnAmount+Number(purchase.returned_amount||0)>Number(purchase.paid_amount||0)+0.0001))
+    return error('Refund exceeds the original paid amount after earlier returns.',409);
+  if(refundMethod==='Supplier Credit'){
+    // A return credit is an offset against existing payable, never unposted cash income
+    // or an implicit supplier receivable. The D1 trigger repeats this check in the batch.
+    const supplierId=String(purchase.supplier_id||'');
+    const balance=await db.prepare(`SELECT s.current_due AS due,
+       (SELECT COALESCE(SUM(sl.debit-sl.credit),0) FROM supplier_ledger sl
+        WHERE sl.supplier_id=s.supplier_id AND COALESCE(sl.is_deleted,0)=0) AS ledgerDue
+      FROM suppliers s WHERE s.supplier_id=? AND COALESCE(s.is_deleted,0)=0`)
+      .bind(supplierId).first<{due:number;ledgerDue:number}>();
+    if(!balance||Math.abs(Number(balance.due)-Number(balance.ledgerDue))>0.0001||
+       Number(balance.due)+0.0001<totalReturnAmount)
+      return error('Supplier credit exceeds the reconciled payable. Record a verified refund instead.',409);
+  }
+  batch.push(db.prepare(`INSERT INTO purchase_returns (return_id, return_date, purchase_id, supplier_id, supplier_name, total_return_amount, refund_method, reason, notes, processed_by, is_backdated, backdated_reason, refund_request_id, refund_payload_json, refund_source_ledger_id, refund_bank_account_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`).bind(returnId, returnDate, purchaseId, String(purchase.supplier_id || ''), String(purchase.supplier_name || ''), totalReturnAmount, refundMethod, reason, cleanText(input.notes), user.userId, returnDate < today ? 1 : 0, cleanText(input.backdatedReason),
+    paidRefund?refundRequestId:'',paidRefund?refundPayload:'',paidRefund?cleanText(purchase.payment_ledger_id):'',paidRefund?refundAccountId:''));
   batch.push(db.prepare(`UPDATE purchases SET returned_amount = COALESCE(returned_amount,0) + ?, updated_at=datetime('now') WHERE purchase_id=?`).bind(totalReturnAmount, purchaseId));
+  if(paidRefund){
+    if(refundMethod==='Cash'){
+      batch.push(db.prepare(`INSERT INTO cash_book
+        (entry_id,date,type,reference,description,debit,credit,payment_method,created_at)
+        VALUES (?,?,'Supplier Refund',?,?,0,?,'Cash',datetime('now'))`)
+        .bind(crypto.randomUUID(),returnDate,returnId,'Verified supplier refund for '+purchaseId,totalReturnAmount));
+    }else{
+      batch.push(db.prepare(`UPDATE bank_accounts SET current_balance=current_balance+?
+        WHERE bank_account_id=?`).bind(totalReturnAmount,refundAccountId));
+      batch.push(db.prepare(`INSERT INTO bank_book
+        (entry_id,bank_account_id,date,type,reference,description,debit,credit,
+         bank_account_name,balance,created_by,created_at)
+        VALUES (?,?,?,'Supplier Refund',?,?,0,?,
+         (SELECT account_name FROM bank_accounts WHERE bank_account_id=?),
+         (SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),?,datetime('now'))`)
+        .bind(crypto.randomUUID(),refundAccountId,returnDate,returnId,
+          'Verified supplier refund for '+purchaseId,totalReturnAmount,
+          refundAccountId,refundAccountId,user.userId));
+    }
+  }
   if (refundMethod === 'Supplier Credit') {
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(totalReturnAmount, String(purchase.supplier_id || '')));
     batch.push(db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
@@ -834,12 +947,26 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   }
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'PURCHASE_RETURN', 'PURCHASE_RETURN', ?, ?)`)
     .bind(user.userId, returnId, reason));
-  await db.batch(batch);
+  try{await db.batch(batch);}
+  catch(e){
+    if(paidRefund){
+      const prior=await db.prepare('SELECT return_id,refund_payload_json,total_return_amount,refund_status FROM purchase_returns WHERE refund_request_id=?')
+        .bind(refundRequestId).first<{return_id:string;refund_payload_json:string;total_return_amount:number;refund_status:string}>();
+      if(prior)return prior.refund_status!=='Posted'
+        ?error('Refund was already reversed. Review the historical receipt before a new request.',409)
+        :prior.refund_payload_json===refundPayload
+        ?json({ok:true,returnId:prior.return_id,totalReturnAmount:prior.total_return_amount,idempotent:true})
+        :error('Refund request ID was already used for different details.',409);
+      if(/constraint|purchase_refund_|negative|unreconciled|changed|insufficient/i.test(String(e)))
+        return error('Original refund source or balance changed. Reconcile before retry.',409);
+    }
+    throw e;
+  }
   return json({ ok: true, returnId, totalReturnAmount });
 }
 
 export async function getPurchaseReturnHistory(db: SherDatabase): Promise<Response> {
-  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
+  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod,refund_status AS refundStatus,refund_request_id AS refundRequestId,reversed_at AS reversedAt, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
   return json({ ok: true, returns: rows.results ?? [] });
 }
 

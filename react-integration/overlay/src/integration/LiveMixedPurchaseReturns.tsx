@@ -61,16 +61,16 @@ export function LiveMixedPurchaseReturns({purchaseId,purchases,loading,onRefresh
   }finally{posting.current=false;setSaving(false);}
  }
  if(!purchaseId)return <div data-live-purchase-returns className="space-y-3 rounded-xl border border-border bg-card p-3 shadow-card">
-  <p className="text-xs text-ink-500">Choose a saved mixed-unit purchase. Original-cost returns use source FIFO lots.</p>
+  <p className="text-xs text-ink-500">Choose a saved purchase for return · ফেরত দেওয়ার ক্রয় নির্বাচন করুন।</p>
   {loading?<p role="status">Loading purchases…</p>:
-   purchases.filter(p=>p.items?.some(i=>!!i.unitDescription)).map(p=>
+   purchases.filter(p=>p.items?.length>0).map(p=>
     <Link key={p.purchaseId} to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}
      className="flex flex-wrap justify-between gap-2 rounded-md border border-border p-3 text-sm hover:bg-ink-50">
       <span className="font-medium text-ink">{p.purchaseId} · {p.supplierName}</span>
       <span className="text-ink-600">{taka(p.grandTotal)}</span>
     </Link>)}
-  {!loading&&!purchases.some(p=>p.items?.some(i=>!!i.unitDescription))&&
-   <p className="py-8 text-center text-sm text-ink-500">No mixed-unit purchases found</p>}
+  {!loading&&!purchases.some(p=>p.items?.length>0)&&
+   <p className="py-8 text-center text-sm text-ink-500">No purchases available to return</p>}
  </div>;
  return <div data-live-purchase-returns className="space-y-3 rounded-xl border border-border bg-card p-3 shadow-card">
   <div className="flex flex-wrap justify-between gap-2">

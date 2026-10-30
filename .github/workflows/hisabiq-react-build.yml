@@ -1,6 +1,6 @@
 name: HisabIQ React / BanijjIQ API integration
 on:
-  # All pull requests must run CI; no path filter may bypass financial/security review.
+  # Every PR runs financial/security acceptance; no path-filter bypass.
   pull_request:
   workflow_dispatch:
     inputs:
@@ -52,9 +52,15 @@ jobs:
           npm ci
           npm run backend:build
           npm run test:phase6
+          npm run test:security
           node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
           node --import tsx --test tests/reports-transaction-lifecycle.integration.test.ts
+          node --import tsx --test tests/reports-combined-accounting.integration.test.ts
+          node --import tsx --test tests/reports-bank-settlement-reversal.integration.test.ts
+          node --import tsx --test tests/reports-dual-return-accounting.integration.test.ts
+          node --import tsx --test tests/reports-finance-transfer-lifecycle.integration.test.ts
+          node --import tsx --test tests/reports-expense-cancellation-lifecycle.integration.test.ts
           node --import tsx --test tests/reports-customer-payment.integration.test.ts
           node --import tsx --test tests/reports-sales-profit.integration.test.ts
           node --import tsx --test tests/reports-stock-dues.integration.test.ts

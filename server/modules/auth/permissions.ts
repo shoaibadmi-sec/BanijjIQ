@@ -36,8 +36,8 @@ export function sanitizePermissions(raw:any): RolePermissions {
 
 export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<RolePermissions|null>{
   if(user.role==='admin') return null;
-  const row=await db.prepare(`SELECT permissions_json FROM app_roles WHERE role_name=? LIMIT 1`).bind(user.role).first<{permissions_json:string}>();
-  if(!row) return {};
+  const row=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`).bind(user.role).first<{permissions_json:string;status:string}>();
+  if(!row || row.status!=='Active') return {};
   try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
 }
 
@@ -93,7 +93,7 @@ async function resolveDeleteRecordDate(db:SherDatabase,path:string,moduleKey:str
 }
 
 function permissionRouteInfo(path:string,method:string):{moduleKey:string;action:'view'|'add'|'edit'|'delete'}|null{
-  if(path==='/api/bootstrap')return null;
+  if(path==='/api/bootstrap' && method==='GET') return {moduleKey:'products',action:'view'};
   const rules:Array<[RegExp,string]>=[
     [/^\/api\/settings/,'settings'],[/^\/api\/dashboard$/,'dashboard'],[/^\/api\/reports/,'reports'],[/^\/api\/finance/,'finance'],
     [/^\/api\/daybook/,'daybook'],[/^\/api\/bank/,'bank'],[/^\/api\/expenses/,'expense'],[/^\/api\/expense-/,'expense'],

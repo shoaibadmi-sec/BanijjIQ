@@ -86,7 +86,13 @@ export function LiveCheckoutPanel(props: Props) {
         <div className="grid grid-cols-2 gap-2">
           <label className="min-w-0 text-xs text-ink-600">Customer name *
             <Input list="live-pos-customer-names" value={props.customerName}
-              onChange={event => props.onCustomerName(event.target.value)}
+              onChange={event => {
+                // Native autofill/datalist can deliver a delayed empty input
+                // after blur. Only a focused person may intentionally clear it.
+                if (!event.currentTarget.value &&
+                  event.currentTarget.ownerDocument.activeElement !== event.currentTarget) return;
+                props.onCustomerName(event.currentTarget.value);
+              }}
               onBlur={event => props.onSelectCustomer(event.currentTarget.value, 'name')}
               aria-label="Customer name" placeholder="Name · নাম" className="mt-1 h-9" />
           </label>

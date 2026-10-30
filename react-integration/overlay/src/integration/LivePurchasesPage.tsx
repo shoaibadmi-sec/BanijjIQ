@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Link,useNavigate,useSearchParams} from 'react-router-dom';
 import {LiveMixedPurchaseReturns} from './LiveMixedPurchaseReturns';
+import {LiveStandardPurchaseReturns} from './LiveStandardPurchaseReturns';
 import {LiveSupplierSettlements} from './LiveSupplierSettlements';
 import {LivePurchasePlans} from './LivePurchasePlans';
 import {ArrowLeft,Plus,RefreshCw,Search,Trash2} from 'lucide-react';
@@ -11,11 +12,11 @@ import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from '../compo
 import {canUseModule,useBackendSession} from './BackendGate';
 import {BackendRequestError,type BackendProduct,type PosProfilePreview} from './banijjApi';
 import {LiveMultiUnitQuantity} from './LiveMultiUnitQuantity';
-import {createDuePurchase,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,getOrderToPurchase,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,
- type DuePurchaseLine,type PurchaseSupplier,type PurchaseRecord} from './purchaseApi';
+import {createDuePurchase,createPurchaseWithPayment,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,getOrderToPurchase,loadSupplierSettlements,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,validatePurchasePayment,
+ type DuePurchaseLine,type PurchaseSupplier,type PurchaseRecord,type PurchaseTender,type SettlementDetails} from './purchaseApi';
 
 type Line=DuePurchaseLine&{key:string;profile?:PosProfilePreview|null;profileBusy?:boolean;profileError?:string};
-const money=(value:number)=>'৳'+Number(value||0).toLocaleString('en-BD',{maximumFractionDigits:2});
+const money=(value:number)=>'৳'+Number(value||0).toLocaleString('en-BD',{maximumFractionDigits:4});
 const positive=(value:string)=>value!==''&&Number.isFinite(Number(value))&&Number(value)>=0;
 const newLine=():Line=>({key:crypto.randomUUID(),productId:'',qty:1,unitPrice:0});
 
@@ -53,10 +54,10 @@ export function LivePurchasesPage(){
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
       <Link to="/app/purchases?tab=plans" className={'px-3 py-2 '+(tab==='plans'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Plans · পরিকল্পনা</Link>
     </nav>
-    {tab==='return'?<LiveMixedPurchaseReturns
-      purchaseId={params.get('purchaseId')||''}
-      purchases={items} loading={loading}
-      onRefresh={()=>void refresh()}/>:
+    {tab==='return'?(params.get('purchaseId')&&items.some(p=>p.purchaseId===params.get('purchaseId')&&!p.items?.some(i=>!!i.unitDescription))
+      ?<LiveStandardPurchaseReturns purchaseId={params.get('purchaseId')!} onRefresh={()=>void refresh()}/>
+      :<LiveMixedPurchaseReturns purchaseId={params.get('purchaseId')||''}
+         purchases={items} loading={loading} onRefresh={()=>void refresh()}/>):
     tab==='payments'?<LiveSupplierSettlements supplierId={params.get('supplierId')||''}/>:
     tab==='plans'?<LivePurchasePlans/>:
     <>
@@ -84,7 +85,7 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.paidAmount)}</TableCell>
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
           <TableCell><div className="flex flex-wrap gap-3">
-          {p.items?.some(i=>!!i.unitDescription)&&
+          {p.items?.length>0&&
             <Link className="text-xs font-semibold text-teal-700 hover:underline"
               to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}>
               Return · ফেরত
@@ -115,9 +116,16 @@ export function LivePurchaseEditorPage(){
   const [open,setOpen]=useState(false);
   const [activeIndex,setActiveIndex]=useState(0);
   const [lines,setLines]=useState<Line[]>([newLine()]);
+  const [tender,setTender]=useState<PurchaseTender>('Due');
+  const [paidText,setPaidText]=useState('');
+  const [bankId,setBankId]=useState('');
+  const [paymentDetails,setPaymentDetails]=useState<SettlementDetails|null>(null);
+  const [paymentBusy,setPaymentBusy]=useState(false);
+  const [paymentLoadError,setPaymentLoadError]=useState('');
   const [saving,setSaving]=useState(false);
   const [outcomeUnknown,setOutcomeUnknown]=useState(false);
-  const posting=useRef(false);
+  const posting=useRef(false),requestId=useRef(crypto.randomUUID());
+  const newRequestId=()=>{requestId.current=crypto.randomUUID();};
   useEffect(()=>{
     if(!permitted)return;
     let live=true;
@@ -151,14 +159,37 @@ export function LivePurchaseEditorPage(){
     },130);
     return ()=>{live=false;clearTimeout(timer);};
   },[permitted,open,search]);
-  const choose=(s:PurchaseSupplier)=>{setChosen(s);setSearch(s.name);setOpen(false);setError('');};
-  const edit=(key:string,patch:Partial<Line>)=>setLines(before=>before.map(l=>l.key===key?{...l,...patch}:l));
+  useEffect(()=>{
+    if(!chosen||tender==='Due'){
+      setPaymentDetails(null);setPaymentBusy(false);setPaymentLoadError('');return;
+    }
+    let live=true;
+    setPaymentBusy(true);setPaymentDetails(null);setPaymentLoadError('');
+    loadSupplierSettlements(chosen.id).then(data=>{if(live)setPaymentDetails(data);})
+      .catch(e=>{if(live)setPaymentLoadError(e instanceof Error?e.message:'Cannot read payment accounts');})
+      .finally(()=>{if(live)setPaymentBusy(false);});
+    return ()=>{live=false;};
+  },[chosen?.id,tender]);
+  const choose=(s:PurchaseSupplier)=>{setChosen(s);setSearch(s.name);setOpen(false);setBankId('');newRequestId();setError('');};
+  const edit=(key:string,patch:Partial<Line>)=>{newRequestId();setLines(before=>before.map(l=>l.key===key?{...l,...patch}:l));};
   const quote=(l:Line)=>{
     if(!l.unitQuantities||!l.profile||!l.priceUnit)return Number(l.qty||0)*Number(l.unitPrice||0);
     try{return quotePurchaseLine(l.profile,l.unitQuantities,l.priceUnit,l.unitPrice).total;}catch{return NaN;}
   };
   const total=lines.reduce((sum,l)=>sum+quote(l),0);
-  const canPost=permitted&&!!chosen&&!chosen.needsReconciliation&&!loading&&!saving&&!outcomeUnknown&&lines.every(l=>!l.profileBusy&&!l.profileError&&Number.isFinite(quote(l)));
+  const amountValue=paidText.trim()===''?0:Number(paidText);
+  const dueAfter=Math.round((total-(tender==='Due'?0:amountValue))*10000)/10000;
+  const payment={method:tender,amount:tender==='Due'?0:amountValue,bankAccountId:bankId,
+    activeSession:paymentDetails?.activeSession===true,bankAccounts:paymentDetails?.bankAccounts};
+  let validationError='';
+  try{
+    if(tender==='Due')validateDuePurchase(chosen,lines,orderId);
+    else validatePurchasePayment(chosen,lines,payment,requestId.current,orderId);
+  }catch(e){validationError=e instanceof Error?e.message:'Invalid purchase payment';}
+  const canPost=permitted&&!!chosen&&!chosen.needsReconciliation&&!loading&&!saving&&!outcomeUnknown&&
+    !validationError&&lines.every(l=>!l.profileBusy&&!l.profileError&&Number.isFinite(quote(l)))&&
+    (tender==='Due'||(!paymentBusy&&!paymentLoadError&&
+      paymentDetails?.supplier.id===chosen.id&&!paymentDetails.needsReconciliation));
   const productById=useMemo(()=>new Map(products.map(p=>[p.productId,p])),[products]);
   async function selectProduct(key:string,id:string){
     const p=productById.get(id);
@@ -192,15 +223,26 @@ export function LivePurchaseEditorPage(){
   async function submit(){
     if(posting.current||!canPost)return;
     setError('');
-    try{validateDuePurchase(chosen,lines,orderId);}catch(e){setError(e instanceof Error?e.message:'Invalid purchase');return;}
+    try{
+      if(tender==='Due')validateDuePurchase(chosen,lines,orderId);
+      else validatePurchasePayment(chosen,lines,payment,requestId.current,orderId);
+    }catch(e){setError(e instanceof Error?e.message:'Invalid purchase');return;}
     posting.current=true;setSaving(true);
     try{
-      // Refresh balances immediately before posting. Never trust a stale screen snapshot.
+      // Refresh supplier and payment account state before posting; D1 rechecks atomically.
       const refreshed=await searchPurchaseSuppliers(chosen!.id);
       const supplier=refreshed.find(s=>s.id===chosen!.id);
-      if(!supplier)throw new Error('Supplier no longer available.');
-      setChosen(supplier);
-      const result=await createDuePurchase(supplier,lines,orderId);
+      if(!supplier||supplier.needsReconciliation)
+        throw new Error('Supplier unavailable or ledger unreconciled. Refresh before posting.');
+      let result;
+      if(tender==='Due')result=await createDuePurchase(supplier,lines,orderId);
+      else{
+        const latest=await loadSupplierSettlements(supplier.id);
+        if(latest.needsReconciliation)throw new Error('Supplier balance needs reconciliation.');
+        result=await createPurchaseWithPayment(supplier,lines,{...payment,
+          activeSession:latest.activeSession,bankAccounts:latest.bankAccounts},
+          requestId.current,orderId);
+      }
       if(!result.purchaseId)throw new Error('Purchase response missing invoice reference; verify Purchase History.');
       navigate('/app/purchases',{replace:true});
     }catch(e){
@@ -223,8 +265,9 @@ export function LivePurchaseEditorPage(){
       <div className="relative max-w-lg">
         <Input value={search} aria-label="Search supplier name, phone or ID"
           role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="phase4-supplier-options"
-          onFocus={()=>setOpen(true)}
-          disabled={!!orderId} onChange={e=>{setSearch(e.target.value);setChosen(null);setOpen(true);}}
+          onFocus={()=>{if(!saving&&!outcomeUnknown)setOpen(true);}}
+          disabled={!!orderId||saving||outcomeUnknown}
+          onChange={e=>{setSearch(e.target.value);setChosen(null);setBankId('');newRequestId();setOpen(true);}}
           onKeyDown={e=>{
             if(!open)return;
             if(e.key==='ArrowDown'){e.preventDefault();setActiveIndex(i=>Math.min(i+1,suggestions.length-1));}
@@ -254,7 +297,7 @@ export function LivePurchaseEditorPage(){
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink">Products · পণ্য</h2>
-        <Button variant="outline" size="sm" onClick={()=>setLines(v=>[...v,newLine()])} disabled={!!orderId||saving||outcomeUnknown}>
+        <Button variant="outline" size="sm" onClick={()=>{newRequestId();setLines(v=>[...v,newLine()]);}} disabled={!!orderId||saving||outcomeUnknown}>
           <Plus className="size-4"/> Add line</Button>
       </div>
       {loading?<p role="status" className="py-6 text-center text-sm">Loading real products…</p>:
@@ -266,7 +309,7 @@ export function LivePurchaseEditorPage(){
           </TableRow></TableHeader>
           <TableBody>{lines.map(l=><TableRow key={l.key}>
             <TableCell><select aria-label="Product" value={l.productId}
-              disabled={!!orderId} onChange={e=>void selectProduct(l.key,e.target.value)}
+              disabled={!!orderId||saving||outcomeUnknown} onChange={e=>void selectProduct(l.key,e.target.value)}
               className="h-9 w-full min-w-[190px] rounded-md border border-border bg-card px-2 text-sm text-ink">
                 <option value="">Choose product…</option>
                 {products.map(p=><option key={p.productId} value={p.productId}>{p.displayName||p.productName}</option>)}
@@ -279,7 +322,7 @@ export function LivePurchaseEditorPage(){
                 onChange={(unit,value)=>changeMixedQty(l,unit,value)}
                 onLastEnter={()=>{}} disabled={saving||outcomeUnknown}/></div>
               :<Input aria-label="Purchase quantity" type="number" min="0.0001" step="0.0001"
-                disabled={!!orderId||!!l.profileBusy||!!l.profileError}
+                disabled={!!orderId||saving||outcomeUnknown||!!l.profileBusy||!!l.profileError}
                 value={l.qty} onChange={e=>edit(l.key,{qty:e.target.value===''?0:Number(e.target.value)})}
                 className="w-24"/>}
               {l.profileBusy&&<span className="text-xs text-ink-500">Loading units…</span>}
@@ -287,6 +330,7 @@ export function LivePurchaseEditorPage(){
               </TableCell>
             <TableCell>{l.profile&&l.unitQuantities
              ?<select aria-label="Purchase price unit" value={l.priceUnit||l.profile.baseUnit}
+               disabled={saving||outcomeUnknown}
                onChange={e=>{
                  const chosen=l.profile!.units.find(u=>u.unit===e.target.value);
                  const prior=l.profile!.units.find(u=>u.unit===l.priceUnit);
@@ -299,22 +343,60 @@ export function LivePurchaseEditorPage(){
                </select>:<span className="text-xs text-ink-600">{productById.get(l.productId)?.unit||'—'}</span>}
              </TableCell>
             <TableCell><Input aria-label="Purchase unit cost" type="number" min="0" step="0.0001"
+              disabled={saving||outcomeUnknown}
               value={l.unitPrice} onChange={e=>edit(l.key,{unitPrice:e.target.value===''?0:Number(e.target.value)})}
               className="w-28"/></TableCell>
             <TableCell className="text-right text-sm">{Number.isFinite(quote(l))&&positive(String(l.unitPrice))?money(quote(l)):'—'}</TableCell>
             <TableCell><Button size="icon" variant="ghost" title="Remove line" aria-label="Remove purchase line"
-              onClick={()=>setLines(before=>before.filter(x=>x.key!==l.key))} disabled={!!orderId||saving||outcomeUnknown}>
+              onClick={()=>{newRequestId();setLines(before=>before.filter(x=>x.key!==l.key));}} disabled={!!orderId||saving||outcomeUnknown}>
               <Trash2 className="size-4"/></Button></TableCell>
           </TableRow>)}</TableBody>
         </Table>
       </div>}
-      <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
-        <div className="text-xs text-ink-500">Mixed quantities remain a single field. Costs are entered per selected price unit; stock posts in base units. Paid tender remains locked until 4D.</div>
-        <div className="text-right"><p className="text-xs text-ink-600">Supplier payable for this purchase</p>
-          <p className="text-xl font-semibold text-ink">{Number.isFinite(total)?money(total):'—'}</p>
-          <Button className="mt-2" disabled={!canPost||!lines.length||!products.length}
-            onClick={()=>void submit()}>{saving?'Posting…':'Confirm Due Purchase · বাকি ক্রয় নিশ্চিত'}</Button>
+      <div className="mt-3 rounded-lg border border-border p-3" data-purchase-payment>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="purchase-tender" className="mb-1 block text-xs font-medium text-ink-600">Payment method · পরিশোধ</label>
+            <select id="purchase-tender" aria-label="Purchase payment method" value={tender}
+              disabled={saving||outcomeUnknown} onChange={e=>{setTender(e.target.value as PurchaseTender);setBankId('');newRequestId();}}
+              className="h-9 rounded-md border border-border bg-card px-2 text-sm text-ink">
+              <option value="Due">Due · বাকি</option><option value="Cash">Cash · নগদ</option>
+              <option value="Bank">Bank</option><option value="Mobile Banking">Mobile Banking</option>
+            </select>
+          </div>
+          {tender!=='Due'&&<div className="w-36">
+            <label htmlFor="purchase-paid" className="mb-1 block text-xs font-medium text-ink-600">Paid amount · জমা ৳</label>
+            <Input id="purchase-paid" aria-label="Purchase paid amount" type="number" min="0" step="0.0001"
+              max={Number.isFinite(total)?total:undefined} value={paidText}
+              disabled={saving||outcomeUnknown} onChange={e=>{setPaidText(e.target.value);newRequestId();}}/>
+          </div>}
+          {tender!=='Due'&&tender!=='Cash'&&<div>
+            <label htmlFor="purchase-bank" className="mb-1 block text-xs font-medium text-ink-600">Bank/mobile account · হিসাব</label>
+            <select id="purchase-bank" aria-label="Purchase bank account" value={bankId}
+              disabled={saving||outcomeUnknown||paymentBusy} onChange={e=>{setBankId(e.target.value);newRequestId();}}
+              className="h-9 max-w-[260px] rounded-md border border-border bg-card px-2 text-sm text-ink">
+              <option value="">Choose account…</option>
+              {paymentDetails?.bankAccounts.filter(a=>a.type===tender).map(a=>
+                <option key={a.id} value={a.id}>{a.name} · {money(a.currentBalance)}</option>)}
+            </select>
+          </div>}
         </div>
+        {paymentBusy&&<p role="status" className="mt-2 text-xs text-ink-500">Checking live cash session and accounts…</p>}
+        {tender!=='Due'&&chosen&&!paymentBusy&&
+         (paymentLoadError||paymentDetails?.needsReconciliation||validationError)&&
+         <p role="alert" className="mt-2 text-xs text-danger">
+          {paymentLoadError|| (paymentDetails?.needsReconciliation?'Supplier ledger needs reconciliation.':validationError)}
+         </p>}
+        <div className="mt-3 flex flex-wrap justify-end gap-4 border-t border-border pt-2 text-sm">
+          <span className="text-ink-600">Invoice total <strong className="text-ink">{Number.isFinite(total)?money(total):'—'}</strong></span>
+          <span className="text-ink-600">Paid <strong className="text-ink">{tender==='Due'?'৳0':Number.isFinite(amountValue)?money(amountValue):'—'}</strong></span>
+          <span className="text-ink-600">Remaining due <strong className="text-ink">{Number.isFinite(dueAfter)?money(dueAfter):'—'}</strong></span>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-lg text-xs text-ink-500">Multi-unit products remain one compact line. Pay a mixed-unit invoice later through Supplier Payments until paid mixed-unit returns are reconciled.</p>
+        <Button disabled={!canPost||!lines.length||!products.length}
+          onClick={()=>void submit()}>{saving?'Posting…':tender==='Due'?'Confirm Due Purchase · বাকি ক্রয় নিশ্চিত':'Confirm Paid Purchase · পরিশোধসহ ক্রয় নিশ্চিত'}</Button>
       </div>
     </div>
   </section>;

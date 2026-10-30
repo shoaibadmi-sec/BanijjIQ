@@ -6,7 +6,7 @@ type Book={entry_id:string;date:string;type:string;reference:string;description:
 type BankAccount={bank_account_id:string;opening_balance:number;current_balance:number;status:string};
 type Transfer={transfer_id:string;transfer_date:string;from_account_id:string;to_account_id:string;amount:number};
 type Expense={expense_id:string;expense_date:string;category_name:string;description:string;
- amount:number;payment_method:string;bank_account_id:string};
+ amount:number;payment_method:string;bank_account_id:string;status:string;is_deleted:number};
 type Finance={finance_id:string;date:string;transaction_type:string;person_name:string;
  amount:number;payment_method:string;bank_account_id:string};
 type RowInfo={row:LiveReportRow;sortAmount:number};
@@ -48,12 +48,13 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
    db.prepare("SELECT entry_id,bank_account_id,date,type,reference,description,debit,credit FROM bank_book WHERE is_deleted=0 ORDER BY date,entry_id LIMIT 10001").all<Book>(),
    db.prepare("SELECT bank_account_id,opening_balance,current_balance,status FROM bank_accounts ORDER BY bank_account_id LIMIT 2001").all<BankAccount>(),
    db.prepare("SELECT transfer_id,transfer_date,from_account_id,to_account_id,amount FROM bank_transfers ORDER BY transfer_date,transfer_id LIMIT 5001").all<Transfer>(),
-   db.prepare("SELECT expense_id,expense_date,category_name,description,amount,payment_method,bank_account_id FROM expenses WHERE is_deleted=0 AND status NOT IN ('Cancelled','Deleted') ORDER BY expense_date,expense_id LIMIT 10001").all<Expense>(),
+   db.prepare("SELECT expense_id,expense_date,category_name,description,amount,payment_method,bank_account_id,status,is_deleted FROM expenses ORDER BY expense_date,expense_id LIMIT 10001").all<Expense>(),
    db.prepare("SELECT finance_id,date,transaction_type,person_name,amount,payment_method,bank_account_id FROM finance_transactions WHERE is_deleted=0 ORDER BY date,finance_id LIMIT 10001").all<Finance>()
  ]);
  const cash=cashR.results||[],bank=bankR.results||[],accounts=accountsR.results||[],
-   transfers=transfersR.results||[],expenses=expensesR.results||[],finance=financeR.results||[];
- if(cash.length>10000||bank.length>10000||expenses.length>10000||finance.length>10000||
+   transfers=transfersR.results||[],expenseSources=expensesR.results||[],finance=financeR.results||[];
+ const expenses=expenseSources.filter(x=>Number(x.is_deleted)===0&&x.status!=='Cancelled'&&x.status!=='Deleted');
+ if(cash.length>10000||bank.length>10000||expenseSources.length>10000||finance.length>10000||
    accounts.length>2000||transfers.length>5000)problems.add('Reporting row safety limit reached. Split or archive source records before certifying totals.');
  const accountIds=new Set(accounts.map(x=>x.bank_account_id));
  const bankByAccount=new Map<string,Book[]>();
@@ -141,12 +142,33 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
  // For the book-only balance, cash session opening floats are excluded.
  const cashLedgerBalance=cash.reduce((n,x)=>n+Number(x.credit)-Number(x.debit),0);
  const matchingExpenses=expenses.filter(x=>x.expense_date>=q.from&&x.expense_date<=q.to);
- // A posted expense without an active source header cannot certify period
- // operating costs, even when other expense totals reconcile.
- const activeExpenseIds=new Set(expenses.map(x=>x.expense_id));
+ // A cancellation preserves the original debit and posts a compensating
+ // credit. Verify its source and all journal legs; only active sources
+ // contribute operating expenses.
+ const expenseIds=new Set(expenseSources.map(x=>x.expense_id));
  for(const book of periodBooks)
-   if(book.type==='Expense'&&!activeExpenseIds.has(book.reference))
-     problems.add('Expense money-book posting '+book.entry_id+' has no active expense source.');
+   if(['Expense','Expense Update','Expense Deleted'].includes(book.type)&&
+      !expenseIds.has(book.reference))
+     problems.add('Expense money-book posting '+book.entry_id+' has no source expense.');
+ for(const exp of expenseSources.filter(x=>Number(x.is_deleted)!==0||
+   x.status==='Cancelled'||x.status==='Deleted')){
+   const linked=books.filter(x=>x.reference===exp.expense_id&&
+     ['Expense','Expense Update','Expense Deleted'].includes(x.type));
+   const original=linked.filter(x=>x.type==='Expense');
+   const reversals=linked.filter(x=>x.type==='Expense Deleted');
+   const byAccount=new Map<string,number>();
+   for(const x of linked){
+     const account=x.sourceModule==='cash_book'?'cash':('bank:'+x.bank_account_id);
+     byAccount.set(account,(byAccount.get(account)||0)+Number(x.debit)-Number(x.credit));
+   }
+   if(Number(exp.is_deleted)!==1||!['Cancelled','Deleted'].includes(exp.status)||
+      !valid(Number(exp.amount))||original.length!==1||reversals.length!==1||
+      Number(reversals[0]?.debit)!==0||
+      !match(Number(reversals[0]?.credit),Number(exp.amount))||
+      [...byAccount.values()].some(n=>!match(n,0)))
+     problems.add('Cancelled expense '+exp.expense_id+
+       ' original, adjustments or reversal does not reconcile.');
+ }
 
  const matchingFinance=finance.filter(x=>x.date>=q.from&&x.date<=q.to);
  const expenseChecks=new Map<string,string>();

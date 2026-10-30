@@ -194,9 +194,37 @@ export async function runRealD1Browser(){
               }
             }
           });
+          // Phase 5G14: exercise ordinary high-frequency name, phone, payment
+          // and keyboard-focus changes AFTER New Sale, before any new posting.
+          // The original natural race can clear only the next-sale name.
+          const posPostsBeforeStress=requests.filter(r=>
+            r.width===width&&r.method==='POST'&&r.path==='/api/pos/sales').length;
+          const stressPaid=page.getByRole('spinbutton',{name:/Amount received/});
+          for(let round=0;round<12;round++){
+            const expectedName='D1 Focus Buyer '+String(round);
+            await name.fill(expectedName);
+            await phone.fill('01000000124');
+            if(round%3===0){
+              await page.keyboard.press('F2');
+              await page.keyboard.press('F8');
+            }
+            await stressPaid.fill(round%2===0?'39':'40');
+            await page.keyboard.press('Tab');
+            await page.evaluate(()=>new Promise(resolve=>
+              requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+            assert.equal(await name.inputValue(),expectedName,
+              'POS customer name changed after New Sale focus/blur cycle '+round);
+            assert.equal(await phone.inputValue(),'01000000124',
+              'POS phone changed after focus/blur cycle '+round);
+            assert.equal(await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version'),
+              resetVersionBefore,'A focus/blur cycle must not reset a new sale');
+            assert.equal(requests.filter(r=>
+              r.width===width&&r.method==='POST'&&r.path==='/api/pos/sales').length,
+              posPostsBeforeStress,'Draft focus/blur cannot post another invoice');
+          }
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
-          await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          await stressPaid.fill('40');
           // A stale receipt/dialog close event must not erase the next sale.
           await page.evaluate(() => new Promise(resolve =>
             requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -215,6 +243,35 @@ export async function runRealD1Browser(){
             'Starting the next sale must preserve its phone');
           assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40',
             'Starting the next sale must preserve payment amount');
+          // A focused user can intentionally clear/edit the name; a delayed
+          // native input event on the BLURRED name field may not erase that
+          // person's completed next-sale entry.
+          await name.fill('');
+          assert.equal(await name.inputValue(),'','Focused intentional name clearing is allowed');
+          await name.fill('Real Browser Due Buyer');
+          await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          const lateBlurInput=await page.evaluate(()=>{
+            const input=document.querySelector('input[list="live-pos-customer-names"]');
+            if(!(input instanceof HTMLInputElement))throw Error('Missing name field');
+            const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+            if(!setter)throw Error('Native value setter missing');
+            const blurred=document.activeElement!==input;
+            setter.call(input,'');
+            input.dispatchEvent(new Event('input',{bubbles:true}));
+            return {blurred,received:input.value};
+          });
+          assert.equal(lateBlurInput.blurred,true,'Synthetic stale input must arrive after name blur');
+          const amountAfter=page.getByRole('spinbutton',{name:/Amount received/});
+          await amountAfter.fill('41');
+          await amountAfter.fill('40');
+          await page.evaluate(()=>new Promise(resolve=>
+            requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+          assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+            'A late empty name input event after blur cannot clear the next customer name; '+
+            JSON.stringify(await page.evaluate(()=>window.__posNameTrace)));
+          assert.equal(await phone.inputValue(),'01000000124');
+          assert.equal(await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version'),
+            resetVersionBefore,'The synthetic late input may not invoke a second sale reset');
           const dueReady=page.getByRole('button',{name:'Review and post real sale',exact:true});
           if(await dueReady.isDisabled()){
             const warnings=await page.locator('[data-live-pos] [role="alert"]').allTextContents();
