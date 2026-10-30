@@ -108,7 +108,8 @@ export async function runAdminRoleCreationChecks({browser,base,withCheck}){
       await f.page.getByRole('alert').getByText('Roles database is unavailable').waitFor({timeout:12000});
       assert.equal(await f.page.getByRole('button',{name:'Add role'}).count(),0);
       assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
-      assert.equal(await f.page.locator('[data-live-team-settings]').getByText('InventoryStaff').count(),0);
+      assert.equal(await f.page.locator('[data-live-team-settings]').getByRole('heading',{name:'InventoryStaff'}).count(),0,
+        'no role card may render after GET /api/roles fails');
     }finally{await f.ctx.close();}
   });
 }
