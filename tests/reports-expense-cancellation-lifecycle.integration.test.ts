@@ -57,6 +57,18 @@ test('Phase 5G19: cancelled edited Cash/Bank expenses restore books, preserve or
   const bankExpense=(amount:number)=>({categoryId:category.id,paymentMethod:'Bank',
    bankAccountId:bank.id,description:'G19 adjusted bank expense',amount});
   const cash=await api('POST','/api/expenses',cashExpense(30));ok(cash);
+  // 5G25: an existing posting's date is immutable. Do not silently move
+  // the expense source to a different reporting period without its cash journal.
+  const sourceBefore=one('SELECT expense_date,amount,payment_method FROM expenses WHERE expense_id=?',cash.id);
+  const originalJournal=one("SELECT entry_id,date,debit,credit FROM cash_book WHERE reference=? AND type='Expense'",cash.id);
+  const writeCount=one('SELECT total_changes() n').n;
+  const changedDate=sourceBefore.expense_date==='2000-01-01'?'2000-01-02':'2000-01-01';
+  const relabel=await api('PUT','/api/expenses/'+cash.id,{...cashExpense(30),date:changedDate});
+  assert.notEqual(relabel.status,200,'A posted expense cannot be moved to another accounting period without reversing its original posting');
+  assert.deepEqual(one('SELECT expense_date,amount,payment_method FROM expenses WHERE expense_id=?',cash.id),sourceBefore);
+  assert.deepEqual(one("SELECT entry_id,date,debit,credit FROM cash_book WHERE reference=? AND type='Expense'",cash.id),originalJournal);
+  assert.equal(one('SELECT total_changes() n').n,writeCount,
+   'Rejected re-dating must not write any source, journal, adjustment, or bank balance');
   const cashEdited=await api('PUT','/api/expenses/'+cash.id,cashExpense(40));ok(cashEdited);
   const cashCancelled=await api('POST','/api/expenses/'+cash.id+'/cancel',{
    reason:'Valid reversal of adjusted cash operating expense'});ok(cashCancelled);
