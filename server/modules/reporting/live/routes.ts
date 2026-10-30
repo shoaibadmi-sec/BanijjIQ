@@ -15,7 +15,7 @@ function toMinor(value:unknown):number|null {
 }
 
 async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveReportPage> {
-  const where=`COALESCE(is_deleted,0)=0 AND status<>'Deleted' AND sale_date BETWEEN ? AND ?
+  const where=`COALESCE(is_deleted,0)=0 AND status IN ('Completed','Reversed') AND sale_date BETWEEN ? AND ?
     AND (instr(lower(invoice_id),lower(?))>0 OR instr(lower(customer_name),lower(?))>0)`;
   const search=query.search,bind=[query.from,query.to,search,search] as const;
   const count=await db.prepare(`SELECT COUNT(*) AS count FROM sales WHERE ${where}`).bind(...bind).first<{count:number}>();
