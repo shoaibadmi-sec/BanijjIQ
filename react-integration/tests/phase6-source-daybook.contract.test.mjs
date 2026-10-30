@@ -12,7 +12,7 @@ test('original Phase 6 Daybook reuses source JSX and loads only server-posted tr
    assert.ok(upstream.includes(marker)&&patched.includes(marker),'Lost approved source UI: '+marker);
  assert.ok(patched.includes('usePhase6Daybook('),'must bind the real API');
  assert.ok(!patched.includes('useState<UnifiedTransaction[]>(daybookTransactions)'),'cannot read demo transactions');
- assert.ok(patched.includes('pageSize={pageSize}'),'must expose server pagination');
+ assert.ok(patched.includes('value={pageSize}')&&patched.includes('setPageSize(Number(e.target.value) as 50|100)'),'must expose server pagination');
  assert.ok(patched.includes('readOnlyLive'),'demo permissions cannot authorize mutations');
  assert.throws(()=>patchSourceDaybook('UI upstream changed'),/Daybook upstream contract changed/);
 });
