@@ -199,6 +199,8 @@ export const postSalesReturn = (payload:SalesReturnPayload) =>
 export interface MixedReversalPreview {
   eligible:boolean;reason:string;invoiceId:string;refundAmount:number;
   previouslyRefundedAmount:number;remainingBaseQuantity:number;
+  refundMethod:'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment';refundBankAccountId:string;refundAccountName:string;
+  customerDueBefore:number;
   items:Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>;
 }
 export const getMixedReversalPreview = (id:string)=>
@@ -215,7 +217,7 @@ export const getSalesReturnHistory = () =>
 
 /** Phase 5 Reports: server-only source records; no demo report stores. */
 export type LiveReportStatus = 'ready'|'needs-review'|'incomplete'|'unavailable';
-export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'payables'|'profit'|'cash'|'bank'|'finance'|'expenses'|'audit';
+export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'payables'|'profit'|'product-profit'|'profit-loss'|'cash'|'bank'|'finance'|'expenses'|'audit';
 export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;group:string;status:LiveReportStatus;reason:string}
 export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;

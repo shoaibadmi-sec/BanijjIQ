@@ -218,7 +218,7 @@ export function LivePosPage() {
     const customer = bootstrap?.customers.find(c => field === 'name'
       ? c.name.toLocaleLowerCase() === value.trim().toLocaleLowerCase()
       : c.phone === value.trim());
-    if (!customer) return;
+    if (!customer?.name.trim()) return;
     setCustomerName(customer.name); setCustomerPhone(customer.phone);
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };

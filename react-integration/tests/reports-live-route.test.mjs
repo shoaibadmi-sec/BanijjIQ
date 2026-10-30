@@ -70,3 +70,23 @@ test('source-linked Sales Register opens authenticated invoice read-only, withou
  assert.match(reports,/Recorded invoice/);
  assert.doesNotMatch(reports,/Nawabpur Hardware House/);
 });
+
+test('report pagination offers a bounded direct page jump alongside 50/100-size controls',()=>{
+ const reports=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(reports,/name="report-page"/);
+ assert.match(reports,/aria-label=\{text\('Go to page'/);
+ assert.match(reports,/Math\.ceil\(rows\.totalRows\/pageSize\)/);
+ assert.match(reports,/type="number"/);
+});
+
+test('product gross profit and Profit & Loss have distinct unavailable contracts, not invoice-cohort profit',()=>{
+ const reports=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ const api=read('react-integration/overlay/src/integration/banijjApi.ts');
+ assert.match(reports,/'product-profit':'product-profit'/);
+ assert.match(reports,/'profit-loss':'profit-loss'/);
+ assert.doesNotMatch(reports,/'product-profit':'profit'/);
+ assert.doesNotMatch(reports,/'profit-loss':'profit'/);
+ assert.match(api,/\|'product-profit'/);
+ assert.match(api,/\|'profit-loss'/);
+ assert.match(reports,/coverage\?\.status==='unavailable'/);
+});

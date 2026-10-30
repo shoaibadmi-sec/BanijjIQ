@@ -142,3 +142,136 @@ test('posted FIFO sale with expense missing cash-book proof cannot certify net p
   assert.match(report.coverage.reason,/expense.*posting|money.book|expense.*source/i);
  } finally{db.close();}
 });
+
+test('two returns cannot conceal mismatched FIFO restoration by balancing invoice-level totals',async()=>{
+ const db=fixture();
+ try{
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-OVERALLOC','2026-10-19','SALE-PROFIT-001','Cash',110,'First unit'),
+           ('RETURN-MISSING','2026-10-20','SALE-PROFIT-001','Store Credit',110,'Second unit')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-OVERALLOC','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110),
+           ('RETURN-MISSING','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  // Global restored quantity (2) matches returned quantity (2), but only the
+  // first return owns FIFO evidence. The second is missing its own restoration.
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-OVERALLOC','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',2)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(report.coverage.status,'incomplete','each return requires matching original FIFO allocation');
+  assert.match(report.coverage.reason,/each return|return.*lot|return.*allocation/i);
+  assert.equal(metric(report,'returns').valueMinor,22000,'actual cash and store-credit refunds are not discounted twice');
+  assert.equal(metric(report,'fifoCogs').valueMinor,null,'ambiguous cost reversals cannot become certified profit');
+  assert.equal(metric(report,'grossProfit').valueMinor,null);
+  assert.equal(metric(report,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'profit reconciliation must not write to accounting tables');
+ }finally{db.close();}
+});
+
+test('cross-invoice return lines and lots cannot certify another invoice refund',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare(`INSERT INTO stock_lots
+    (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost)
+    VALUES ('LOT-FIFO-B','PROD-FIFO-001','PURCHASE','BUY-B',1,0,70)`).run();
+  db.native.prepare(`INSERT INTO sales
+    (invoice_id,sale_date,customer_name,customer_phone,subtotal,discount,grand_total,
+     payment_type,payment_status,status)
+    VALUES ('SALE-PROFIT-B','2026-10-16','Second Buyer','01000000123',120,0,120,
+    'Cash','Paid','Completed')`).run();
+  db.native.prepare(`INSERT INTO sale_items
+    (invoice_id,product_id,product_name,quantity,unit_price,line_total)
+    VALUES ('SALE-PROFIT-B','PROD-FIFO-001','Demo Copper Wire',1,120,120)`).run();
+  db.native.prepare(`INSERT INTO sale_item_lots
+    (invoice_id,product_id,lot_id,quantity,unit_cost)
+    VALUES ('SALE-PROFIT-B','PROD-FIFO-001','LOT-FIFO-B',1,70)`).run();
+  // The refund header belongs to A, but BOTH child records are falsely
+  // attributed to B. Document totals and FIFO quantities still balance.
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-CROSS-INVOICE','2026-10-19','SALE-PROFIT-001','Cash',110,'Cross-invoice mismatch')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-CROSS-INVOICE','SALE-PROFIT-B','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-CROSS-INVOICE','SALE-PROFIT-B','PROD-FIFO-001','LOT-FIFO-B',1)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(result.coverage.status,'incomplete',
+    'return child invoice IDs must match their actual refund document');
+  assert.match(result.coverage.reason,/return.*invoice|invoice.*return/i);
+  assert.equal(metric(result,'returns').valueMinor,11000);
+  assert.equal(metric(result,'fifoCogs').valueMinor,null);
+  assert.equal(metric(result,'grossProfit').valueMinor,null);
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'source reconciliation must not mutate recorded transactions');
+ }finally{db.close();}
+});
+
+test('FIFO lot belonging to a different product cannot certify sale profitability',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare(`INSERT INTO products (product_id,product_name,category,unit,current_stock)
+    VALUES ('PROD-OTHER','Unrelated Product','Hardware','Pcs',0)`).run();
+  // The sale allocation still claims PROD-FIFO-001, but its underlying stock
+  // lot belongs to a different SKU. The existing quantity and cost still balance.
+  db.native.prepare("UPDATE stock_lots SET product_id='PROD-OTHER' WHERE lot_id='LOT-FIFO-001'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(result.coverage.status,'incomplete','source lot must belong to the sold product');
+  assert.match(result.coverage.reason,/lot.*product|product.*lot|FIFO.*product/i);
+  assert.equal(metric(result,'netSales').valueMinor,22000);
+  assert.equal(metric(result,'fifoCogs').valueMinor,null);
+  assert.equal(metric(result,'grossProfit').valueMinor,null);
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'invalid FIFO source detection must not modify stock or finance');
+ }finally{db.close();}
+});
+
+
+test('two return documents cannot restore the same original FIFO lot twice',async()=>{
+ const db=fixture();
+ try {
+  // Original invoice sold one unit from each of two separate FIFO lots.
+  db.native.prepare("UPDATE stock_lots SET original_quantity=1 WHERE lot_id='LOT-FIFO-001'").run();
+  db.native.prepare("UPDATE sale_item_lots SET quantity=1 WHERE lot_id='LOT-FIFO-001'").run();
+  db.native.prepare(`INSERT INTO stock_lots
+    (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost)
+    VALUES ('LOT-FIFO-002','PROD-FIFO-001','PURCHASE','BUY-002',1,0,70)`).run();
+  db.native.prepare(`INSERT INTO sale_item_lots (invoice_id,product_id,lot_id,quantity,unit_cost)
+    VALUES ('SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-002',1,70)`).run();
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-LOT-1','2026-10-19','SALE-PROFIT-001','Cash',110,'First unit'),
+           ('RETURN-LOT-2','2026-10-20','SALE-PROFIT-001','Cash',110,'Second unit')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110),
+           ('RETURN-LOT-2','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  // Simulate corrupted historical data imported before migration 0035's
+  // posting-time capacity trigger existed. Live inserts remain protected.
+  db.native.exec('DROP TRIGGER trg_mixed_return_lot_capacity');
+  // Each document and invoice-wide quantity balances, but one original lot
+  // is restored twice. Read-only reports must audit historical evidence.
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',1),
+           ('RETURN-LOT-2','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',1)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(report.coverage.status,'incomplete','a sold FIFO lot cannot be restored more than sold');
+  assert.match(report.coverage.reason,/lot.*(exceed|restore|original)|return.*lot/i);
+  assert.equal(metric(report,'netSales').valueMinor,0,'actual invoice and refunds remain visible');
+  for(const key of ['fifoCogs','grossProfit','netProfit'])
+   assert.equal(metric(report,key).valueMinor,null,key+' must fail closed');
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'read-only reports must not correct historical FIFO allocations');
+ }finally{db.close();}
+});

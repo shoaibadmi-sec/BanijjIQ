@@ -9,7 +9,7 @@ type Invoice = {
   grand_total:number; status:string;
 };
 type Line = {invoice_id:string;product_id:string;quantity:number;line_total:number};
-type Lot = {invoice_id:string;product_id:string;lot_id:string;quantity:number;unit_cost:number;source_type:string|null};
+type Lot = {invoice_id:string;product_id:string;lot_id:string;quantity:number;unit_cost:number;source_type:string|null;lot_product_id:string|null};
 type ReturnHeader = {return_id:string;invoice_id:string;return_date:string;total_return_amount:number};
 type ReturnLine = {return_id:string;invoice_id:string;product_id:string;return_quantity:number;line_total:number};
 type ReturnLot = {return_id:string;invoice_id:string;product_id:string;lot_id:string;quantity:number};
@@ -52,7 +52,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const [linesR,lotsR,returnsR,returnLinesR,returnLotsR,expensesR,reversalsR,vendorR]=await Promise.all([
     db.prepare("SELECT i.invoice_id,i.product_id,i.quantity,i.line_total FROM sale_items i JOIN sales s ON s.invoice_id=i.invoice_id WHERE "+where)
       .bind(...params).all<Line>(),
-    db.prepare("SELECT l.invoice_id,l.product_id,l.lot_id,l.quantity,l.unit_cost,sl.source_type "+
+    db.prepare("SELECT l.invoice_id,l.product_id,l.lot_id,l.quantity,l.unit_cost,sl.source_type,sl.product_id AS lot_product_id "+
       "FROM sale_item_lots l JOIN sales s ON s.invoice_id=l.invoice_id LEFT JOIN stock_lots sl ON sl.lot_id=l.lot_id WHERE "+where)
       .bind(...params).all<Lot>(),
     db.prepare("SELECT r.return_id,r.invoice_id,r.return_date,r.total_return_amount FROM sales_returns r "+
@@ -85,7 +85,10 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const soldQty=new Map<string,number>(),soldLineAmounts=new Map<string,number>();
   const lotQty=new Map<string,number>(),lotCosts=new Map<string,number>();
   const returnedQty=new Map<string,number>(),restoredQty=new Map<string,number>();
+  const restoredPerLot=new Map<string,number>();
+  const returnedByDocument=new Map<string,number>(),restoredByDocument=new Map<string,number>();
   const actualRefunds=new Map<string,number>(),lineRefunds=new Map<string,number>();
+  const returnInvoices=new Map(returns.map(x=>[x.return_id,x.invoice_id]));
 
   for(const inv of invoices){
     const invAmount=minor(Number(inv.grand_total)),sub=minor(Number(inv.subtotal)),
@@ -119,6 +122,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(price)||price<=0||
       lot.source_type===null||lot.source_type==='OVERSOLD')
       reasons.add('Missing, zero or non-FIFO historical lot cost.');
+    if(lot.lot_product_id!==lot.product_id)
+      reasons.add('FIFO lot product does not match recorded sold product.');
     soldLotKeys.set(lk,lot);
     lotQty.set(k,(lotQty.get(k)||0)+quantity);
     lotCosts.set(lk,price);
@@ -141,10 +146,14 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('A linked return was posted outside the selected period; period profit cannot be certified.');
   }
   for(const item of returnedLines){
+    if(returnInvoices.get(item.return_id)!==item.invoice_id)
+      reasons.add('Return item invoice does not match its refund header invoice.');
     const k=key(item.invoice_id,item.product_id),value=minor(Number(item.line_total));
     if(value===null||value<0||Number(item.return_quantity)<=0)
       reasons.add('Invalid refund line or returned quantity.');
     returnedQty.set(k,(returnedQty.get(k)||0)+Number(item.return_quantity));
+    const doc=key(item.return_id,k);
+    returnedByDocument.set(doc,(returnedByDocument.get(doc)||0)+Number(item.return_quantity));
     lineRefunds.set(item.return_id,(lineRefunds.get(item.return_id)||0)+(value??0));
   }
   for(const item of returns){
@@ -152,9 +161,15 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('Return header does not match actual refund lines.');
   }
   for(const item of returnedLots){
+    if(returnInvoices.get(item.return_id)!==item.invoice_id)
+      reasons.add('Return lot invoice does not match its refund header invoice.');
     const lk=lotKey(item.invoice_id,item.product_id,item.lot_id),
       k=key(item.invoice_id,item.product_id),qty=Number(item.quantity);
     const price=lotCosts.get(lk);
+    const cumulative=(restoredPerLot.get(lk)||0)+qty;
+    restoredPerLot.set(lk,cumulative);
+    if(cumulative>Number(soldLotKeys.get(lk)?.quantity??0))
+      reasons.add('Returned FIFO lot quantity exceeds original sold lot allocation.');
     if(price===undefined||!Number.isFinite(qty)||qty<=0)
       reasons.add('Return lot allocation lacks the original sold FIFO lot.');
     else {
@@ -163,6 +178,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       else cogs-=reduction;
     }
     restoredQty.set(k,(restoredQty.get(k)||0)+qty);
+    const doc=key(item.return_id,k);
+    restoredByDocument.set(doc,(restoredByDocument.get(doc)||0)+qty);
     const prior=lotQty.get(k)||0;
     if(qty>prior)reasons.add('Return lot reversal exceeds originally allocated quantity.');
   }
@@ -171,6 +188,11 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('Missing immutable return lot allocation; cannot infer original FIFO cost.');
     if(qty>(soldQty.get(k)||0))reasons.add('Return quantity exceeds original sale quantity.');
   }
+  for(const [doc,qty] of returnedByDocument)
+    if(!eq(qty,restoredByDocument.get(doc)||0))
+      reasons.add('Each return must match its original FIFO lot allocation.');
+  for(const doc of restoredByDocument.keys())if(!returnedByDocument.has(doc))
+    reasons.add('Return lot allocation has no matching return document line.');
   // Return lots with no matching line must never silently reduce COGS.
   for(const k of restoredQty.keys())if(!returnedQty.has(k))
     reasons.add('Restored lot has no matching recorded return line.');
