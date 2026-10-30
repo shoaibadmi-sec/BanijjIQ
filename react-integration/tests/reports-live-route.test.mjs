@@ -70,3 +70,11 @@ test('source-linked Sales Register opens authenticated invoice read-only, withou
  assert.match(reports,/Recorded invoice/);
  assert.doesNotMatch(reports,/Nawabpur Hardware House/);
 });
+
+test('report pagination offers a bounded direct page jump alongside 50/100-size controls',()=>{
+ const reports=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(reports,/name="report-page"/);
+ assert.match(reports,/aria-label=\{text\('Go to page'/);
+ assert.match(reports,/Math\.ceil\(rows\.totalRows\/pageSize\)/);
+ assert.match(reports,/type="number"/);
+});

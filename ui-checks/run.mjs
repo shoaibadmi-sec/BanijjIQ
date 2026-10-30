@@ -91,6 +91,18 @@ function startMocking(context,calls){
       ],coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
     if(path==='/api/reports/v2/rows'&&request.method()==='GET'){
       const kind=url.searchParams.get('report')||'sales';
+      if(kind==='sales'&&url.searchParams.get('search')==='CI-PAGE'){
+        const page=Number(url.searchParams.get('page')||1);
+        const pageSize=Number(url.searchParams.get('pageSize')||50);
+        const all=Array.from({length:105},(_,i)=>({
+          sourceId:'INV-CI-'+String(i+1).padStart(4,'0'),sourceModule:'sales',
+          date:'2026-10-15',label:'CI-PAGE buyer',amountMinor:12000,
+          status:'needs-review',reason:'Posted invoice source.'
+        }));
+        return respond({ok:true,report:'sales',range:{from:'2026-10-01',to:'2026-10-30'},
+          page,pageSize,totalRows:all.length,rows:all.slice((page-1)*pageSize,page*pageSize),
+          metrics:[],coverage:{status:'needs-review',reason:'Posted invoice sources.'}});
+      }
       const fixtures={
         sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
           label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
@@ -349,6 +361,55 @@ try{
       await audit(page,'reports-expense-'+width);
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await ctx.close();
+    });
+  }
+  await withCheck('report reader without POS permission cannot open invoice details',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:900},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    await ctx.route('**/api/auth/me',route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,user:{...user,role:'staff',permissions:{
+        reports:{view:true,add:false,edit:false},pos:{view:false,add:false,edit:false}
+      }}})}));
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+    await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
+    assert.equal(await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).count(),0,
+      'report-only users must not get an invoice action without POS view');
+    assert.equal(calls.filter(x=>x.path.startsWith('/api/pos/invoices/')).length,0);
+    await ctx.close();
+  });
+  for(const width of [390,768,1440]){
+    await withCheck('report pagination honors 50/100 and direct page jump '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.getByRole('textbox',{name:'Search records'}).fill('CI-PAGE');
+      await page.getByText('INV-CI-0001').waitFor({timeout:10000});
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0051').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0101').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),5);
+      assert.equal(await page.getByRole('button',{name:'Next'}).isDisabled(),true);
+      const jump=page.getByRole('spinbutton',{name:'Go to page'});
+      await jump.fill('1');
+      await jump.press('Enter');
+      await page.getByText('INV-CI-0001').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('combobox',{name:'Rows per page'}).selectOption('100');
+      await page.getByText('INV-CI-0100').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),100);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0101').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),5);
+      assert.ok(calls.every(call=>call.method!=='POST'||!call.path.startsWith('/api/reports')));
+      await screenshot(page,'reports-pagination-'+width);
       await ctx.close();
     });
   }

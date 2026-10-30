@@ -290,10 +290,25 @@ export function LiveReportsPage(){
           </div>}
           {rows&&<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-600">
             <span>{text('Records','রেকর্ড')}: {rows.totalRows} · {text('Page','পৃষ্ঠা')}: {page}</span>
-            <div className="flex gap-2"><button type="button" disabled={page<=1} onClick={()=>update({page:String(page-1)})}
-              className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Previous','আগে')}</button>
+            <div className="flex flex-wrap items-center gap-2">
+              <form className="flex items-center gap-2" onSubmit={event=>{
+                event.preventDefault();
+                const target=Number(new FormData(event.currentTarget).get('report-page'));
+                const totalPages=Math.max(1,Math.ceil(rows.totalRows/pageSize));
+                if(Number.isInteger(target)&&target>=1&&target<=totalPages)update({page:String(target)});
+              }}>
+                <input type="number" name="report-page" aria-label={text('Go to page','পৃষ্ঠায় যান')}
+                  key={page+':'+rows.totalRows+':'+pageSize} defaultValue={page}
+                  min={1} max={Math.max(1,Math.ceil(rows.totalRows/pageSize))} required
+                  className="h-9 w-16 rounded-lg border border-border bg-card px-2 text-sm"/>
+                <span>{text('of','মোট')} {Math.max(1,Math.ceil(rows.totalRows/pageSize))}</span>
+                <button type="submit" className="h-9 rounded-lg border border-border bg-card px-3">{text('Go','যান')}</button>
+              </form>
+              <button type="button" disabled={page<=1} onClick={()=>update({page:String(page-1)})}
+                className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Previous','আগে')}</button>
               <button type="button" disabled={page*pageSize>=rows.totalRows} onClick={()=>update({page:String(page+1)})}
-              className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Next','পরের')}</button></div>
+                className="h-9 rounded-lg border border-border bg-card px-3 disabled:opacity-40">{text('Next','পরের')}</button>
+            </div>
           </div>}
         </div>
       </div>
