@@ -69,9 +69,10 @@ test('G2-J successive partial FIFO returns cannot exceed original sold quantity'
     f.evidence('FIFO-R1');
     f.startReturn('FIFO-R2','FIFO-A','FIFO-PA',3);
     f.evidence('FIFO-R2','FIFO-A','FIFO-PA','FIFO-LA',3);
-    f.startReturn('FIFO-R3','FIFO-A','FIFO-PA',1);
-    assert.throws(()=>f.evidence('FIFO-R3','FIFO-A','FIFO-PA','FIFO-LA',1),
-      /MIXED_RETURN_CONFLICT|SPLIT_PARTIAL_FIFO_PROVENANCE_CONFLICT/);
+    // Existing sales_return_items capacity guard rejects the third
+    // quantity BEFORE any FIFO evidence is written. Preserve that guard.
+    assert.throws(()=>f.startReturn('FIFO-R3','FIFO-A','FIFO-PA',1),
+      /SALES_RETURN_QUANTITY_CONFLICT/);
     assert.equal(f.n(),2);
     assert.equal((f.q.prepare('SELECT SUM(quantity) n FROM sales_return_item_lots WHERE invoice_id=?').get('FIFO-A') as any).n,5);
   }finally{f.db.close();}
