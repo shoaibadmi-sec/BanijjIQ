@@ -7,13 +7,16 @@ test('4L original HisabIQ Party page is reused and reads authenticated D1 source
  const original=readFileSync(new URL('../../apps/hisabiq-web/src/pages/Parties.tsx',import.meta.url),'utf8');
  const output=patchNativeParties(original);
  for(const value of ['<PartyDirectory','<PartyDetail','<PartyActionSheet','<PageHeader',
-   'useLivePartySources','data-live-native-parties','getLivePartyLedger','getLivePartyDirectory']){
+   'useLivePartySources','data-live-native-parties']){
   assert.ok(output.includes(value),'Original Party UI/live source missing: '+value);
  }
  for(const demo of ['availableParties','availablePurchases','getPartyPreviewSnapshot',
    'dispatchPartyPreview','demoPermissions','subscribePartyPreview']){
   assert.ok(!output.includes(demo),'Demo Party source or write remains: '+demo);
  }
+ const sourceHook=readFileSync(new URL('../overlay/src/integration/parties/useLivePartySources.ts',import.meta.url),'utf8');
+ assert.ok(sourceHook.includes('getLivePartyLedger')&&sourceHook.includes('getLivePartyDirectory'),
+   'Live Party hook must use merged authenticated source APIs');
  assert.ok(output.includes('blockUnconnectedAction'),'Unverified party writes must fail closed');
  assert.ok(output.includes('state.parties'),'Directory must use actual D1 parties');
  assert.ok(output.includes('readOnlyLedgerReady'),'Selected statement must not appear before D1 source fetch');
