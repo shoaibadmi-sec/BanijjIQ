@@ -47,6 +47,7 @@ jobs:
           node --test react-integration/tests/phase7h2-original-lots-source.test.mjs
           node --test react-integration/tests/phase7h3c-original-settings-source.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
+          node --test react-integration/tests/original-pos-api-preview.contract.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
           node --test react-integration/tests/phase4-purchase-route.test.mjs
@@ -59,10 +60,12 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test react-integration/tests/original-pos-api-catalog.integration.test.ts
           node --import tsx --test tests/phase7g-migration-runtime.test.ts
           node --import tsx --test tests/preview-demo-seed.integration.test.ts
           node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security
+          node --import tsx --test tests/phase8-employee-metadata.integration.test.ts
           node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
           node --import tsx --test tests/reports-transaction-lifecycle.integration.test.ts
@@ -82,6 +85,7 @@ jobs:
           npm run test:phase4
           npm run test:phase7f
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
+          node --import tsx --test react-integration/tests/phase4-party-sources.test.ts
           node --import tsx --test react-integration/tests/phase7f2-alerts-client.test.ts
           node --import tsx --test tests/phase7h1-inventory-history.integration.test.ts react-integration/tests/phase7h1-original-history-client.test.ts
           node --import tsx --test tests/phase7h2-inventory-lots.integration.test.ts react-integration/tests/phase7h2-original-lots-client.test.ts
@@ -104,7 +108,9 @@ jobs:
           cd .generated/hisabiq-web
           npx playwright install --with-deps chromium
       - name: Run mocked-API Playwright UI checks
-        run: node ui-checks/run.mjs
+        run: |
+          node ui-checks/run.mjs
+          node ui-checks/original-pos-api-preview.mjs
       - name: Test real Cloudflare Worker with isolated local D1
         run: |
           node d1-checks/run.mjs
