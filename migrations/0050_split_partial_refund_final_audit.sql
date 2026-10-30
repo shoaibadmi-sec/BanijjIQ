@@ -27,8 +27,8 @@ WHEN NEW.action='POST_PARTIAL_SPLIT_RETURN' AND (
       AND (SELECT COALESCE(SUM(t.amount_cents),0)
         FROM sale_tender_allocations t WHERE t.invoice_id=s.invoice_id)
           =CAST(ROUND(s.grand_total*100) AS INTEGER)
-      AND NOT EXISTS(SELECT 1 FROM sales_return_refund_allocations full
-        WHERE full.invoice_id=s.invoice_id)
+      AND NOT EXISTS(SELECT 1 FROM sales_return_refund_allocations complete
+        WHERE complete.invoice_id=s.invoice_id)
       AND NOT EXISTS(SELECT 1 FROM sale_reversal_logs rev
         WHERE rev.invoice_id=s.invoice_id)
   )
