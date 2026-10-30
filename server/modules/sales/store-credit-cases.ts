@@ -76,7 +76,7 @@ export async function getStoreCreditCaseDetailRoute(
   // entry, or a customer balance. Never guess a source by amount alone.
   const legacyLedger=flag.flagCode==='LEGACY_RECEIVABLE_CREDIT'
     ?await db.prepare(
-      "SELECT reference FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' AND reference=? LIMIT 1"
+      "SELECT reference FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' AND ledger_id=? LIMIT 1"
     ).bind(flag.customerId,flag.referenceId).first<{reference:string}>():null;
   const returnRef=legacyLedger?.reference||flag.referenceId;
   const returned=await db.prepare(
