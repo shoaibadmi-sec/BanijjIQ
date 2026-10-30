@@ -277,6 +277,12 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id=?").run(bank.id);
       }
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      const blockedPost=await api('POST','/api/sales-management/'+saleId+'/split-reversal',{
+        reason:'Exact refund requires independently verified posting safeguards'
+      });
+      assert.equal(blockedPost.status,409,JSON.stringify(blockedPost));
+      assert.match(String(blockedPost.error),/source|refund|not yet|disabled/i);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
       // Until G2-H can reissue each source, never refund credit-funded splits
       // in Cash or delete/edit an immutable multi-source invoice.
       assert.equal((await api('POST','/api/sales-returns',{
