@@ -36,9 +36,35 @@ export function sanitizePermissions(raw:any): RolePermissions {
 
 export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<RolePermissions|null>{
   if(user.role==='admin') return null;
-  const row=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`).bind(user.role).first<{permissions_json:string;status:string}>();
-  if(!row || row.status!=='Active') return {};
-  try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
+  const linked=await db.prepare(`SELECT r.permissions_json,r.status FROM app_user_roles ur
+    JOIN app_roles r ON r.role_name=ur.role_name WHERE ur.user_id=?`).bind(user.userId)
+    .all<{permissions_json:string;status:string}>();
+  // Older accounts and third-party imports may still have only the legacy role column.
+  const rows=linked.results.length?linked.results:(
+    await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`)
+      .bind(user.role).all<{permissions_json:string;status:string}>()
+  ).results;
+  const ranking=(value:unknown):number=>value==='unlimited'?Infinity:value==='disabled'?-1:value==='same'?0:Number(value);
+  const wider=(left:DeleteWindowCode,right:DeleteWindowCode):DeleteWindowCode=>
+    ranking(left)>=ranking(right)?left:right;
+  const result:RolePermissions={};
+  for(const row of rows){
+    if(row.status!=='Active')continue;
+    let current:RolePermissions;
+    try{current=sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{continue}
+    for(const [key,grant] of Object.entries(current)){
+      const previous=result[key];
+      if(!previous){result[key]={...grant};continue}
+      const management=key==='roles'||key==='users';
+      result[key]={
+        view:previous.view||grant.view,add:previous.add||grant.add,edit:previous.edit||grant.edit,
+        delete:management?previous.delete===true||grant.delete===true:
+          wider(previous.delete as DeleteWindowCode,grant.delete as DeleteWindowCode),
+        backdate:wider(previous.backdate??'unlimited',grant.backdate??'unlimited')
+      };
+    }
+  }
+  return result;
 }
 
 export async function buildClientUser(db:SherDatabase,user:AuthUser):Promise<AuthUser & {allowedModules:string[]|null;permissions:RolePermissions|null}>{
