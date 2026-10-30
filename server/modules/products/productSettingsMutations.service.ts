@@ -35,7 +35,7 @@ export async function createSettingsLookup(db:SherDatabase,body:unknown):Promise
  const nameBn=label(row.nameBn,128,false);
  if(name===null||nameBn===null)return failure('Enter a valid name and optional Bangla name.');
  const s=schemas[kind],id=s.prefix+'-'+crypto.randomUUID();
- let statement:string,args:unknown[];
+ let statement:string,args:string[];
  if(kind==='unit'){
   const symbol=label(row.symbol,8,true);
   if(symbol===null||!/^[\p{L}\p{N}]{1,8}$/u.test(symbol))
