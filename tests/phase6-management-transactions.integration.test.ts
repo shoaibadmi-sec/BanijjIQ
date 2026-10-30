@@ -92,13 +92,16 @@ test('6G finance person CRUD and ledger references retain immutable owner identi
   assert.equal((await financeBalances(f.db)).ownerCapital,40);
   assert.equal((await read(await updateFinancePersonRoute(f.db,owner.id,{name:'Account Owner Updated',personType:'Owner'}))).status,200);
   const tx=f.db.native.prepare('SELECT person_id,person_name FROM finance_transactions WHERE finance_id=?').get(posted.id) as any;
-  assert.equal(tx.person_id,owner.id);assert.equal(tx.person_name,'Account Owner Updated');
+  assert.equal(tx.person_id,owner.id);assert.equal(tx.person_name,'Account Owner',
+     'original finance posting keeps the name recorded at transaction time');
   assert.equal((await read(await setFinancePersonStatusRoute(f.db,owner.id,'Inactive'))).status,200);
   const blocked=await read(await addFinanceTransactionRoute(f.db,{personId:owner.id,transactionType:'Owner Withdrawal',amount:5,paymentMethod:'Cash',clientRequestId:'P6-MGMT-WITHDRAW-1'},user));
   assert.notEqual(blocked.status,200);
   const bootstrap=await read(await getFinanceBootstrapRoute(f.db));
   assert.equal(bootstrap.ownerCapital,40);
   assert.ok(bootstrap.personsAll.some((x:any)=>x.id===owner.id&&x.status==='Inactive'));
+  assert.ok(bootstrap.personsAll.some((x:any)=>x.id===owner.id&&x.name==='Account Owner Updated'),
+    'current person directory may reflect a new name without rewriting history');
   assert.ok(bootstrap.persons.some((x:any)=>x.id===lender.id));
  }finally{f.close();}
 });
