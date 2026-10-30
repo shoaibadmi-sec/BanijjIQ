@@ -61,7 +61,7 @@ async function request(method,path,body,opts={}){
   return {status:res.status,...result};
 }
 async function check(name,fn){
-  try{await fn();report.passed.push(name);process.stdout.write('PASS '+name+'\n');}
+  try{const value=await fn();report.passed.push(name);process.stdout.write('PASS '+name+'\n');return value;}
   catch(err){report.failed.push({name,message:String(err?.stack||err)});process.stderr.write('FAIL '+name+': '+err+'\n');
     throw err;}
 }
