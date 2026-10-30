@@ -24,7 +24,9 @@
     "react:dev": "npm run react:prepare && npm run dev --prefix .generated/hisabiq-web",
     "preview:pr-build": "node scripts/preview/pr-preview-build.mjs",
     "preview:pr-deploy": "wrangler preview --config wrangler.hisabiq-pr.generated.jsonc",
-    "preview:pr-no-production": "node scripts/preview/no-production-deploy.mjs"
+    "preview:pr-no-production": "node scripts/preview/no-production-deploy.mjs",
+    "test:phase3": "node scripts/test-phase3.mjs",
+    "test:phase3:full": "node scripts/test-phase3.mjs --full"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

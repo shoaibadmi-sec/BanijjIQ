@@ -1,13 +1,17 @@
 import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
+import {getSplitSaleReversalPreviewRoute,postSplitSaleReversalRoute} from './split-reversal.js';
+import {getPartialSplitRefundPreviewRoute} from './partial-split-preview.js';
+import {getStoreCreditCasesRoute,getStoreCreditCaseDetailRoute,resolveStoreCreditCaseRoute} from './store-credit-cases.js';
+import {getStoreCreditOutstandingImpactRoute} from './store-credit-outstanding-impact.js';
 import {
   closeCashSessionRoute, completeSaleRoute, completeSalesReturnRoute, deleteSaleRoute,
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
   getSaleReturnDataRoute, getSalesByPhoneRoute, getSalesManagementRoute, getSalesReturnDetailRoute,
   getSalesReturnHistoryRoute, getSaleUpdateDataRoute, receiveCustomerPaymentRoute,
   searchSalesInvoicesForReturnRoute, startCashSessionRoute, updateSaleRoute,
-  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute
+  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute, getStoreCreditAccountRoute, getStoreCreditReconciliationRoute
 } from './service.js';
 
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
@@ -28,6 +32,22 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   if (path === '/api/sales-returns' && request.method === 'POST') return completeSalesReturnRoute(db, await readBody<any>(request), user);
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
+  if(path==='/api/pos/store-credit/reconciliation/cases' && request.method==='GET')
+    return getStoreCreditCasesRoute(db,user,url);
+  const caseImpactMatch=path.match(/^\/api\/pos\/store-credit\/reconciliation\/cases\/([^/]+)\/impact$/);
+  if(caseImpactMatch && request.method==='GET')
+    return getStoreCreditOutstandingImpactRoute(db,user,decodeURIComponent(caseImpactMatch[1]));
+  const caseResolutionMatch=path.match(/^\/api\/pos\/store-credit\/reconciliation\/cases\/([^/]+)\/resolve$/);
+  if(caseResolutionMatch && request.method==='POST')
+    return resolveStoreCreditCaseRoute(db,user,decodeURIComponent(caseResolutionMatch[1]),
+      await readBody<any>(request));
+  const caseMatch=path.match(/^\/api\/pos\/store-credit\/reconciliation\/cases\/([^/]+)$/);
+  if(caseMatch && request.method==='GET')
+    return getStoreCreditCaseDetailRoute(db,user,decodeURIComponent(caseMatch[1]));
+  if(path==='/api/pos/store-credit/reconciliation' && request.method==='GET')
+    return getStoreCreditReconciliationRoute(db,user);
+  const creditMatch=path.match(/^\/api\/pos\/store-credit\/([^/]+)$/);
+  if(creditMatch && request.method==='GET')return getStoreCreditAccountRoute(db,decodeURIComponent(creditMatch[1]),user);
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
   if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string }>(request), user);
   if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string }>(request), user);
@@ -40,6 +60,14 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnDataMatch = path.match(/^\/api\/sales-returns\/([^/]+)\/data$/);
   if (salesReturnDataMatch && request.method === 'GET') return getSaleReturnDataRoute(db, decodeURIComponent(salesReturnDataMatch[1]));
 
+  const partialPreviewMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-partial-preview$/);
+  if(partialPreviewMatch&&request.method==='GET')
+    return getPartialSplitRefundPreviewRoute(db,decodeURIComponent(partialPreviewMatch[1]),url);
+  const splitReversalMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-reversal$/);
+  if(splitReversalMatch&&request.method==='GET')
+    return getSplitSaleReversalPreviewRoute(db,decodeURIComponent(splitReversalMatch[1]));
+  if(splitReversalMatch&&request.method==='POST')
+    return postSplitSaleReversalRoute(db,decodeURIComponent(splitReversalMatch[1]),await readBody<{reason?:string}>(request),user);
   const reverseMatch=path.match(/^\/api\/sales-management\/([^/]+)\/reverse$/);
   if(reverseMatch && request.method==='GET')return getMixedSaleReversalPreviewRoute(db,decodeURIComponent(reverseMatch[1]));
   if(reverseMatch && request.method==='POST')return reverseMixedSaleRoute(

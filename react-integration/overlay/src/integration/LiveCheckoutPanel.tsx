@@ -10,10 +10,13 @@ import type { PosBankAccount, PosBootstrap, PosCustomer, PosSalePayload } from '
  * Keep the genuine Worker/D1 POS model rather than importing the original
  * CustomerPicker/usePosCart, which are backed by demonstration stores.
  *
- * Phase 2 deliberately supports one payment only. No pretend split tender,
- * installment, store credit, rounding or cash change is recorded.
+ * Keep original HisabIQ checkout layout; add compact source-verified split rows.
+ * Cash change and partly unpaid split settlements remain unsupported.
  */
 type PaymentMethod = PosSalePayload['paymentMethod'];
+export type SplitTenderRow = {
+  id:string;method:PaymentMethod;amount:string;bankAccountId:string;
+};
 type DiscountMode = 'amount' | 'percent';
 
 type Props = {
@@ -46,6 +49,13 @@ type Props = {
   bankAccountId: string;
   matchingAccounts: PosBankAccount[];
   requiresAccount: boolean;
+  splitEnabled:boolean;
+  splitRows:SplitTenderRow[];
+  splitPaidCents:number;
+  onToggleSplit:()=>void;
+  onSplitAdd:()=>void;
+  onSplitRemove:(id:string)=>void;
+  onSplitUpdate:(id:string,patch:Partial<Omit<SplitTenderRow,'id'>>)=>void;
   onPaid: (value: string) => void;
   onPaymentMethod: (value: PaymentMethod) => void;
   onBankAccountId: (value: string) => void;
@@ -115,6 +125,13 @@ export function LiveCheckoutPanel(props: Props) {
         <span>Previous due · আগের বাকি</span>
         <strong>{taka(props.selectedCustomer.currentDue)}</strong>
       </div>}
+      {props.selectedCustomer && <div data-pos-store-credit-balance
+        className="flex justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50/50 px-3 py-2 text-xs text-ink-700">
+        <span>Store Credit · জমা ক্রেডিট</span>
+        <strong>{taka(props.selectedCustomer.storeCreditCents/100)}</strong>
+      </div>}
+      {props.selectedCustomer?.storeCreditBlocked && <p role="status"
+        className="text-xs text-warning">Old credit needs reconciliation · পুরোনো ক্রেডিট যাচাই দরকার</p>}
 
       <section className="rounded-lg border border-border bg-ink-50/50 dark:bg-ink-100/5">
         <button type="button" data-testid="pos-invoice-details-toggle"
@@ -183,9 +200,15 @@ export function LiveCheckoutPanel(props: Props) {
     <div className="space-y-3 p-3.5">
       <div>
         <p className="text-sm font-medium text-ink">Payments · পেমেন্ট</p>
-        <p className="text-[10.5px] text-ink-500">One verified payment · একবারে টাকা গ্রহণ</p>
+        <p className="text-[10.5px] text-ink-500">
+          {props.splitEnabled?'Pay fully with multiple methods · কয়েকটি মাধ্যমে পরিশোধ':'One verified payment · একবারে টাকা গ্রহণ'}
+        </p>
       </div>
-      <div className="rounded-lg border border-border bg-ink-50/40 p-2">
+      <button type="button" aria-pressed={props.splitEnabled} onClick={props.onToggleSplit}
+        disabled={props.disabled} className="h-9 w-full rounded-lg border border-border bg-card px-3 text-left text-xs font-medium text-teal-700 hover:bg-teal-50 disabled:opacity-40">
+        Split payment · একাধিক মাধ্যম
+      </button>
+      {!props.splitEnabled && <div className="rounded-lg border border-border bg-ink-50/40 p-2">
         <div className={'grid gap-1.5 ' + (props.requiresAccount ? 'grid-cols-2' : 'grid-cols-1')}>
           <label className="text-xs text-ink-600">Payment method · মাধ্যম
             <select aria-label="Payment method" value={props.paymentMethod}
@@ -194,6 +217,7 @@ export function LiveCheckoutPanel(props: Props) {
               <option value="Cash">Cash · নগদ</option>
               <option value="Bank">Bank · ব্যাংক</option>
               <option value="Mobile Banking">Mobile Banking · মোবাইল</option>
+              <option value="Store Credit">Store Credit · জমা ক্রেডিট</option>
             </select>
           </label>
           {props.requiresAccount && <label className="text-xs text-ink-600">Payment account *
@@ -208,24 +232,80 @@ export function LiveCheckoutPanel(props: Props) {
           </label>}
         </div>
         <div className="mt-2 flex items-end gap-1.5">
-          <label className="min-w-0 flex-1 text-xs text-ink-600">Amount received · কত টাকা পেলেন
+          <label className="min-w-0 flex-1 text-xs text-ink-600">
+            {props.paymentMethod==='Store Credit'?'Credit to use · ক্রেডিট খরচ':'Amount received · কত টাকা পেলেন'}
             <div className="relative mt-1">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-ink-400">৳</span>
               <Input ref={props.paidRef} type="number" min="0" step="0.01" inputMode="decimal"
-                aria-label="Amount received" value={props.paid}
+                aria-label={props.paymentMethod==='Store Credit'?'Store Credit used':'Amount received'} value={props.paymentMethod==='Store Credit'?String(props.total):props.paid}
+                disabled={props.disabled||props.paymentMethod==='Store Credit'}
                 onChange={event => props.onPaid(event.target.value)}
                 placeholder="0 — full due" className="h-9 w-full pl-7 text-right" />
             </div>
           </label>
           <button type="button" onClick={() => props.onPaid(String(props.total))}
-            disabled={props.total <= 0 || props.disabled}
+            disabled={props.total <= 0 || props.disabled || props.paymentMethod==='Store Credit'}
             className="h-9 rounded-md border border-border bg-card px-2 text-xs font-medium text-teal-700 hover:bg-teal-50 disabled:opacity-40">
             Exact · পুরো
           </button>
         </div>
-      </div>
+      </div>}
+      {props.splitEnabled && <section data-split-payments className="space-y-2 rounded-lg border border-border bg-ink-50/40 p-2">
+        {props.splitRows.map((row,index)=><div key={row.id} data-split-tender-row
+          className="rounded-lg border border-border bg-card p-2">
+          <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_36px] items-end gap-1.5">
+            <label className="min-w-0 text-[11px] text-ink-600">Method · মাধ্যম
+              <select aria-label={`Split method ${index+1}`} value={row.method}
+                onChange={event=>props.onSplitUpdate(row.id,{
+                  method:event.target.value as PaymentMethod,bankAccountId:''
+                })}
+                className="mt-1 h-9 w-full min-w-0 rounded-lg border border-border bg-card px-1.5 text-xs text-ink">
+                <option value="Cash">Cash · নগদ</option>
+                <option value="Bank">Bank · ব্যাংক</option>
+                <option value="Mobile Banking">Mobile · মোবাইল</option>
+                <option value="Store Credit">Store Credit · ক্রেডিট</option>
+              </select>
+            </label>
+            <label className="min-w-0 text-[11px] text-ink-600">Amount · টাকা
+              <Input type="number" inputMode="decimal" step="0.01" min="0"
+                aria-label={`Split amount ${index+1}`} value={row.amount}
+                onChange={event=>props.onSplitUpdate(row.id,{amount:event.target.value})}
+                disabled={props.disabled} className="mt-1 h-9 w-full min-w-0 text-right text-xs" />
+            </label>
+            <button type="button" aria-label={`Remove split payment ${index+1}`}
+              onClick={()=>props.onSplitRemove(row.id)}
+              disabled={props.disabled||props.splitRows.length<=2}
+              className="grid h-9 w-9 place-items-center rounded-md border border-border text-ink-500 hover:text-danger disabled:opacity-30">
+              <Trash2 className="size-3.5"/>
+            </button>
+          </div>
+          {(row.method==='Bank'||row.method==='Mobile Banking')&&<label
+            className="mt-2 block text-xs text-ink-600">Payment account · হিসাব
+            <select aria-label={`Split account ${index+1}`} value={row.bankAccountId}
+              onChange={event=>props.onSplitUpdate(row.id,{bankAccountId:event.target.value})}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-xs text-ink">
+              <option value="">Select account · হিসাব বাছুন</option>
+              {props.accounts.filter(account=>(account.accountType||'Bank')===row.method).map(account=>
+                <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </label>}
+        </div>)}
+        <button type="button" onClick={props.onSplitAdd} disabled={props.disabled||props.splitRows.length>=8}
+          className="h-9 rounded-lg border border-border bg-card px-3 text-xs font-medium text-teal-700 hover:bg-teal-50 disabled:opacity-40">
+          Add payment · আরও মাধ্যম
+        </button>
+        <div data-split-payment-total className="flex items-center justify-between gap-2 border-t border-border pt-2 text-xs">
+          <span>Received · জমা</span><strong>{taka(props.splitPaidCents/100)}</strong>
+        </div>
+        <p className="text-[11px] text-ink-500">Pay exact total; no partial due · পুরো টাকা দিন, বাকি নয়।</p>
+      </section>}
+      {props.paymentMethod==='Store Credit' && !props.splitEnabled && <p data-credit-non-cash-notice
+        className="rounded-md bg-teal-50 p-2 text-xs text-teal-800">
+        Uses saved customer credit only. No cash is received · নগদ আসবে না।
+        Whole payment only · সম্পূর্ণ টাকা ক্রেডিট থেকে।
+      </p>}
       <div className="space-y-1.5 rounded-lg bg-ink-50 p-3">
-        <Row label="Paid · জমা" value={taka(props.paidAmount)} />
+        <Row label={!props.splitEnabled&&props.paymentMethod==='Store Credit'?'Credit used · ক্রেডিট খরচ':'Paid · জমা'} value={taka(props.paidAmount)} />
         <div className="flex items-center justify-between gap-2 text-sm">
           <span className="text-ink-700">Due · বাকি</span>
           <strong className={props.due > 0 ? 'text-danger' : 'text-ink'}>{taka(props.due)}</strong>

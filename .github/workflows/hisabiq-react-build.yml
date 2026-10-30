@@ -42,6 +42,7 @@ jobs:
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
           node --test react-integration/tests/phase4-purchase-route.test.mjs
+          node --test react-integration/tests/phase3-split-refund-return-contract.test.mjs
       - name: Check hosted-preview isolation (dry run, no Cloudflare credentials)
         run: |
           node scripts/preview/build-config.mjs --self-test
@@ -69,6 +70,8 @@ jobs:
           node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts tests/pos-bank-reversal.integration.test.ts tests/pos-due-reversal.integration.test.ts
           npm run test:phase4
+          npm run test:phase3
+          node --import tsx --test tests/phase3-main-migration-compat.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Measure Phase 4F purchase/supplier function coverage with real isolated DB
         run: |
@@ -90,6 +93,7 @@ jobs:
       - name: Test real Cloudflare Worker with isolated local D1
         run: |
           node d1-checks/run.mjs
+          node d1-checks/historical-credit.mjs
           node d1-checks/phase12.mjs
           node d1-checks/phase13-browser.mjs
       - name: Upload local Worker/D1 SQL reconciliation and logs
