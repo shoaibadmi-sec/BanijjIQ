@@ -71,6 +71,7 @@ jobs:
           node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts tests/pos-bank-reversal.integration.test.ts tests/pos-due-reversal.integration.test.ts
           npm run test:phase4
+          npm run test:phase7f
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Measure Phase 4F purchase/supplier function coverage with real isolated DB
         run: |
