@@ -253,6 +253,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     original_cost_minor:number|null;movement_product:string|null;movement_qty:number|null
   };
   type PartialMarker={invoice_id:string;return_id:string;bundle_id:string;sets_returned:number};
+  type OrdinaryMarker={invoice_id:string;return_id:string;product_id:string;quantity:number};
   const sourceSql=(table:'bundle_return_allocations'|'bundle_partial_return_allocations')=>
     "SELECT a.return_id,a.invoice_id,a.visible_product_id,a.component_id,a.lot_id,a.quantity,a.unit_cost,a.cost_minor,"+
     "a.source_allocation_id,original.id AS original_id,original.visible_product_id AS original_visible,"+
@@ -262,7 +263,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     "FROM "+table+" a JOIN sales s ON s.invoice_id=a.invoice_id "+
     "LEFT JOIN bundle_sale_allocations original ON original.id=a.source_allocation_id "+
     "LEFT JOIN stock_movements m ON m.movement_id=a.movement_id WHERE "+where;
-  const [fullR,partialR,markerR,fullMarkerR,cashEvidenceR]=await Promise.all([
+  const [fullR,partialR,markerR,fullMarkerR,cashEvidenceR,ordinaryMarkerR]=await Promise.all([
     db.prepare(sourceSql('bundle_return_allocations')).bind(...params).all<ReturnedBundleSource>(),
     db.prepare(sourceSql('bundle_partial_return_allocations')).bind(...params).all<ReturnedBundleSource>(),
     db.prepare("SELECT p.invoice_id,p.return_id,p.bundle_id,p.sets_returned FROM bundle_partial_return_requests p JOIN sales s ON s.invoice_id=p.invoice_id WHERE "+where)
@@ -270,10 +271,13 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     db.prepare("SELECT p.return_id,p.invoice_id FROM bundle_cash_return_requests p JOIN sales s ON s.invoice_id=p.invoice_id WHERE "+where)
       .bind(...params).all<{return_id:string;invoice_id:string}>(),
     db.prepare("SELECT r.return_id,r.total_return_amount,COALESCE((SELECT SUM(c.debit) FROM cash_book c WHERE c.reference=r.return_id AND c.type='Sales Return' AND c.is_deleted=0),0) cash_debit FROM sales_returns r JOIN sales s ON s.invoice_id=r.invoice_id WHERE "+where)
-      .bind(...params).all<{return_id:string;total_return_amount:number;cash_debit:number}>()
+      .bind(...params).all<{return_id:string;total_return_amount:number;cash_debit:number}>(),
+    db.prepare("SELECT o.invoice_id,o.return_id,o.product_id,o.quantity FROM bundle_ordinary_return_requests o JOIN sales s ON s.invoice_id=o.invoice_id WHERE "+where)
+      .bind(...params).all<OrdinaryMarker>()
   ]);
   const partialMarkers=new Map((markerR.results||[]).map(r=>[r.return_id,r]));
   const fullMarkers=new Set((fullMarkerR.results||[]).map(r=>r.return_id));
+  const ordinaryMarkers=new Map((ordinaryMarkerR.results||[]).map(r=>[r.return_id,r]));
   const returnedSources=[...(fullR.results||[]),...(partialR.results||[])];
   const allocationDocTotals=new Map<string,number>(),sourceCumulative=new Map<number,number>();
   const restoredByReturnComponent=new Map<string,number>(),allocationCountByReturn=new Map<string,number>();
@@ -281,10 +285,12 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   for(const r of returnedSources){
     const soldKey=lotKey(r.invoice_id,r.visible_product_id,r.lot_id);
     const invoiceBundle=bundleRows.some(x=>x.invoice_id===r.invoice_id);
-    const isFull=fullMarkers.has(r.return_id),isPartial=partialMarkers.has(r.return_id);
+    const isFull=fullMarkers.has(r.return_id),isPartial=partialMarkers.has(r.return_id),isOrdinary=ordinaryMarkers.has(r.return_id);
     const sourceKey=JSON.stringify([r.return_id,r.source_allocation_id]);
     const qty=Number(r.quantity);
-    if(!invoiceBundle||isFull===isPartial||returnInvoices.get(r.return_id)!==r.invoice_id||
+    if(!invoiceBundle||Number(isFull)+Number(isPartial)+Number(isOrdinary)!==1||
+       (isOrdinary&&(r.visible_product_id!==r.component_id||r.visible_product_id!==ordinaryMarkers.get(r.return_id)?.product_id))||
+       returnInvoices.get(r.return_id)!==r.invoice_id||
        !r.original_id||sourceWithinReturn.has(sourceKey)||
        r.original_visible!==r.visible_product_id||
        r.original_component!==r.component_id||r.original_lot!==r.lot_id||
@@ -320,8 +326,9 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('Bundle physical restoration lacks matching return lot audit entry.');
   for(const r of returns){
     if(!bundleRows.some(x=>x.invoice_id===r.invoice_id))continue;
-    const isFull=fullMarkers.has(r.return_id),part=partialMarkers.get(r.return_id);
-    if(isFull===!!part)reasons.add('Bundle return is missing exactly one approved refund request marker.');
+    const isFull=fullMarkers.has(r.return_id),part=partialMarkers.get(r.return_id),ordinary=ordinaryMarkers.get(r.return_id);
+    if(Number(isFull)+Number(!!part)+Number(!!ordinary)!==1)
+      reasons.add('Bundle return is missing exactly one approved refund request marker.');
     if(isFull){
       const expected=physicalRows.filter(x=>x.invoice_id===r.invoice_id).length;
       if(!expected||allocationCountByReturn.get(r.return_id)!==expected)
@@ -342,6 +349,17 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       }
       if((allocationCountByReturn.get(part.return_id)||0)<1)
         reasons.add('Partial bundle return lacks original FIFO restoration sources.');
+    }
+    if(ordinary){
+      const expected=visibleLines.get(key(ordinary.invoice_id,ordinary.product_id));
+      const returnedVisible=returnedLines.filter(x=>x.return_id===ordinary.return_id);
+      const restored=restoredByReturnComponent.get(JSON.stringify([ordinary.return_id,ordinary.invoice_id,ordinary.product_id,ordinary.product_id]))||0;
+      if(!expected||expected.product_type!=='Standard'||!Number.isSafeInteger(ordinary.quantity)||ordinary.quantity<1||
+         ordinary.quantity>Number(expected.quantity)||returnedVisible.length!==1||
+         returnedVisible[0].product_id!==ordinary.product_id||
+         !eq(Number(returnedVisible[0].return_quantity),ordinary.quantity)||
+         !eq(restored,ordinary.quantity))
+        reasons.add('Ordinary mixed-cart return does not restore exact original Standard units.');
     }
     const cash=(cashEvidenceR.results||[]).find(c=>c.return_id===r.return_id);
     if(!cash||minor(Number(cash.cash_debit))!==minor(Number(r.total_return_amount)))
