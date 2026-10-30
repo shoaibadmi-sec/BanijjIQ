@@ -50,3 +50,13 @@ test('Dashboard period changes clear previous metric values before loading new s
  assert.match(source,/setSummaryMetrics\(\[\]\)/);
  assert.match(source,/setSummaryStatus\('Loading current reporting evidence/);
 });
+
+test('cash and finance remain inside Report Library with explicit money in/out columns and source-linked metrics',()=>{
+ const reports=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(reports,/finance-movements':'finance'/);
+ assert.match(reports,/const moneyMovement=key==='cash'\|\|key==='bank'\|\|key==='finance'/);
+ assert.match(reports,/Money in/);
+ assert.match(reports,/Money out/);
+ assert.match(reports,/data-report-metric=/);
+ assert.match(reports,/Current ledger snapshot/);
+});
