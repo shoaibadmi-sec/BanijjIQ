@@ -43,7 +43,7 @@ export function applyOriginalPosPaymentAccounts(target:Accounts,verified:Account
  */
 export function resolveOriginalPosSinglePayment(
   rows:readonly PosPaymentRow[],pos:PosBootstrap
-):Pick<PosSalePayload,'paymentMethod'|'paidAmount'|'bankAccountId'>{
+): {method:PosSalePayload['paymentMethod'];paidAmount:number;bankAccountId?:string} {
   if(!Array.isArray(rows)||rows.length!==1)
     throw new Error('Split/multiple payments require atomic backend support.');
   const row=rows[0];
@@ -59,7 +59,7 @@ export function resolveOriginalPosSinglePayment(
   if(method==='Cash'){
     if(!verified.Cash.length)throw new Error('No verified active cash session.');
     if(row.account!==verified.Cash[0])throw new Error('Invalid cash payment account.');
-    return {paymentMethod:method,paidAmount};
+    return {method,paidAmount};
   }
   if(typeof row.account!=='string'||!verified[method].includes(row.account))
     throw new Error('Unknown D1 payment account.');
@@ -67,5 +67,5 @@ export function resolveOriginalPosSinglePayment(
     account.accountType===method&&account.name.trim()===row.account
   );
   if(matches.length!==1)throw new Error('Ambiguous D1 payment account.');
-  return {paymentMethod:method,paidAmount,bankAccountId:matches[0].id};
+  return {method,paidAmount,bankAccountId:matches[0].id};
 }
