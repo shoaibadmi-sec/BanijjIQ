@@ -10,7 +10,7 @@ type Lot={lot_id:string;remaining_quantity:number;original_quantity:number;unit_
 export type CashLine={productId:string;name:string;qty:number;price:number;lineMinor:number;bundle:boolean};
 export type RecipeSnapshot={bundleId:string;revision:number;componentId:string;perSet:number;sets:number;physicalQty:number;unit:string};
 export type FifoDraw={visibleId:string;physicalId:string;lotId:string;qty:number;unitCost:number;
- supplierId:string;minor:number};
+ supplierId:string;minor:number;balanceAfter:number};
 export type PhysicalUpdate={productId:string;stockBefore:number;stockAfter:number;
  lots:{lotId:string;before:number;after:number}[]};
 export type CashPlan={lines:CashLine[];recipes:RecipeSnapshot[];draws:FifoDraw[];updates:PhysicalUpdate[];
@@ -97,6 +97,7 @@ export async function planBundleCashSale(db:SherDatabase,input:PosSaleInput):Pro
   if(source!==oldStock)return err('FIFO/master stock discrepancy: '+pid);
   const demandTicks=contributions.reduce((n,x)=>n+x.qty*10000,0);
   if(!Number.isSafeInteger(demandTicks)||demandTicks>oldStock)return err('Insufficient physical source FIFO stock: '+pid);
+  let runningStock=oldStock;
   for(const contribution of contributions){
    let need=contribution.qty*10000;
    for(const sourceLot of available){
@@ -106,8 +107,8 @@ export async function planBundleCashSale(db:SherDatabase,input:PosSaleInput):Pro
     totalCost+=minor;
     if(totalCost>BigInt(Number.MAX_SAFE_INTEGER))return err('Unsafe component acquisition value.');
     draws.push({visibleId:contribution.parent,physicalId:pid,lotId:sourceLot.lot.lot_id,
-      qty:take/10000,unitCost:sourceLot.cost/10000,supplierId:sourceLot.lot.supplier_id||'',minor:Number(minor)});
-    sourceLot.remaining-=take;need-=take;
+      qty:take/10000,unitCost:sourceLot.cost/10000,supplierId:sourceLot.lot.supplier_id||'',minor:Number(minor),balanceAfter:(runningStock-take)/10000});
+    runningStock-=take;sourceLot.remaining-=take;need-=take;
    }
    if(need!==0)return err('FIFO source exhaustion: '+pid);
   }
