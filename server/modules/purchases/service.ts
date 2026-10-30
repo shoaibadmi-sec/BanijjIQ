@@ -550,11 +550,14 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
     if (qty(lot.remainingQty) < qty(lot.originalQty)) return error('Some stock from this purchase has already been sold/used. Use Purchase Return instead of delete.');
   }
   const batch: SqlPreparedStatement[] = [];
+  const remainingStock = new Map<string,number>();
   for (const lot of (lots.results ?? []) as Array<Record<string, unknown>>) {
     const productId = String(lot.productId);
     const q = qty(lot.originalQty);
     const product = await db.prepare(`SELECT current_stock, product_name FROM products WHERE product_id=?`).bind(productId).first<{ current_stock: number; product_name: string }>();
-    const newStock = Math.round((Number(product?.current_stock || 0) - q) * 10000) / 10000;
+    const current = remainingStock.get(productId) ?? Number(product?.current_stock || 0);
+    const newStock = Math.round((current - q) * 10000) / 10000;
+    remainingStock.set(productId,newStock);
     if (newStock < 0) return error(`${product?.product_name || productId}: deleting purchase would make stock negative.`);
     batch.push(db.prepare(`UPDATE products SET current_stock=?, updated_at=datetime('now') WHERE product_id=?`).bind(newStock, productId));
     batch.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=0 WHERE lot_id=?`).bind(String(lot.lotId)));
