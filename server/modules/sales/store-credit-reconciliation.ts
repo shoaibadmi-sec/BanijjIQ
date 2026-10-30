@@ -16,6 +16,13 @@ export type StoreCreditReviewFlag = {
  * Each query is bounded at 101 sample rows; an independent exact count keeps
  * the summary honest even when more than 100 flags exist.
  */
+export const REVIEW_FLAG_CODES = [
+  'LEGACY_UNJOURNALED_RETURN','LEGACY_RECEIVABLE_CREDIT','NEGATIVE_RECEIVABLE',
+  'ISSUE_SOURCE_MISMATCH','REDEMPTION_SOURCE_MISMATCH',
+  'CREDIT_SALE_WITHOUT_REDEMPTION','CREDIT_SALE_HAS_CASH_RECEIPT',
+  'CREDIT_SALE_HAS_BANK_RECEIPT','NEGATIVE_LIABILITY'
+] as const;
+
 const SELECTS = [
   `SELECT 'LEGACY_UNJOURNALED_RETURN' flag_code,
       COALESCE(NULLIF(l.customer_id,''),s.customer_id,'') customer_id,
@@ -80,6 +87,47 @@ const SELECTS = [
     FROM customer_store_credit_entries e
     GROUP BY e.customer_id HAVING SUM(e.delta_cents)<0`
 ] as const;
+
+function reviewRow(row:any):StoreCreditReviewFlag {
+  return {
+    flagCode:String(row.flag_code||''),customerId:String(row.customer_id||''),
+    referenceId:String(row.reference_id||''),expectedCents:Number(row.expected_cents||0),
+    recordedCents:Number(row.recorded_cents||0)
+  };
+}
+const caseQueries=REVIEW_FLAG_CODES.map((flagCode,i)=>({flagCode,sql:SELECTS[i]}))
+  .sort((a,b)=>a.flagCode.localeCompare(b.flagCode));
+
+/** Complete, bounded paging without combining SQLite views into a D1-unsafe UNION. */
+export async function readStoreCreditReviewFlagPage(db:SherDatabase,limit:number,offset:number):
+  Promise<{total:number; flags:StoreCreditReviewFlag[]}>{
+  const counts=await Promise.all(caseQueries.map(async q=>{
+    const r=await db.prepare('SELECT COUNT(*) n FROM ('+q.sql+')').first<{n:number}>();
+    return Number(r?.n||0);
+  }));
+  const total=counts.reduce((a,b)=>a+b,0);
+  const flags:StoreCreditReviewFlag[]=[];
+  let skip=offset;
+  for(let i=0;i<caseQueries.length && flags.length<limit;i++){
+    if(skip>=counts[i]){skip-=counts[i];continue;}
+    const sql=caseQueries[i].sql;
+    const results=await db.prepare(
+      'SELECT * FROM ('+sql+') AS case_review ORDER BY customer_id,reference_id,expected_cents,recorded_cents LIMIT ? OFFSET ?'
+    ).bind(limit-flags.length,skip).all<any>();
+    flags.push(...(results.results||[]).map(reviewRow));
+    skip=0;
+  }
+  return {total,flags};
+}
+export async function findStoreCreditReviewFlag(db:SherDatabase,flagCode:string,customerId:string,referenceId:string):
+  Promise<StoreCreditReviewFlag|null>{
+  const q=caseQueries.find(x=>x.flagCode===flagCode);
+  if(!q)return null;
+  const row=await db.prepare('SELECT * FROM ('+q.sql+
+    ') AS case_review WHERE customer_id=? AND reference_id=? LIMIT 1'
+  ).bind(customerId,referenceId).first<any>();
+  return row?reviewRow(row):null;
+}
 
 export async function readStoreCreditReviewFlags(db: SherDatabase):
   Promise<{flagsCount:number; flagsTruncated:boolean; flags:StoreCreditReviewFlag[]}>{
