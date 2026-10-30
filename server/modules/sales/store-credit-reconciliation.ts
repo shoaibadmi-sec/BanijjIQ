@@ -30,7 +30,7 @@ const SELECTS = [
     FROM store_credit_legacy_unreconciled l
     LEFT JOIN sales s ON s.invoice_id=l.invoice_id`,
   `SELECT 'LEGACY_RECEIVABLE_CREDIT' flag_code,cl.customer_id,
-      cl.reference reference_id,CAST(ROUND(cl.credit*100) AS INTEGER) expected_cents,
+      cl.ledger_id reference_id,CAST(ROUND(cl.credit*100) AS INTEGER) expected_cents,
       0 recorded_cents
     FROM customer_ledger cl WHERE cl.type='Sales Return Credit'`,
   `SELECT 'NEGATIVE_RECEIVABLE' flag_code,c.customer_id,
