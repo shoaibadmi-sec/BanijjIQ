@@ -689,7 +689,7 @@ export async function getPurchaseForReturn(db: SherDatabase, purchaseId: string)
   if (!purchase) return error('Purchase not found.');
   const rows = await db.prepare(`
     SELECT pi.product_id AS productId, pi.product_name AS productName, SUM(pi.quantity) AS boughtQty, AVG(pi.purchase_price) AS unitPrice,
-           COALESCE((SELECT SUM(return_quantity) FROM purchase_return_items pri WHERE pri.purchase_id=pi.purchase_id AND pri.product_id=pi.product_id),0) AS previouslyReturnedQty
+           COALESCE((SELECT SUM(pri.return_quantity) FROM purchase_return_items pri JOIN purchase_returns pr ON pr.return_id=pri.return_id WHERE pri.purchase_id=pi.purchase_id AND pri.product_id=pi.product_id AND pr.refund_status='Posted' AND COALESCE(pr.is_deleted,0)=0),0) AS previouslyReturnedQty
     FROM purchase_items pi WHERE pi.purchase_id=? GROUP BY pi.product_id, pi.product_name
   `).bind(purchaseId).all();
   const items: any[] = [];
@@ -962,7 +962,7 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
 }
 
 export async function getPurchaseReturnHistory(db: SherDatabase): Promise<Response> {
-  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
+  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod,refund_status AS refundStatus,reversed_at AS reversedAt, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
   return json({ ok: true, returns: rows.results ?? [] });
 }
 
