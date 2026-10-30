@@ -141,6 +141,13 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
  // For the book-only balance, cash session opening floats are excluded.
  const cashLedgerBalance=cash.reduce((n,x)=>n+Number(x.credit)-Number(x.debit),0);
  const matchingExpenses=expenses.filter(x=>x.expense_date>=q.from&&x.expense_date<=q.to);
+ // A posted expense without an active source header cannot certify period
+ // operating costs, even when other expense totals reconcile.
+ const activeExpenseIds=new Set(expenses.map(x=>x.expense_id));
+ for(const book of periodBooks)
+   if(book.type==='Expense'&&!activeExpenseIds.has(book.reference))
+     problems.add('Expense money-book posting '+book.entry_id+' has no active expense source.');
+
  const matchingFinance=finance.filter(x=>x.date>=q.from&&x.date<=q.to);
  const expenseChecks=new Map<string,string>();
  let expenseTotal=0,ownerCapital=0;

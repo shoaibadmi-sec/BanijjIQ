@@ -4,6 +4,9 @@ import { getLedgerPrintHeader, ledgerDateWhere, ledgerHistoryMeta, parseLedgerHi
 import type { ProductRow } from '../products/types.js';
 import type { PurchaseInput, PurchaseLineInput, PurchaseReturnInput } from './types.js';
 import { prepareNewLotTracking, trackingEnabled } from '../products/tracking.service.js';
+import { quotePurchaseUnits, type PurchaseUnitQuote } from './purchaseUnits.js';
+import { getMixedPurchaseForReturn, completeMixedPurchaseReturn } from './mixedReturn.service.js';
+import { createSupplierSettlement, reverseSupplierSettlement, type SettleInput } from './supplierSettlement.service.js';
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -114,6 +117,18 @@ export async function createSupplierRoute(db: SherDatabase, input: { name?: stri
 export async function createPurchase(db: SherDatabase, input: PurchaseInput, user: AuthUser): Promise<Response> {
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Add at least one product line.');
+  if (Number(input.paidAmount ?? 0) !== 0)
+    return error('Purchase-time payment is not posted to a cash/bank ledger. Create the due purchase and use Supplier Settlements.',409);
+  const mixedPurchase=items.some(i=>i.unitQuantities!==undefined||
+    i.unitProfileRevision!==undefined||i.priceUnit!==undefined);
+  if(mixedPurchase&&!cleanText(input.supplierId))
+    return error('Select a saved supplier for mixed-unit purchases.');
+  // Until split-tender and invoice-discount allocation have independent D1
+  // reconciliation, refuse new mixed purchases that 4C could not safely reverse.
+  if(mixedPurchase&&(Number(input.discount??0)!==0||Number(input.paidAmount??0)!==0))
+    return error('Mixed-unit purchases currently require zero discount and zero paid amount; settlement follows Phase 4D.');
+  const lineIds=items.map(i=>cleanText(i.productId));
+  if(new Set(lineIds).size!==lineIds.length)return error('Duplicate product lines must be merged.');
 
   const purchaseDate = cleanText(input.date || input.purchaseDate) || new Date().toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
@@ -132,25 +147,71 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     if (!sourceOrder) return error('Source supplier purchase order not found.');
     if (sourceOrder.status !== 'Open' || cleanText(sourceOrder.convertedPurchaseId)) return error('This supplier purchase order has already been converted or closed.');
     if (sourceOrder.supplierId !== supplier.supplierId) return error('Purchase supplier must match the supplier purchase order.');
+    const orderItems=await db.prepare(`SELECT product_id AS productId,quantity
+      FROM purchase_plan_order_items WHERE order_id=?`).bind(purchasePlanOrderId)
+      .all<{productId:string;quantity:number}>();
+    const requested=new Map<string,number>();
+    for(const item of items){
+      const key=cleanText(item.productId);
+      if(!key||requested.has(key))return error('An order purchase requires distinct products.');
+      if(item.unitQuantities){
+        const profile=await db.prepare(`SELECT revision,profile_json FROM product_unit_profiles
+          WHERE product_id=?`).bind(key).first<{revision:number;profile_json:string}>();
+        if(!profile||profile.revision!==item.unitProfileRevision)
+          return error('Unit profile changed: refresh the purchase order.',409);
+        try{
+          requested.set(key,quotePurchaseUnits(JSON.parse(profile.profile_json),profile.revision,
+            item.unitQuantities,cleanText(item.priceUnit),item.unitPrice as number).baseQuantity);
+        }catch{return error('Invalid order unit conversion.',409);}
+      }else requested.set(key,Number(item.qty??item.quantity));
+    }
+    if(orderItems.results.length!==requested.size||
+       orderItems.results.some(line=>requested.get(line.productId)!==Number(line.quantity)))
+      return error('Purchase quantities and products must match the approved supplier order.',409);
   }
 
-  const normalized: Array<{ product: ProductRow; qty: number; unitPrice: number; lineTotal: number; sellingPrice: number | null; tracking: any }> = [];
+  const normalized: Array<{ product: ProductRow; qty: number; unitPrice: number; lineTotal: number; sellingPrice: number | null; tracking: any; mixed:(PurchaseUnitQuote & {profileJson:string})|null }> = [];
   const stockByProduct = new Map<string, number>();
 
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
     const productId = cleanText(item.productId);
-    const quantity = qty(item.qty ?? item.quantity);
-    const unitPrice = money(item.unitPrice ?? item.purchasePrice);
-    const sellingPrice = item.sellingPrice === undefined || item.sellingPrice === null ? null : money(item.sellingPrice);
-    if (!productId) return error(`Line ${i + 1}: product is required.`);
-    if (quantity <= 0) return error(`Line ${i + 1}: quantity must be greater than zero.`);
-    if (unitPrice < 0) return error(`Line ${i + 1}: unit price must be a valid number.`);
-    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND status <> 'Inactive'`).bind(productId).first<ProductRow>();
-    if (!product) return error(`Line ${i + 1}: product no longer exists.`);
-    const already = stockByProduct.get(productId) ?? Number(product.current_stock || 0);
-    stockByProduct.set(productId, Math.round((already + quantity) * 10000) / 10000);
-    normalized.push({ product, qty: quantity, unitPrice, lineTotal: Math.round(quantity * unitPrice * 10000) / 10000, sellingPrice, tracking: item.tracking });
+    if(!productId)return error(`Line ${i+1}: product is required.`);
+    const product=await db.prepare(`SELECT * FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<ProductRow>();
+    if(!product)return error(`Line ${i+1}: product no longer exists.`);
+    const mixedInput=item.unitQuantities!==undefined||item.unitProfileRevision!==undefined||item.priceUnit!==undefined;
+    let mixed:(PurchaseUnitQuote & {profileJson:string})|null=null;
+    let quantity:number,unitPrice:number,lineTotal:number;
+    if(mixedInput){
+      const saved=await db.prepare(`SELECT revision,profile_json FROM product_unit_profiles WHERE product_id=?`)
+        .bind(productId).first<{revision:number;profile_json:string}>();
+      if(!saved||saved.revision!==item.unitProfileRevision)
+        return error(`Line ${i+1}: unit profile changed. Refresh and retry.`,409);
+      try{
+        const q=quotePurchaseUnits(JSON.parse(saved.profile_json),saved.revision,
+          item.unitQuantities as Record<string,number>,cleanText(item.priceUnit),item.unitPrice as number);
+        if((item.qty!==undefined||item.quantity!==undefined)&&Number(item.qty??item.quantity)!==q.baseQuantity)
+          return error(`Line ${i+1}: base-unit quantity does not match unit entries.`,409);
+        mixed={...q,profileJson:saved.profile_json};
+        quantity=q.baseQuantity;unitPrice=q.baseUnitCost;lineTotal=q.lineTotal;
+      }catch(e){return error(`Line ${i+1}: `+(e instanceof Error?e.message:'Invalid unit quantities.'));}
+    }else{
+      const q=item.qty??item.quantity,c=item.unitPrice??item.purchasePrice;
+      if(typeof q!=='number'||typeof c!=='number'||!Number.isFinite(q)||!Number.isFinite(c)||
+         q<=0||q>1000000000||c<0||c>100000000||
+         Math.abs(q*10000-Math.round(q*10000))>0.000001||
+         Math.abs(c*10000-Math.round(c*10000))>0.000001)
+        return error(`Line ${i+1}: invalid base-unit quantity or cost.`);
+      quantity=q;unitPrice=c;lineTotal=Math.round(q*c*10000)/10000;
+    }
+    if(!Number.isFinite(lineTotal)||lineTotal>10000000000)
+      return error(`Line ${i+1}: purchase amount exceeds limit.`);
+    const sellingPrice=item.sellingPrice===undefined||item.sellingPrice===null?null:money(item.sellingPrice);
+    const already=stockByProduct.get(productId)??Number(product.current_stock||0);
+    const next=Math.round((already+quantity)*10000)/10000;
+    if(!Number.isFinite(next)||next>1000000000)return error('Resulting product stock exceeds limit.');
+    stockByProduct.set(productId,next);
+    normalized.push({product,qty:quantity,unitPrice,lineTotal,sellingPrice,tracking:item.tracking,mixed});
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
@@ -198,6 +259,14 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
       INSERT INTO stock_lots (lot_id, product_id, source_type, source_ref, original_quantity, remaining_quantity, unit_cost, tracking_required_quantity, tracking_status, created_at)
       VALUES (?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?, ?)
     `).bind(lotId, line.product.product_id, purchaseId, line.qty, line.qty, line.unitPrice, trackingEnabled(line.product) ? Math.max(0, line.qty - prepared.assignedQuantity) : 0, prepared.status, purchaseDate));
+    if(line.mixed)batch.push(db.prepare(`INSERT INTO purchase_unit_snapshots
+      (purchase_id,product_id,lot_id,profile_revision,profile_json,quantities_json,
+       price_unit,entered_unit_price,base_quantity,base_unit_cost,line_total,description)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+        purchaseId,line.product.product_id,lotId,line.mixed.unitProfileRevision,
+        line.mixed.profileJson,JSON.stringify(line.mixed.unitQuantities),line.mixed.priceUnit,
+        line.mixed.enteredUnitPrice,line.mixed.baseQuantity,line.mixed.baseUnitCost,
+        line.mixed.lineTotal,line.mixed.description));
     batch.push(...prepared.statements);
     batch.push(db.prepare(`
       INSERT INTO stock_movements (movement_id, product_id, movement_type, quantity_in, quantity_out, balance_after, lot_id, note, created_at)
@@ -212,8 +281,8 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due + ?, updated_at = datetime('now') WHERE supplier_id = ?`).bind(dueAmount, supplier.supplierId));
     batch.push(db.prepare(`
       INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, datetime('now'), ?, ?, 'Purchase', ?, ?, 0, (SELECT current_due + ? FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))
-    `).bind(crypto.randomUUID(), supplier.supplierId, supplier.supplierName, purchaseId, dueAmount, dueAmount, supplier.supplierId, '', user.userId));
+      VALUES (?, datetime('now'), ?, ?, 'Purchase', ?, ?, 0, (SELECT current_due FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))
+    `).bind(crypto.randomUUID(), supplier.supplierId, supplier.supplierName, purchaseId, dueAmount, supplier.supplierId, '', user.userId));
   }
 
   if (purchasePlanOrderId) {
@@ -260,16 +329,18 @@ export async function getPurchases(db: SherDatabase): Promise<Response> {
   const ids = rows.map((p) => p.purchaseId);
   const placeholders = ids.map(() => '?').join(',');
   const items = await db.prepare(`
-    SELECT purchase_id AS purchaseId,
-           product_id AS productId,
-           product_name AS productName,
-           quantity,
-           purchase_price AS unitPrice,
-           purchase_price AS purchasePrice,
-           line_total AS lineTotal
-    FROM purchase_items
-    WHERE purchase_id IN (${placeholders})
-    ORDER BY id ASC
+    SELECT pi.purchase_id AS purchaseId,pi.product_id AS productId,
+           pi.product_name AS productName,pi.quantity,
+           pi.purchase_price AS unitPrice,pi.purchase_price AS purchasePrice,
+           pi.line_total AS lineTotal,
+           COALESCE(u.description,'') AS unitDescription,
+           u.profile_revision AS unitProfileRevision,
+           COALESCE(u.price_unit,'') AS purchasePriceUnit,
+           u.entered_unit_price AS enteredUnitPrice
+    FROM purchase_items pi
+    LEFT JOIN purchase_unit_snapshots u ON u.purchase_id=pi.purchase_id AND u.product_id=pi.product_id
+    WHERE pi.purchase_id IN (${placeholders})
+    ORDER BY pi.id ASC
   `).bind(...ids).all();
 
   const grouped = new Map<string, unknown[]>();
@@ -296,13 +367,33 @@ export async function getPurchaseDetail(db: SherDatabase, purchaseId: string): P
   `).bind(purchaseId).first<Record<string, unknown>>();
   if (!one) return error('Purchase not found.');
   const items = await db.prepare(`
-    SELECT product_id AS productId, product_name AS productName, quantity, purchase_price AS unitPrice,
-           purchase_price AS purchasePrice, line_total AS lineTotal
-    FROM purchase_items
-    WHERE purchase_id = ?
-    ORDER BY id ASC
+    SELECT pi.product_id AS productId,pi.product_name AS productName,
+           pi.quantity,pi.purchase_price AS unitPrice,pi.purchase_price AS purchasePrice,
+           pi.line_total AS lineTotal,
+           u.description AS unitDescription,u.profile_revision AS unitProfileRevision,
+           u.profile_json AS unitProfileJson,u.quantities_json AS unitQuantitiesJson,
+           u.price_unit AS purchasePriceUnit,u.entered_unit_price AS enteredUnitPrice,
+           u.base_unit_cost AS baseUnitCost,u.lot_id AS sourceLotId
+    FROM purchase_items pi
+    LEFT JOIN purchase_unit_snapshots u ON u.purchase_id=pi.purchase_id AND u.product_id=pi.product_id
+    WHERE pi.purchase_id = ?
+    ORDER BY pi.id ASC
   `).bind(purchaseId).all();
-  return json({ ok: true, purchase: { ...one, items: items.results ?? [] } });
+  const lines=(items.results||[]).map((row:any)=>{
+    const {unitProfileJson,unitQuantitiesJson,...publicRow}=row;
+    return {...publicRow,unitSnapshot:unitProfileJson&&unitQuantitiesJson
+      ?{revision:row.unitProfileRevision,profile:JSON.parse(unitProfileJson),
+        quantities:JSON.parse(unitQuantitiesJson),priceUnit:row.purchasePriceUnit,
+        enteredUnitPrice:row.enteredUnitPrice,baseUnitCost:row.baseUnitCost,
+        lotId:row.sourceLotId,description:row.unitDescription}:null};
+  });
+  return json({ok:true,purchase:{...one,items:lines}});
+}
+
+async function hasMixedUnitPurchase(db:SherDatabase,purchaseId:string):Promise<boolean>{
+ const row=await db.prepare('SELECT 1 AS yes FROM purchase_unit_snapshots WHERE purchase_id=? LIMIT 1')
+  .bind(purchaseId).first();
+ return !!row;
 }
 
 async function hasPurchaseReturn(db: SherDatabase, purchaseId: string): Promise<boolean> {
@@ -354,6 +445,11 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (!reason) return error('Enter a reason for this update.');
   const existing = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!existing) return error('Purchase not found.');
+  if (money(existing.paid_amount) > 0 || Number(input.paidAmount ?? 0) !== 0)
+    return error('Paid purchase edits require an audited cash/bank reversal; use Supplier Settlements for payments.',409);
+  if(cleanText(existing.purchase_plan_order_id))return error('Approved-order purchases cannot be edited; use a controlled reversal.',409);
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return error('Mixed-unit purchase edits are locked until historical cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has Purchase Return records and can no longer be updated. Use Purchase Return for further corrections.');
   const trackedPurchase = await db.prepare(`SELECT 1 AS x FROM purchase_items pi JOIN products p ON p.product_id=pi.product_id WHERE pi.purchase_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(purchaseId).first();
   if (trackedPurchase) return error('A purchase containing Serial / Expiry tracked products cannot be edited. Use Purchase Return and create a new purchase for corrections.');
@@ -430,8 +526,8 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (dueDelta !== 0) {
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due + ?, updated_at=datetime('now') WHERE supplier_id = ?`).bind(dueDelta, String(existing.supplier_id || '')));
     batch.push(db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, datetime('now'), ?, ?, 'Purchase Update', ?, ?, ?, (SELECT current_due + ? FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))`)
-      .bind(crypto.randomUUID(), String(existing.supplier_id || ''), String(existing.supplier_name || ''), purchaseId, dueDelta > 0 ? dueDelta : 0, dueDelta < 0 ? Math.abs(dueDelta) : 0, dueDelta, String(existing.supplier_id || ''), reason, user.userId));
+      VALUES (?, datetime('now'), ?, ?, 'Purchase Update', ?, ?, ?, (SELECT current_due FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))`)
+      .bind(crypto.randomUUID(), String(existing.supplier_id || ''), String(existing.supplier_name || ''), purchaseId, dueDelta > 0 ? dueDelta : 0, dueDelta < 0 ? Math.abs(dueDelta) : 0, String(existing.supplier_id || ''), reason, user.userId));
   }
   batch.push(db.prepare(`INSERT INTO invoice_edit_logs (log_id, invoice_id, entity_type, reason, before_total, after_total, edited_by, created_at) VALUES (?, ?, 'PURCHASE', ?, ?, ?, ?, datetime('now'))`)
     .bind(crypto.randomUUID(), purchaseId, reason, money(existing.grand_total ?? existing.subtotal), grandTotal, user.userId));
@@ -447,6 +543,11 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   if (!reason) return error('Enter a reason for deleting this purchase.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if (money(purchase.paid_amount) > 0)
+    return error('Paid purchases require an audited payment reversal. Use Purchase Return instead of deleting.',409);
+  if(cleanText(purchase.purchase_plan_order_id))return error('Approved-order purchases cannot be deleted; use a controlled reversal.',409);
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return error('Mixed-unit purchase delete is locked until cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has return records and cannot be deleted.');
   const trackedPurchase = await db.prepare(`SELECT 1 AS x FROM purchase_items pi JOIN products p ON p.product_id=pi.product_id WHERE pi.purchase_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(purchaseId).first();
   if (trackedPurchase) return error('A purchase containing Serial / Expiry tracked products cannot be deleted. Use Purchase Return so tracking history remains intact.');
@@ -455,11 +556,14 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
     if (qty(lot.remainingQty) < qty(lot.originalQty)) return error('Some stock from this purchase has already been sold/used. Use Purchase Return instead of delete.');
   }
   const batch: SqlPreparedStatement[] = [];
+  const remainingStock = new Map<string,number>();
   for (const lot of (lots.results ?? []) as Array<Record<string, unknown>>) {
     const productId = String(lot.productId);
     const q = qty(lot.originalQty);
     const product = await db.prepare(`SELECT current_stock, product_name FROM products WHERE product_id=?`).bind(productId).first<{ current_stock: number; product_name: string }>();
-    const newStock = Math.round((Number(product?.current_stock || 0) - q) * 10000) / 10000;
+    const current = remainingStock.get(productId) ?? Number(product?.current_stock || 0);
+    const newStock = Math.round((current - q) * 10000) / 10000;
+    remainingStock.set(productId,newStock);
     if (newStock < 0) return error(`${product?.product_name || productId}: deleting purchase would make stock negative.`);
     batch.push(db.prepare(`UPDATE products SET current_stock=?, updated_at=datetime('now') WHERE product_id=?`).bind(newStock, productId));
     batch.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=0 WHERE lot_id=?`).bind(String(lot.lotId)));
@@ -468,7 +572,14 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   }
   const due = money(purchase.due_amount);
   if (due > 0) {
-    batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(due, String(purchase.supplier_id || '')));
+    const supplierId = String(purchase.supplier_id || '');
+    batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(due, supplierId));
+    batch.push(db.prepare(`INSERT INTO supplier_ledger
+      (ledger_id,date,supplier_id,supplier_name,type,reference,debit,credit,balance,notes,created_by,created_at)
+      VALUES (?,datetime('now'),?,?,'Purchase Delete',?,0,?,
+        (SELECT current_due FROM suppliers WHERE supplier_id=?),?,?,datetime('now'))`)
+      .bind(crypto.randomUUID(),supplierId,String(purchase.supplier_name || ''),
+        purchaseId,due,supplierId,reason,user.userId));
   }
   batch.push(db.prepare(`UPDATE purchases SET is_deleted=1, status='Deleted', delete_reason=?, deleted_by=?, deleted_at=datetime('now'), updated_at=datetime('now') WHERE purchase_id=?`).bind(reason, user.userId, purchaseId));
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'DELETE_PURCHASE', 'PURCHASE', ?, ?)`)
@@ -484,6 +595,7 @@ async function nextPurchaseReturnId(db: SherDatabase): Promise<string> {
 }
 
 export async function getPurchaseForReturn(db: SherDatabase, purchaseId: string): Promise<Response> {
+  if(await hasMixedUnitPurchase(db,purchaseId))return getMixedPurchaseForReturn(db,purchaseId);
   const purchase = await db.prepare(`SELECT purchase_id AS purchaseId, purchase_date AS purchaseDate, supplier_id AS supplierId, supplier_name AS supplierName, grand_total AS grandTotal, paid_amount AS paidAmount, due_amount AS dueAmount FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
   const rows = await db.prepare(`
@@ -565,6 +677,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (items.length === 0) return error('Select at least one product to return.');
   const refundMethod = cleanText(input.refundMethod || 'Supplier Credit');
   if (refundMethod !== 'Cash' && refundMethod !== 'Supplier Credit') return error('Choose a refund method.');
+  if (refundMethod === 'Cash')
+    return error('Cash purchase returns require an audited money receipt. Use Supplier Credit until cash-book posting is implemented.',409);
   const reason = cleanText(input.reason);
   if (!reason) return error('Enter a return reason.');
   const returnDate = cleanText(input.date) || new Date().toISOString().slice(0, 10);
@@ -572,6 +686,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (returnDate < today && !cleanText(input.backdatedReason)) return error('Reason for backdating is required.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return completeMixedPurchaseReturn(db,input,user);
   const availableResp = await getPurchaseForReturn(db, purchaseId);
   const availableData = await availableResp.clone().json() as any;
   if (!availableData.ok) return availableResp;
@@ -722,7 +838,8 @@ export async function getSupplierDetailRoute(db: SherDatabase, supplierId: strin
 }
 
 export async function setSupplierStatusRoute(db: SherDatabase, supplierId: string, status: string): Promise<Response> {
-  const next = status === 'Active' ? 'Active' : 'Inactive';
+  if (status !== 'Active' && status !== 'Inactive') return error('Supplier status must be Active or Inactive.');
+  const next = status;
   const result = await db.prepare(`UPDATE suppliers SET status=?, updated_at=datetime('now') WHERE supplier_id=? AND COALESCE(is_deleted,0)=0`).bind(next, supplierId).run();
   if (!result.meta.changes) return error('Supplier not found.', 404);
   return json({ ok: true, id: supplierId, status: next });
@@ -794,28 +911,12 @@ async function reverseSupplierPaymentMoney(db: SherDatabase, ledgerId: string): 
   await db.batch(batch);
 }
 
-export async function paySupplierRoute(db: SherDatabase, supplierId: string, input: { amount?: number; method?: string; bankAccountId?: string; notes?: string; date?: string; backdatedReason?: string }, user: AuthUser): Promise<Response> {
-  if (!(await hasActiveCashSession(db))) return error('No active cash session. Start your day from POS before recording supplier payments.');
-  const amount = money(input.amount);
-  if (amount <= 0) return error('Enter a valid payment amount.');
-  const supplier = await db.prepare(`SELECT supplier_name FROM suppliers WHERE supplier_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(supplierId).first<{ supplier_name: string }>();
-  if (!supplier) return error('Supplier not found.', 404);
-  const date = cleanText(input.date) || new Date().toISOString().slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
-  const backdatedReason = cleanText(input.backdatedReason);
-  if (date < today && !backdatedReason) return error('A reason is required when dating a payment in the past.');
-  const method = cleanText(input.method) || 'Cash';
-  let bankAccountId = '';
-  try { bankAccountId = await validateBankAccount(db, method, input.bankAccountId); } catch (err) { return error(err instanceof Error ? err.message : 'Invalid payment method.'); }
-  const current = await db.prepare(`SELECT current_due FROM suppliers WHERE supplier_id=?`).bind(supplierId).first<{ current_due: number }>();
-  const newDue = Math.round((Number(current?.current_due || 0) - amount) * 10000) / 10000;
-  const ledgerId = crypto.randomUUID();
-  await db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, payment_method, bank_account_id, is_backdated, backdated_days, backdated_reason, created_by, created_at)
-    VALUES (?, ?, ?, ?, 'Payment', 'PAYMENT', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
-    .bind(ledgerId, date, supplierId, supplier.supplier_name, amount, newDue, cleanText(input.notes), method, bankAccountId, date < today ? 1 : 0, date < today ? 1 : 0, backdatedReason, user.userId).run();
-  await db.prepare(`UPDATE suppliers SET current_due=?, updated_at=datetime('now') WHERE supplier_id=?`).bind(newDue, supplierId).run();
-  await writeSupplierPaymentMoney(db, ledgerId, supplier.supplier_name, amount, method, bankAccountId, date);
-  return json({ ok: true, newDue });
+export async function paySupplierRoute(db:SherDatabase,supplierId:string,
+ input:SettleInput,user:AuthUser):Promise<Response>{
+ // Preserve existing authorized route but make every new supplier payment atomic.
+ // Legacy callers without request IDs cannot replay safely after a network timeout;
+ // the new Phase 4D React flow always supplies clientRequestId.
+ return createSupplierSettlement(db,supplierId,input,user,false);
 }
 
 export async function getSupplierPaymentRoute(db: SherDatabase, ledgerId: string): Promise<Response> {
@@ -831,6 +932,8 @@ export async function updateSupplierPaymentRoute(db: SherDatabase, ledgerId: str
   const row = await db.prepare(`SELECT * FROM supplier_ledger WHERE ledger_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(ledgerId).first<Record<string, unknown>>();
   if (!row) return error('Payment not found.', 404);
   if (String(row.type) !== 'Payment') return error('Only payment rows can be edited.');
+  if(await db.prepare('SELECT 1 FROM supplier_settlement_entries WHERE ledger_id=?').bind(ledgerId).first())
+    return error('Phase 4D posted payments must use audited reversal instead of editing.',409);
   const amount = money(input.amount);
   if (amount <= 0) return error('Enter a valid payment amount.');
   const method = cleanText(input.method) || String(row.payment_method || 'Cash');
@@ -853,6 +956,8 @@ export async function deleteSupplierPaymentRoute(db: SherDatabase, ledgerId: str
   const row = await db.prepare(`SELECT * FROM supplier_ledger WHERE ledger_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(ledgerId).first<Record<string, unknown>>();
   if (!row) return error('Payment not found.', 404);
   if (String(row.type) !== 'Payment') return error('Only payment rows can be deleted here.');
+  if(await db.prepare('SELECT 1 FROM supplier_settlement_entries WHERE ledger_id=?').bind(ledgerId).first())
+    return error('Phase 4D posted payments require an audited reversal.',409);
   await reverseSupplierPaymentMoney(db, ledgerId);
   await db.prepare(`UPDATE supplier_ledger SET is_deleted=1, delete_reason=?, deleted_by=?, deleted_at=datetime('now') WHERE ledger_id=?`).bind(reason, user.userId, ledgerId).run();
   await recomputeSupplierLedgerBalances(db, String(row.supplier_id));

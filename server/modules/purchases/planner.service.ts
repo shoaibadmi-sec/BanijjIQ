@@ -518,6 +518,12 @@ export async function approvePurchasePlanRoute(db: SherDatabase, planId: string,
     if (!groups.has(key)) groups.set(key, { supplierName: cleanText(row.supplierName), items: [] });
     groups.get(key)!.items.push(row);
   }
+  const activeSuppliers = await db.prepare(`SELECT supplier_id AS id FROM suppliers
+    WHERE supplier_id IN (${[...groups].map(() => '?').join(',')})
+      AND status='Active' AND COALESCE(is_deleted,0)=0`)
+    .bind(...groups.keys()).all<{id:string}>();
+  if ((activeSuppliers.results ?? []).length !== groups.size)
+    return error('A supplier is inactive or deleted. Update the Draft plan before approval.',409);
   const batch: SqlPreparedStatement[] = [];
   const orders: Array<{ orderId: string; orderNo: string; supplierId: string; supplierName: string }> = [];
   const firstOrderCode = await nextCode(db, 'purchase_plan_orders', 'order_no', 'SPO');

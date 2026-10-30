@@ -50,7 +50,9 @@ const reportsAnchor = '<Route path="reports" element={<Reports />} />';
 const financeAnchor = '<Route path="finance" element={<Finance />} />';
 const expensesAnchor = '<Route path="expenses" element={<Expenses />} />';
 const daybookAnchor = '<Route path="daybook" element={<Daybook />} />';
-if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, financeAnchor, daybookAnchor, expensesAnchor].every(anchor => app.includes(anchor))) {
+const purchasesAnchor = '<Route path="purchases" element={<Purchases />} />';
+const purchaseEditorAnchor = '<Route path="purchases/new" element={<PurchaseEditor />} />';
+if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, financeAnchor, daybookAnchor, expensesAnchor, purchasesAnchor, purchaseEditorAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
@@ -61,6 +63,8 @@ app = app.replace(importAnchor, [
   "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
   "const LiveExpenses = lazy(() => import('./integration/LiveExpensesPage').then(module => ({ default: module.LiveExpensesPage })));",
   "const LiveDaybook = lazy(() => import('./integration/LiveDaybookPage').then(module => ({ default: module.LiveDaybookPage })));",
+  "const LivePurchases = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchasesPage })));",
+  "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
   importAnchor
 ].join('\n'));
 app = app.replace(posAnchor,
@@ -75,5 +79,9 @@ app = app.replace(daybookAnchor,
   '<Route path="daybook" element={<LiveDaybook />} />\\n          <Route path="daybook-design-preview" element={<Daybook />} />');
 app = app.replace(expensesAnchor,
   '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
+app = app.replace(purchasesAnchor,
+  '<Route path="purchases" element={<LivePurchases />} />\\n          <Route path="purchases-design-preview" element={<Purchases />} />'.replace('\\n','\n'));
+app = app.replace(purchaseEditorAnchor,
+  '<Route path="purchases/new" element={<LivePurchaseEditor />} />\\n          <Route path="purchase-editor-design-preview" element={<PurchaseEditor />} />'.replace('\\n','\n'));
 writeFileSync(appPath, app);
 console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');

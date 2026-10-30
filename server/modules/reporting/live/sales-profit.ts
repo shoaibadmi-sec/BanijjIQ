@@ -85,6 +85,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const soldQty=new Map<string,number>(),soldLineAmounts=new Map<string,number>();
   const lotQty=new Map<string,number>(),lotCosts=new Map<string,number>();
   const returnedQty=new Map<string,number>(),restoredQty=new Map<string,number>();
+  const restoredPerLot=new Map<string,number>();
   const returnedByDocument=new Map<string,number>(),restoredByDocument=new Map<string,number>();
   const actualRefunds=new Map<string,number>(),lineRefunds=new Map<string,number>();
   const returnInvoices=new Map(returns.map(x=>[x.return_id,x.invoice_id]));
@@ -165,6 +166,10 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     const lk=lotKey(item.invoice_id,item.product_id,item.lot_id),
       k=key(item.invoice_id,item.product_id),qty=Number(item.quantity);
     const price=lotCosts.get(lk);
+    const cumulative=(restoredPerLot.get(lk)||0)+qty;
+    restoredPerLot.set(lk,cumulative);
+    if(cumulative>Number(soldLotKeys.get(lk)?.quantity??0))
+      reasons.add('Returned FIFO lot quantity exceeds original sold lot allocation.');
     if(price===undefined||!Number.isFinite(qty)||qty<=0)
       reasons.add('Return lot allocation lacks the original sold FIFO lot.');
     else {
@@ -219,12 +224,15 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     reason:string,linked:EvidenceSource[])=>{
     metrics.push({key,valueMinor:value,status:metricStatus,reason,asOf:q.to,sources:linked});
   };
-  // Even when cost is incomplete, a validated sale's source amounts are
-  // visible. They must never be represented as reconciled profit.
-  add('grossSales',gross,verified?'ready':'needs-review','Recorded net-of-discount invoice totals; not cash receipts.',sources);
-  add('discounts',discounts,verified?'ready':'needs-review','Invoice-level discounts, already included in grossSales.',sources);
-  add('returns',refund,verified?'ready':'needs-review','Actual return refund amounts; no second discount factor.',sources);
-  add('netSales',net,verified?'ready':'needs-review','Invoice cohort totals less linked recorded refunds.',sources);
+  // Do not show a sampled period total as if it covered all posted invoices.
+  // Source-specific invoice rows below remain individually verifiable.
+  const completeCohort=totalRows<=5000;
+  const cohortStatus:ReportStatus=completeCohort?(verified?'ready':'needs-review'):'incomplete';
+  const cohortReason=(reason:string)=>completeCohort?reason:explanation;
+  add('grossSales',completeCohort?gross:null,cohortStatus,cohortReason('Recorded net-of-discount invoice totals; not cash receipts.'),sources);
+  add('discounts',completeCohort?discounts:null,cohortStatus,cohortReason('Invoice-level discounts, already included in grossSales.'),sources);
+  add('returns',completeCohort?refund:null,cohortStatus,cohortReason('Actual return refund amounts; no second discount factor.'),sources);
+  add('netSales',completeCohort?net:null,cohortStatus,cohortReason('Invoice cohort totals less linked recorded refunds.'),sources);
   add('fifoCogs',verified?cogs:null,status,explanation,sources);
   add('grossProfit',verified?net-cogs:null,status,explanation,sources);
   add('operatingExpenses',expensesProven?expenses:null,expensesProven?'ready':'incomplete',
