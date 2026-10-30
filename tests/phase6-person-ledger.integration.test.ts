@@ -132,10 +132,10 @@ test('6D posting uses a stable request ID, blocks wrong person type, and never d
  try{
   const input={personId:'OWNER-1',transactionType:'Owner Investment',amount:32.125,paymentMethod:'Cash',clientRequestId:'P6D-OWNER-POST-0001'};
   const first=await addFinanceTransactionRoute(f.db,input,f.user);
-  assert.equal(first.status,200,await first.text());
+  assert.equal(first.status,200);
   const firstPayload=await first.json() as any;
   const retry=await addFinanceTransactionRoute(f.db,input,f.user);
-  assert.equal(retry.status,200,await retry.text());
+  assert.equal(retry.status,200);
   assert.equal((await retry.json() as any).id,firstPayload.id);
   assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM finance_transactions').get() as any).n,1);
   assert.equal((f.db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE type='Owner Investment'").get() as any).n,1);
@@ -151,10 +151,10 @@ test('6D bank posting uses the original account, rejects inactive account and ro
   f.db.native.prepare("UPDATE bank_accounts SET current_balance=0 WHERE bank_account_id='FIN-BANK'").run();
   const input={personId:'LENDER-1',transactionType:'Loan Received',amount:90,paymentMethod:'Bank',bankAccountId:'FIN-BANK',clientRequestId:'P6D-LOAN-IN-00001'};
   const posted=await addFinanceTransactionRoute(f.db,input,f.user);
-  assert.equal(posted.status,200,await posted.text());
+  assert.equal(posted.status,200);
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,90);
   const out=await addFinanceTransactionRoute(f.db,{...input,transactionType:'Loan Repayment',amount:30,clientRequestId:'P6D-LOAN-OUT-0001'},f.user);
-  assert.equal(out.status,200,await out.text());
+  assert.equal(out.status,200);
   assert.equal((await read(f.db,'LENDER-1')).balance,60);
   f.db.native.prepare("UPDATE bank_accounts SET status='Inactive' WHERE bank_account_id='FIN-BANK'").run();
   const blocked=await addFinanceTransactionRoute(f.db,{...input,clientRequestId:'P6D-LOAN-INACTIVE'},f.user);
@@ -178,7 +178,7 @@ test('6D deleting bank financing reverses the original bank once and rolls back 
     personId:'LENDER-1',transactionType:'Loan Received',amount:60,paymentMethod:'Bank',bankAccountId:'FIN-BANK',
     clientRequestId:'P6D-LOAN-DELETE-01'
   },f.user);
-  assert.equal(posted.status,200,await posted.text());
+  assert.equal(posted.status,200);
   const {id}=await posted.json() as {id:string};
   f.db.native.exec("CREATE TRIGGER fail_finance_reverse_audit BEFORE INSERT ON audit_logs WHEN NEW.action='FINANCE_REVERSE' BEGIN SELECT RAISE(ABORT,'audit broken'); END;");
   let failed:Response|undefined;
@@ -189,7 +189,7 @@ test('6D deleting bank financing reverses the original bank once and rolls back 
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,60);
   f.db.native.exec('DROP TRIGGER fail_finance_reverse_audit');
   const deleted=await deleteFinanceTransactionRoute(f.db,id,'Finance entry cancelled after review',f.user);
-  assert.equal(deleted.status,200,await deleted.text());
+  assert.equal(deleted.status,200);
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,0);
   assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM bank_book WHERE reference=? AND is_deleted=0').get(id) as any).n,0);
   assert.equal((await read(f.db,'LENDER-1')).balance,0);
@@ -204,7 +204,7 @@ test('6D finance edit moves the money leg between original bank and cash atomica
   f.db.native.prepare("UPDATE bank_accounts SET current_balance=0 WHERE bank_account_id='FIN-BANK'").run();
   const first=await addFinanceTransactionRoute(f.db,{personId:'LENDER-1',transactionType:'Loan Received',
     amount:30,paymentMethod:'Bank',bankAccountId:'FIN-BANK',clientRequestId:'P6D-LOAN-EDIT-001'},f.user);
-  assert.equal(first.status,200,await first.text());
+  assert.equal(first.status,200);
   const {id}=await first.json() as {id:string};
   f.db.native.exec("CREATE TRIGGER fail_finance_edited_cash BEFORE INSERT ON cash_book WHEN NEW.type='Loan Repayment' BEGIN SELECT RAISE(ABORT,'cash write failed'); END;");
   let failed:Response|undefined;
@@ -215,7 +215,7 @@ test('6D finance edit moves the money leg between original bank and cash atomica
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,30);
   f.db.native.exec('DROP TRIGGER fail_finance_edited_cash');
   const updated=await updateFinanceTransactionRoute(f.db,id,corrected,f.user);
-  assert.equal(updated.status,200,await updated.text());
+  assert.equal(updated.status,200);
   assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,0);
   assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM bank_book WHERE reference=? AND is_deleted=0').get(id) as any).n,0);
   assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM cash_book WHERE reference=? AND is_deleted=0').get(id) as any).n,1);
