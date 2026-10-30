@@ -4,6 +4,7 @@ import { hashPassword } from '../auth/service.js';
 import {
   DELETE_WINDOW_OPTIONS,
   PERMISSION_MODULES,
+  mayAssignCustomRole,
   requireManagementDelete,
   requireModulePermission,
   sanitizePermissions
@@ -47,6 +48,7 @@ export async function createManagedUserRoute(db:SherDatabase,input:any,actor:Aut
   if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(password.length<6)return error('Password must be at least 6 characters.');
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  if(!(await mayAssignCustomRole(db,actor,role)))return error('You cannot assign a role beyond your own permissions.',403);
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? LIMIT 1`).bind(mobile).first<any>())return error('A user with this mobile number already exists.');
   const id=crypto.randomUUID(),hashed=await hashPassword(password);
   await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
@@ -62,6 +64,7 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
   if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
   if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  if(!(await mayAssignCustomRole(db,actor,role)))return error('You cannot assign a role beyond your own permissions.',403);
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? AND user_id<>? LIMIT 1`).bind(mobile,id).first<any>())return error('A user with this mobile number already exists.');
   if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
   await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id).run();
