@@ -113,6 +113,19 @@ try{
     token=setup.token;
     assert.equal((await request('GET','/api/auth/me',undefined,{token})).user.fullName,'Test Admin');
   });
+  await check('real D1 executes admin-only read-only Store Credit reconciliation',async()=>{
+    assert.equal((await request('GET','/api/pos/store-credit/reconciliation')).status,401);
+    const review=await request('GET','/api/pos/store-credit/reconciliation',undefined,{token});
+    assert.equal(review.ok,true,JSON.stringify(review));
+    assert.equal(review.readOnly,true);
+    assert.equal(review.reviewRequired,false);
+    assert.equal(review.flagsCount,0);
+    assert.equal(review.outstandingCents,0);
+    assert.equal(review.issuedCents,0);
+    assert.equal(review.redeemedCents,0);
+    assert.deepEqual(review.flags,[]);
+    assert.equal((await request('POST','/api/pos/store-credit/reconciliation',{}, {token})).status,404);
+  });
   await check('real Worker creates product and opening FIFO inventory',async()=>{
     const added=await request('POST','/api/products',product,{token});
     assert.equal(added.ok,true,JSON.stringify(added));
