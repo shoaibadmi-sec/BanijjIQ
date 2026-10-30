@@ -342,6 +342,8 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         bank:row('SELECT COUNT(*) n FROM bank_book').n,
         credit:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n
       };
+      const url='/api/sales-management/'+saleId+'/split-reversal';
+      const reversalBody={reason:'Refund exactly to verified original payment sources'};
       // Real transaction failure injection: the refund must never leave
       // cash/bank debited or FIFO stock restored when credit issuance fails.
       db.native.exec("CREATE TRIGGER split_credit_issue_fault BEFORE INSERT ON customer_store_credit_entries WHEN NEW.entry_type='ISSUE' AND NEW.source_type='Sales Return' BEGIN SELECT RAISE(ABORT,'CREDIT_ISSUE_FAILURE'); END");
@@ -368,8 +370,6 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       }
 
       db.native.exec("CREATE TRIGGER split_refund_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='REVERSE_SPLIT_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_AUDIT_FAULT'); END");
-      const url='/api/sales-management/'+saleId+'/split-reversal';
-      const reversalBody={reason:'Refund exactly to verified original payment sources'};
       const failed=await api('POST',url,reversalBody);
       assert.equal(failed.ok,false,JSON.stringify(failed));
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
