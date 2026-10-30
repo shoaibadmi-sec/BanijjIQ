@@ -307,3 +307,19 @@ test('oversized invoice period never publishes a truncated aggregate as a comple
    'reporting a large period must not modify D1 accounting');
  } finally { db.close(); }
 });
+
+
+test('orphan cash-book expense posting blocks otherwise reconciled FIFO net profit',async()=>{
+ const db=fixture();try {
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,debit,credit) VALUES ('C-GHOST-PROFIT','2026-10-20','Expense','EXP-GHOST-PROFIT',15,0)").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(metric(result,'netSales').valueMinor,22000,
+    'recorded invoice amounts remain visible');
+  assert.equal(result.coverage.status,'incomplete',
+    'missing expense source must stop certification of derived net profit');
+  assert.equal(metric(result,'operatingExpenses').valueMinor,null);
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before);
+ }finally{db.close();}
+});
