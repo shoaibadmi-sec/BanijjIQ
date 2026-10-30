@@ -37,7 +37,6 @@ import { useLiveProducts } from '../integration/products/useLiveProducts';
 import { toProductView } from '../integration/products/productContracts';
 import { MohimProductEditor } from '../integration/products/MohimProductEditor';
 import { MohimProductActions as ProductActions } from '../integration/products/MohimProductActions';
-import { LiveStockAlerts } from '../integration/products/LiveStockAlerts';
 
 `;
 const controller=String.raw`type ProductView = 'list' | 'lots' | 'history' | 'settings';
@@ -118,11 +117,6 @@ export function patchLiveProducts(source) {
   jsx=replaceOnce(jsx,
     '    <div className="mx-auto max-w-[1440px] space-y-4">',
     '    <div className="mx-auto max-w-[1440px] space-y-4" data-live-products>','live root');
-  jsx=replaceOnce(jsx,
-    '      <div className="rounded-xl border border-border bg-card shadow-card">',
-    `      <LiveStockAlerts enabled={permitted} refreshKey={items}
-        onSelectProduct={name=>{setQuery(name);setStockFilter('all');setCategory('All');}} />
-      <div className="rounded-xl border border-border bg-card shadow-card">`,'live stock alerts placement');
   jsx=replaceOnce(jsx,
     '      <PageHeader',
     `      {notice&&<p role="status" className="rounded-lg bg-success-bg p-2 text-xs text-success">{notice}</p>}

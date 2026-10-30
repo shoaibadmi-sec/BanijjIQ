@@ -20,3 +20,7 @@ This is a **stacked draft** on Phase 7F1 (`feat/hisabiq-phase7f-stock-alerts-tdd
 
 ## Release hold
 Do not merge Phase 7F2 before Phase 7F1 is reviewed/merged and required CI green on the final rebased 7F2 SHA; do not modify hosted Cloudflare or remote D1.
+
+## Superseded frontend UI scope — mandatory original UI only
+
+A later explicit product rule prohibits new UI. Do not render a stock-alert strip, panel, button, or custom layout. The typed, authorized GET client remains a backend integration contract, for future use only with an **existing original HisabIQ_UI control** and explicit source-parity tests. The source-backed product list, existing stock cards, filters, tabs, and original styling stay unchanged.
