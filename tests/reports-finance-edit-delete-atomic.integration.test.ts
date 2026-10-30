@@ -70,6 +70,15 @@ test('5G20: finance bank→cash edit and delete are atomic across source, journa
   assert.deepEqual(snapshot(),tampered,'Rejected source mismatch cannot touch the master, journal, bank, cash or audit');
   db.native.prepare("UPDATE bank_book SET credit=120 WHERE reference=? AND COALESCE(is_deleted,0)=0").run(id);
   assert.deepEqual(snapshot(),original,'After restoring the source, original values must be unchanged');
+  // G21: original date is part of the posted accounting source, not editable journal metadata.
+  const sourceDate=String(one('SELECT date FROM finance_transactions WHERE finance_id=?',id).date);
+  db.native.prepare("UPDATE bank_book SET date='2000-01-01' WHERE reference=? AND COALESCE(is_deleted,0)=0").run(id);
+  const alteredBankDate=snapshot();
+  const refusedDateEdit=await api('PUT',path,switchToCash);
+  assert.notEqual(refusedDateEdit.status,200,'Edit must reject a bank journal posted in a different period from its Finance source');
+  assert.deepEqual(snapshot(),alteredBankDate,'Rejected bank journal date must preserve source, balances and audit history');
+  db.native.prepare('UPDATE bank_book SET date=? WHERE reference=? AND COALESCE(is_deleted,0)=0').run(sourceDate,id);
+  assert.deepEqual(snapshot(),original);
   db.native.exec(`CREATE TRIGGER g20_reject_source_change BEFORE UPDATE ON finance_transactions
    BEGIN SELECT RAISE(ABORT,'g20-source-failure'); END;`);
   const failedEdit=await api('PUT',path,switchToCash);
@@ -97,6 +106,14 @@ test('5G20: finance bank→cash edit and delete are atomic across source, journa
   assert.equal(value(bankPage,'bankCurrentBalance'),30000);
   assert.equal(value(financePage,'ownerCapitalIn'),8000);
   assert.deepEqual(financePage.rows.map((row:any)=>row.sourceId),[id]);
+  const editedDate=String(one('SELECT date FROM finance_transactions WHERE finance_id=?',id).date);
+  db.native.prepare("UPDATE cash_book SET date='2000-01-01' WHERE reference=? AND COALESCE(is_deleted,0)=0").run(id);
+  const alteredCashDate=snapshot();
+  const refusedDateDelete=await api('DELETE',path,{reason:'Attempted cancellation of inconsistent Cash posting'});
+  assert.notEqual(refusedDateDelete.status,200,'Delete must reject a Cash journal with a mismatched Finance source date');
+  assert.deepEqual(snapshot(),alteredCashDate,'Rejected Cash journal date must preserve source, balances and audit history');
+  db.native.prepare('UPDATE cash_book SET date=? WHERE reference=? AND COALESCE(is_deleted,0)=0').run(editedDate,id);
+  assert.deepEqual(snapshot(),afterEdit);
 
   db.native.exec(`CREATE TRIGGER g20_reject_new_bank_book BEFORE INSERT ON bank_book
     WHEN NEW.type='Loan Received' BEGIN SELECT RAISE(ABORT,'g20-bank-journal-failure'); END;`);

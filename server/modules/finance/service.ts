@@ -275,9 +275,9 @@ async function postFinanceMoney(db:SherDatabase,financeId:string,type:FinanceTxT
 async function financeReversalStatements(db:SherDatabase,financeId:string,
  user:AuthUser,reason:string,source:any):Promise<SqlPreparedStatement[]>{
  const [cash,bank]=await Promise.all([
-   db.prepare("SELECT entry_id,type,payment_method,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
+   db.prepare("SELECT entry_id,date,type,payment_method,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
      .bind(financeId).all<any>(),
-   db.prepare("SELECT entry_id,type,bank_account_id,debit,credit FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
+   db.prepare("SELECT entry_id,date,type,bank_account_id,debit,credit FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
      .bind(financeId).all<any>()
  ]);
  const original=[...(cash.results||[]),...(bank.results||[])];
@@ -285,6 +285,7 @@ async function financeReversalStatements(db:SherDatabase,financeId:string,
  const cashSource=cleanText(source.payment_method)==='Cash',entry=original[0];
  if(!sourceType||sourceAmount<=0||original.length!==1||
    (cashSource?cash.results.length!==1:bank.results.length!==1)||
+   cleanText(entry.date)!==cleanText(source.date)||
    cleanText(entry.type)!==sourceType.key||
    Number(entry.debit)!==(sourceType.direction==='out'?sourceAmount:0)||
    Number(entry.credit)!==(sourceType.direction==='in'?sourceAmount:0)||
