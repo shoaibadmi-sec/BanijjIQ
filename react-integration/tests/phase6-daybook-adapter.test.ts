@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {toUnifiedDaybookRow} from '../overlay/src/integration/phase6DaybookAdapter.ts';
-import {cashflowSummary} from '../../apps/hisabiq-web/src/utils/daybook.ts';
+import * as daybook from '../../apps/hisabiq-web/src/utils/daybook.ts';
+// Upstream submodule is CommonJS for Node tests; tsx exposes its exports through default.
+const cashflowSummary=(daybook as any).cashflowSummary??(daybook as any).default?.cashflowSummary;
 import type {LiveDaybookEntry} from '../overlay/src/integration/banijjApi.ts';
 
 const sample:LiveDaybookEntry={
