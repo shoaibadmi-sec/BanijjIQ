@@ -241,14 +241,81 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     const prior=lotQty.get(k)||0;
     if(qty>prior)reasons.add('Return lot reversal exceeds originally allocated quantity.');
   }
+  // Bundle invoices sell *sets* but restore physical component pieces. Never
+  // compare set count directly with summed original lot quantities. Instead,
+  // audit each compensating source allocation against its original immutable
+  // sale draw, physical stock movement and matching return-lot entry.
+  type ReturnedBundleSource={
+    return_id:string;invoice_id:string;visible_product_id:string;component_id:string;
+    lot_id:string;quantity:number;unit_cost:number;cost_minor:number;
+    source_allocation_id:number;original_id:number|null;original_visible:string|null;
+    original_component:string|null;original_lot:string|null;original_quantity:number|null;
+    original_cost_minor:number|null;movement_product:string|null;movement_qty:number|null
+  };
+  const returnedSourceRows=await db.prepare(
+    "SELECT a.return_id,a.invoice_id,a.visible_product_id,a.component_id,a.lot_id,a.quantity,a.unit_cost,a.cost_minor,"+
+    "a.source_allocation_id,original.id AS original_id,original.visible_product_id AS original_visible,"+
+    "original.component_id AS original_component,original.lot_id AS original_lot,"+
+    "original.quantity AS original_quantity,original.cost_minor AS original_cost_minor,"+
+    "m.product_id AS movement_product,m.quantity_in AS movement_qty "+
+    "FROM bundle_return_allocations a JOIN sales s ON s.invoice_id=a.invoice_id "+
+    "LEFT JOIN bundle_sale_allocations original ON original.id=a.source_allocation_id "+
+    "LEFT JOIN stock_movements m ON m.movement_id=a.movement_id WHERE "+where
+  ).bind(...params).all<ReturnedBundleSource>();
+  const returnedSources=returnedSourceRows.results||[];
+  const allocationDocTotals=new Map<string,number>();
+  const allocationCountByReturn=new Map<string,number>();
+  const seenSources=new Set<number>();
+  for(const r of returnedSources){
+    const soldKey=lotKey(r.invoice_id,r.visible_product_id,r.lot_id);
+    const invoiceBundle=bundleRows.some(x=>x.invoice_id===r.invoice_id);
+    if(!invoiceBundle||returnInvoices.get(r.return_id)!==r.invoice_id||
+       !r.original_id||seenSources.has(r.source_allocation_id)||
+       r.original_visible!==r.visible_product_id||
+       r.original_component!==r.component_id||r.original_lot!==r.lot_id||
+       !eq(Number(r.original_quantity),Number(r.quantity))||
+       r.original_cost_minor!==r.cost_minor||
+       !eq(Number(soldLotKeys.get(soldKey)?.unit_cost),Number(r.unit_cost))||
+       r.movement_product!==r.component_id||
+       !eq(Number(r.movement_qty),Number(r.quantity))||
+       minor(Number(r.unit_cost)*Number(r.quantity))!==r.cost_minor)
+      reasons.add('Cash bundle return does not match immutable original FIFO allocation and physical restoration.');
+    seenSources.add(r.source_allocation_id);
+    const doc=JSON.stringify([r.return_id,r.invoice_id,r.visible_product_id,r.lot_id]);
+    allocationDocTotals.set(doc,(allocationDocTotals.get(doc)||0)+Number(r.quantity));
+    allocationCountByReturn.set(r.return_id,(allocationCountByReturn.get(r.return_id)||0)+1);
+  }
+  const expectedLotReturns=new Map<string,number>();
+  for(const lot of returnedLots){
+    if(!bundleRows.some(x=>x.invoice_id===lot.invoice_id))continue;
+    const doc=JSON.stringify([lot.return_id,lot.invoice_id,lot.product_id,lot.lot_id]);
+    expectedLotReturns.set(doc,(expectedLotReturns.get(doc)||0)+Number(lot.quantity));
+  }
+  for(const [doc,qty] of expectedLotReturns)
+    if(!eq(qty,allocationDocTotals.get(doc)||0))
+      reasons.add('Full bundle return source lot is missing its immutable physical provenance.');
+  for(const [doc,qty] of allocationDocTotals)
+    if(!eq(qty,expectedLotReturns.get(doc)||0))
+      reasons.add('Physical bundle restoration has no matching return lot audit entry.');
+  for(const r of returns){
+    if(!bundleRows.some(x=>x.invoice_id===r.invoice_id))continue;
+    const expected=physicalRows.filter(x=>x.invoice_id===r.invoice_id).length;
+    if(!expected||allocationCountByReturn.get(r.return_id)!==expected)
+      reasons.add('Cash bundle refund must restore every originally consumed FIFO source.');
+  }
   for(const [k,qty] of returnedQty){
-    if(!eq(qty,restoredQty.get(k)||0))
+    if(bundleParents.has(k)){
+      if(!eq(qty,soldQty.get(k)||0)||!(restoredQty.get(k)||0))
+        reasons.add('Cash bundle refund must return complete visible sets and all physical components.');
+    }else if(!eq(qty,restoredQty.get(k)||0))
       reasons.add('Missing immutable return lot allocation; cannot infer original FIFO cost.');
     if(qty>(soldQty.get(k)||0))reasons.add('Return quantity exceeds original sale quantity.');
   }
-  for(const [doc,qty] of returnedByDocument)
-    if(!eq(qty,restoredByDocument.get(doc)||0))
+  for(const [doc,qty] of returnedByDocument){
+    const originalLineKey=JSON.parse(doc)[1] as string;
+    if(!bundleParents.has(originalLineKey)&&!eq(qty,restoredByDocument.get(doc)||0))
       reasons.add('Each return must match its original FIFO lot allocation.');
+  }
   for(const doc of restoredByDocument.keys())if(!returnedByDocument.has(doc))
     reasons.add('Return lot allocation has no matching return document line.');
   // Return lots with no matching line must never silently reduce COGS.
