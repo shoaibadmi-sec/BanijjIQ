@@ -31,7 +31,7 @@ const source=(module:string,sourceId:string,date:string):EvidenceSource=>({modul
  * No cost is inferred from today's price or stock lot balance.
  */
 export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage> {
-  const where="s.is_deleted=0 AND s.status NOT IN ('Deleted','Cancelled') "+
+  const where="s.is_deleted=0 AND s.status IN ('Completed','Reversed') "+
     "AND s.sale_date BETWEEN ? AND ? AND (instr(lower(s.invoice_id),lower(?))>0 "+
     "OR instr(lower(s.customer_name),lower(?))>0)";
   const params=[q.from,q.to,q.search,q.search] as const;
