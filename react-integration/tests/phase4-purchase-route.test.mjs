@@ -9,7 +9,7 @@ test('Phase 4A original Purchase source stays intact and live routes use D1 APIs
     assert.ok(prep.includes(token),token);
  const view=read('react-integration/overlay/src/integration/LivePurchasesPage.tsx');
  for(const token of ['data-live-purchases','data-live-purchase-editor','searchPurchaseSuppliers(search)',
-     'getRealPurchases()','createDuePurchase(supplier,lines)','setOutcomeUnknown(true)',
+     'getRealPurchases()','createDuePurchase(supplier,lines,orderId)','setOutcomeUnknown(true)',
      'canUseModule(user,\'purchase\',\'add\')'])
     assert.ok(view.includes(token),token);
  assert.ok(!view.includes('erpDemoStore'),'Operational Purchase route cannot display demos');
