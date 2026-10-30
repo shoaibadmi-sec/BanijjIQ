@@ -258,50 +258,6 @@ try{
     assert.equal(Number(customer.customers.find(x=>x.phone==='01000000777')?.currentDue),180);
   });
 
-  await check('real local Worker+D1 previews historical credit without changing financial books',async()=>{
-    // This fixture lives only in the throwaway Wrangler --local D1. Clean it
-    // before the final independent SQL audit so existing accounting totals
-    // remain identical to the non-fixture scenario.
-    const inserts=[
-      "INSERT INTO customers(customer_id,customer_name,phone,current_due,status,is_deleted) VALUES ('D1-IMPACT-CUS','Review Customer','01000008881',-10,'Active',0)",
-      "INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method) VALUES ('D1-IMPACT-SALE','2026-10-30','D1-IMPACT-CUS','Review Customer','01000008881',50,50,0,'Cash','Paid','Cash')",
-      "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('D1-IMPACT-CASH','2026-10-30','Sale','D1-IMPACT-SALE','Recorded original receipt',0,50,'Cash',0)",
-      "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('D1-IMPACT-SALE','D1-IMPACT-PROD','Switch',5,10,50)",
-      "INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('D1-IMPACT-RETURN','2026-10-30','D1-IMPACT-SALE','D1-IMPACT-CUS','Review Customer','01000008881','Store Credit',10,'Old due-side credit')",
-      "INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('D1-IMPACT-RETURN','D1-IMPACT-SALE','D1-IMPACT-PROD','Switch',1,10,10)",
-      "INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES ('D1-IMPACT-LEDGER','2026-10-30','D1-IMPACT-CUS','Review Customer','Sales Return Credit','D1-IMPACT-RETURN',0,10,-10,'Historical offset')"
-    ];
-    const cleanup=[
-      "DELETE FROM customer_ledger WHERE ledger_id='D1-IMPACT-LEDGER'",
-      "DELETE FROM sales_return_items WHERE return_id='D1-IMPACT-RETURN'",
-      "DELETE FROM sales_returns WHERE return_id='D1-IMPACT-RETURN'",
-      "DELETE FROM sale_items WHERE invoice_id='D1-IMPACT-SALE'",
-      "DELETE FROM cash_book WHERE entry_id='D1-IMPACT-CASH'",
-      "DELETE FROM sales WHERE invoice_id='D1-IMPACT-SALE'",
-      "DELETE FROM customers WHERE customer_id='D1-IMPACT-CUS'"
-    ];
-    try{
-      for(const sql of inserts)query(sql);
-      const cases=await request('GET','/api/pos/store-credit/reconciliation/cases',undefined,{token});
-      assert.equal(cases.ok,true,JSON.stringify(cases));
-      const review=cases.cases.find(c=>c.flagCode==='LEGACY_UNJOURNALED_RETURN'&&
-        c.referenceId==='D1-IMPACT-RETURN');
-      assert.ok(review,JSON.stringify(cases));
-      const path='/api/pos/store-credit/reconciliation/cases/'+encodeURIComponent(review.caseId)+'/impact';
-      assert.equal((await request('GET',path)).status,401);
-      const impact=await request('GET',path,undefined,{token});
-      assert.equal(impact.ok,true,JSON.stringify(impact));
-      assert.equal(impact.readOnly,true);
-      assert.equal(impact.eligible,true,JSON.stringify(impact));
-      assert.deepEqual(impact.impact,{receivableDeltaCents:1000,liabilityDeltaCents:1000,
-        cashDeltaCents:0,bankDeltaCents:0});
-      assert.equal(query("SELECT COUNT(*) n FROM store_credit_reconciliation_cases")[0].n,0);
-      assert.equal(query("SELECT COUNT(*) n FROM customer_store_credit_entries")[0].n,0);
-      assert.equal(query("SELECT current_due FROM customers WHERE customer_id='D1-IMPACT-CUS'")[0].current_due,-10);
-    }finally{
-      for(const sql of cleanup)query(sql);
-    }
-  });
 
 } catch(err){
   report.failed.push({name:'runner',message:String(err?.stack||err)});
@@ -313,6 +269,83 @@ try{
       new Promise(resolve=>setTimeout(resolve,6000))
     ]);
     if(worker.exitCode===null)worker.kill('SIGKILL');
+  }
+  // Never launch Wrangler D1 CLI writes while its --local Worker is live:
+  // concurrent storage instances can stall the server or cause fetch failures.
+  // The previous CI run #330 reproduced that failure; seed offline, then
+  // restart a Worker solely to verify the evidence preview over HTTP.
+  let impactCleanup=[];
+  try{
+    impactCleanup=await (async()=>{
+      return await check('real local Worker+D1 previews historical credit without changing financial books',async()=>{
+        // This fixture lives only in the throwaway Wrangler --local D1. Clean it
+        // before the final independent SQL audit so existing accounting totals
+        // remain identical to the non-fixture scenario.
+        const inserts=[
+          "INSERT INTO customers(customer_id,customer_name,phone,current_due,status,is_deleted) VALUES ('D1-IMPACT-CUS','Review Customer','01000008881',-10,'Active',0)",
+          "INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method) VALUES ('D1-IMPACT-SALE','2026-10-30','D1-IMPACT-CUS','Review Customer','01000008881',50,50,0,'Cash','Paid','Cash')",
+          "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('D1-IMPACT-CASH','2026-10-30','Sale','D1-IMPACT-SALE','Recorded original receipt',0,50,'Cash',0)",
+          "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('D1-IMPACT-SALE','D1-IMPACT-PROD','Switch',5,10,50)",
+          "INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('D1-IMPACT-RETURN','2026-10-30','D1-IMPACT-SALE','D1-IMPACT-CUS','Review Customer','01000008881','Store Credit',10,'Old due-side credit')",
+          "INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('D1-IMPACT-RETURN','D1-IMPACT-SALE','D1-IMPACT-PROD','Switch',1,10,10)",
+          "INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES ('D1-IMPACT-LEDGER','2026-10-30','D1-IMPACT-CUS','Review Customer','Sales Return Credit','D1-IMPACT-RETURN',0,10,-10,'Historical offset')"
+        ];
+        const cleanup=[
+          "DELETE FROM customer_ledger WHERE ledger_id='D1-IMPACT-LEDGER'",
+          "DELETE FROM sales_return_items WHERE return_id='D1-IMPACT-RETURN'",
+          "DELETE FROM sales_returns WHERE return_id='D1-IMPACT-RETURN'",
+          "DELETE FROM sale_items WHERE invoice_id='D1-IMPACT-SALE'",
+          "DELETE FROM cash_book WHERE entry_id='D1-IMPACT-CASH'",
+          "DELETE FROM sales WHERE invoice_id='D1-IMPACT-SALE'",
+          "DELETE FROM customers WHERE customer_id='D1-IMPACT-CUS'"
+        ];
+        for(const sql of inserts)query(sql);
+        worker=spawn(process.execPath,[cliPath,'dev',
+          '--config',config,'--local','--persist-to',state,
+          '--ip','127.0.0.1','--port','8788',
+          '--var','SETUP_SECRET:'+setupSecret],{
+          cwd:root,stdio:['ignore','pipe','pipe'],
+          env:{...process.env,CI:'true',CLOUDFLARE_API_TOKEN:'',CLOUDFLARE_ACCOUNT_ID:''}
+        });
+        for(const stream of [worker.stdout,worker.stderr])stream.on('data',chunk=>{logs=(logs+String(chunk)).slice(-24000);});
+        await waitForServer();
+          const cases=await request('GET','/api/pos/store-credit/reconciliation/cases',undefined,{token});
+          assert.equal(cases.ok,true,JSON.stringify(cases));
+          const review=cases.cases.find(c=>c.flagCode==='LEGACY_UNJOURNALED_RETURN'&&
+            c.referenceId==='D1-IMPACT-RETURN');
+          assert.ok(review,JSON.stringify(cases));
+          const path='/api/pos/store-credit/reconciliation/cases/'+encodeURIComponent(review.caseId)+'/impact';
+          assert.equal((await request('GET',path)).status,401);
+          const impact=await request('GET',path,undefined,{token});
+          assert.equal(impact.ok,true,JSON.stringify(impact));
+          assert.equal(impact.readOnly,true);
+          assert.equal(impact.eligible,true,JSON.stringify(impact));
+          assert.deepEqual(impact.impact,{receivableDeltaCents:1000,liabilityDeltaCents:1000,
+            cashDeltaCents:0,bankDeltaCents:0});
+          return cleanup;
+      });
+    
+    })()||[];
+  }catch(err){
+    report.failed.push({name:'historical impact D1 fixture',message:String(err?.stack||err)});
+  }finally{
+    if(worker && worker.exitCode===null){
+      worker.kill('SIGTERM');
+      await Promise.race([
+        new Promise(resolve=>worker.once('exit',resolve)),
+        new Promise(resolve=>setTimeout(resolve,6000))
+      ]);
+      if(worker.exitCode===null)worker.kill('SIGKILL');
+    }
+    try{
+      const cases=query("SELECT COUNT(*) n FROM store_credit_reconciliation_cases")[0]?.n;
+      const journal=query("SELECT COUNT(*) n FROM customer_store_credit_entries")[0]?.n;
+      const due=query("SELECT current_due FROM customers WHERE customer_id='D1-IMPACT-CUS'")[0]?.current_due;
+      assert.equal(cases,0);assert.equal(journal,0);assert.equal(due,-10);
+      for(const sql of impactCleanup)query(sql);
+    }catch(e){
+      report.failed.push({name:'historical impact fixture cleanup',message:String(e?.stack||e)});
+    }
   }
   try{
     // Query after Worker shutdown to verify the saved SQL state, not just HTTP responses.
