@@ -4,7 +4,7 @@ import type { BankAccountInput, BankManualInput, BankTransferInput, FinanceInput
 import {
   getBankAccountsRoute, createBankAccountRoute, updateBankAccountRoute, setBankAccountStatusRoute,
   getBankReconciliationRoute, getBankLedgerBootstrapRoute, getBankLedgerRoute, addBankManualEntryRoute, reverseBankEntryRoute,
-  transferBankRoute, getBankTransfersRoute, getFinanceBootstrapRoute, addFinancePersonRoute,
+  transferBankRoute, reverseBankTransferRoute, getBankTransfersRoute, getFinanceBootstrapRoute, addFinancePersonRoute,
   setFinancePersonStatusRoute, updateFinancePersonRoute, addFinanceTransactionRoute, getFinanceLedgerRoute, getFinanceTransactionRoute,
   updateFinanceTransactionRoute, deleteFinanceTransactionRoute
 } from './service.js';
@@ -37,6 +37,8 @@ export async function handleBankFinanceRoute(db: SherDatabase, request: Request,
   if (path === '/api/bank/manual-entry' && request.method === 'POST') return addBankManualEntryRoute(db, await readBody<BankManualInput>(request), auth);
   if (path === '/api/bank/transfers' && request.method === 'GET') return getBankTransfersRoute(db);
   if (path === '/api/bank/transfers' && request.method === 'POST') return transferBankRoute(db, await readBody<BankTransferInput>(request), auth);
+  const bankTransferReverseMatch=path.match(/^\/api\/bank\/transfers\/([^/]+)\/reverse$/);
+  if(bankTransferReverseMatch && request.method==='POST') { const body=await readBody<{reason?:string}>(request);return reverseBankTransferRoute(db,decodeURIComponent(bankTransferReverseMatch[1]),cleanText(body.reason),auth); }
   const bankAccountStatusMatch = path.match(/^\/api\/bank\/accounts\/([^/]+)\/status$/);
   if (bankAccountStatusMatch && request.method === 'PUT') { const body=await readBody<{ status?: string }>(request); return setBankAccountStatusRoute(db, decodeURIComponent(bankAccountStatusMatch[1]), cleanText(body.status)); }
   const bankAccountMatch = path.match(/^\/api\/bank\/accounts\/([^/]+)$/);
