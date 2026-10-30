@@ -75,11 +75,35 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls){
+  let postedPurchase=null;
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
+    if(path==='/api/purchases/supplier-search'&&request.method()==='GET'){
+      const q=(url.searchParams.get('q')||'').toLowerCase();
+      const supplier={id:'SUP-UI-001',name:'Khan Hardware',phone:'01700000001',
+        currentDue:100,ledgerDue:100,needsReconciliation:false};
+      return respond({ok:true,suppliers:['','khan','sup-ui-001','01700000001']
+        .some(term=>term===q)||(q&&[supplier.name.toLowerCase(),supplier.phone,supplier.id.toLowerCase()].some(x=>x.includes(q)))
+          ?[supplier]:[]});
+    }
+    if(path==='/api/purchases'&&request.method()==='GET')
+      return respond({ok:true,purchases:postedPurchase?[postedPurchase]:[]});
+    if(path==='/api/purchases'&&request.method()==='POST'){
+      const data=request.postDataJSON();
+      assert.equal(data.supplierId,'SUP-UI-001');
+      assert.equal(data.paidAmount,0);
+      assert.equal(data.items.length,1);
+      assert.equal(data.items[0].productId,'PRD-000001');
+      assert.equal(data.items[0].qty,3);
+      assert.equal(data.items[0].unitPrice,80);
+      calls.push({method:'ASSERT',path:'/api/purchases',payload:data});
+      postedPurchase={purchaseId:'PUR-UI-0001',purchaseDate:'2026-10-30',supplierId:data.supplierId,
+        supplierName:'Khan Hardware',grandTotal:240,paidAmount:0,dueAmount:240,paymentStatus:'Due',items:[]};
+      return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:240,dueAmount:240});
+    }
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
@@ -251,6 +275,36 @@ try{
         await ctx.close();
       });
     }
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 4A supplier search + due purchase '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const calls=[];
+      await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('purchase '+width+': '+e.message));
+      await page.goto(base+'/#/app/purchases/new');
+      await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+      const supplier=page.getByRole('combobox',{name:'Search supplier name, phone or ID'});
+      await supplier.fill('Khan');
+      await page.getByRole('option',{name:/Khan Hardware/}).click();
+      await page.getByText(/Existing due/).waitFor();
+      assert.ok((await page.locator('[data-live-purchase-editor]').innerText()).includes('100'));
+      await page.getByRole('combobox',{name:'Product'}).selectOption('PRD-000001');
+      await page.getByRole('spinbutton',{name:'Purchase quantity'}).fill('3');
+      await page.getByRole('spinbutton',{name:'Purchase unit cost'}).fill('80');
+      await inspectLayout(page,'phase4-purchase-entry-'+width);
+      await screenshot(page,'phase4-purchase-entry-'+width);
+      if(width===390)await audit(page,'phase4-purchase-entry-390');
+      await page.getByRole('button',{name:/Confirm Due Purchase/}).click();
+      await page.locator('[data-live-purchases]').waitFor({timeout:12000});
+      await page.getByText('PUR-UI-0001').waitFor();
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/purchases').length,1);
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases').length,1);
+      results.apiCalls.push(...calls);
+      await ctx.close();
+    });
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});

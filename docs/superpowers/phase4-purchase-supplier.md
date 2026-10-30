@@ -12,7 +12,7 @@ Source of truth: verified `shuvodelux-commits/Mohim_ERP` business behavior, orig
 - [ ] **4C**: purchase return original-lot cost, exact mixed-unit allocation, tracked serial/expiry eligibility, signed ledger and audit reversal, no double-return.
 - [ ] **4D**: supplier payments and due settlement must atomically post ledger + cash/bank entries, prevent overpayment/negative payable, preserve historical reversal audit and original account.
 - [ ] **4E**: purchase planner → approved order → converted purchase, immutable source reference, no duplicate conversion and consistent stock/due.
-- [ ] **4F**: full migration + isolated Wrangler D1, mocked and real-browser Playwright, a11y/keyboard/screenshots, reconciliation and independent finance review.
+- [ ] **4F**: full migration + isolated Wrangler D1, mocked and real-browser Playwright, a11y/keyboard/screenshots, reconciliation and independent finance review. **4A mocked Playwright** supplier select and due invoice posting scenarios added at phone/tablet/desktop widths; hosted D1/axe acceptance pending.
 
 ## Release holds
 
