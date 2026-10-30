@@ -58,8 +58,13 @@ test('cashflow monthly chart API: real source-derived cash and bank flows, no in
   db.native.prepare("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES ('cashflow-denied','No Reports','01000000189','x','x','restricted-reports','Active','Fixture')").run();
   db.native.prepare("INSERT INTO auth_sessions(session_id,user_id,token_hash,expires_at) VALUES ('cashflow-denied-session','cashflow-denied',?,datetime('now','+2 hours'))").run(tokenHash);
   token=viewerToken;assert.equal((await call('GET',endpoint(today()))).status,403);token=tokenFromAdmin;
+  // An unsupported sub-poisha movement cannot silently round to zero in a business chart.
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit) VALUES ('SUBPOISHA-CHART',?,'External','SOURCE','fractional poisha',0.001,0)").run(today());
+  const fractional=await call('GET',endpoint(today()));
+  assert.ok(fractional.points.every((p:any)=>p.status==='incomplete'&&p.inMinor===null&&p.outMinor===null));
+  db.native.prepare("DELETE FROM cash_book WHERE entry_id='SUBPOISHA-CHART'").run();
   // An invalid money-book posting invalidates the entire series, never renders a fabricated 0.
-  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit) VALUES ('BAD-CHART','2026-10-30','Expense','NONEXISTENT','invalid ledger','100','100')").run();
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit) VALUES ('BAD-CHART',?,'Expense','NONEXISTENT','invalid ledger','100','100')").run(today());
   const corrupted=await call('GET',endpoint(today()));
   assert.equal(corrupted.status,200);
   assert.ok(corrupted.points.every((p:any)=>p.status==='incomplete'&&p.inMinor===null&&p.outMinor===null));
