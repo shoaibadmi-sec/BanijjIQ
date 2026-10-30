@@ -297,6 +297,17 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
       assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
       db.native.exec('DROP TRIGGER split_refund_audit_fault');
+      // A silent 0-row lot restoration is not an exception. The final D1
+      // audit must detect it and abort all refund sources and credit ISSUE.
+      db.native.exec("CREATE TRIGGER split_skip_fifo_restoration BEFORE UPDATE ON stock_lots WHEN NEW.remaining_quantity>OLD.remaining_quantity BEGIN SELECT RAISE(IGNORE); END");
+      const missed=await api('POST',url,reversalBody);
+      assert.equal(missed.status,409,JSON.stringify(missed));
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+      assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
+      assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+      assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      db.native.exec('DROP TRIGGER split_skip_fifo_restoration');
       const reversed=await api('POST',url,reversalBody);
       assert.equal(reversed.ok,true,JSON.stringify(reversed));
       assert.equal(reversed.refundCents,profile==='cash-credit'?2000:3000);
