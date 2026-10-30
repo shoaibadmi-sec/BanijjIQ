@@ -76,6 +76,7 @@ async function withCheck(name,fn){
 }
 function startMocking(context,calls){
   let postedPurchase=null;
+  let returnedQty=0;
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -98,6 +99,35 @@ function startMocking(context,calls){
       return respond({ok:true,suppliers:['','khan','sup-ui-001','01700000001']
         .some(term=>term===q)||(q&&[supplier.name.toLowerCase(),supplier.phone,supplier.id.toLowerCase()].some(x=>x.includes(q)))
           ?[supplier]:[]});
+    }
+    if(path==='/api/purchases/PUR-UI-MIXED/return-data'&&request.method()==='GET'){
+      const profile={baseUnit:'Pcs',units:[
+       {unit:'Carton',symbol:'CT',containsNext:12,factor:240,sellingPrice:2400},
+       {unit:'Box',symbol:'BX',containsNext:20,factor:20,sellingPrice:200},
+       {unit:'Pcs',symbol:'PCS',containsNext:null,factor:1,sellingPrice:20}
+      ]};
+      return respond({ok:true,purchase:{
+        purchaseId:'PUR-UI-MIXED',supplierId:'SUP-UI-001',supplierName:'Khan Hardware',
+        grandTotal:2830,paidAmount:0,previouslyReturnedAmount:returnedQty*10,netPurchase:2830-returnedQty*10,
+        items:[{productId:'PRD-000002',productName:'PVC Pipe 20mm',
+          boughtQty:283,unitPrice:10,previouslyReturnedQty:returnedQty,
+          availableQty:283-returnedQty,unitDescription:'1 CT 2 BX 3 PCS',
+          returnSupported:true,unsupportedReason:'',originalLineTotal:2830,
+          unitSnapshot:{revision:1,profile,quantities:{Carton:1,Box:2,Pcs:3},
+            priceUnit:'Carton',enteredUnitPrice:2400,
+            description:'1 CT 2 BX 3 PCS',sourceLotId:'LOT-UI-001'}}]
+      }});
+    }
+    if(path==='/api/purchase-returns'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.equal(payload.purchaseId,'PUR-UI-MIXED');
+      assert.equal(payload.refundMethod,'Supplier Credit');
+      assert.ok(/^[0-9a-f-]{32,36}$/i.test(payload.clientRequestId));
+      assert.equal(payload.items.length,1);
+      assert.deepEqual(payload.items[0].unitQuantities,{Box:1,Pcs:2});
+      returnedQty+=22;
+      calls.push({method:'ASSERT',path:'/api/purchase-returns',payload});
+      return respond({ok:true,returnId:'PRTN-UI-0001',totalReturnAmount:220});
     }
     if(path==='/api/purchases'&&request.method()==='GET')
       return respond({ok:true,purchases:postedPurchase?[postedPurchase]:[]});
@@ -353,6 +383,30 @@ try{
       await page.getByText('PUR-UI-MIXED').waitFor();
       assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases').length,1);
       results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 4C original-cost partial purchase return '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('phase4c '+width+': '+e.message));
+      await page.goto(base+'/#/app/purchases?tab=return&purchaseId=PUR-UI-MIXED');
+      await page.locator('[data-live-purchase-returns]').waitFor({timeout:12000});
+      await page.getByText('PVC Pipe 20mm').waitFor();
+      await page.getByRole('textbox',{name:'Quantity in Box for PVC Pipe 20mm'}).fill('1');
+      await page.getByRole('textbox',{name:'Quantity in Pcs for PVC Pipe 20mm'}).fill('2');
+      await page.getByPlaceholder('Why are you returning the goods?').fill('Quality inspection');
+      await page.getByText(/Original purchase-cost credit/).waitFor();
+      assert.ok((await page.locator('[data-live-purchase-returns]').innerText()).includes('220'));
+      await screenshot(page,'phase4c-purchase-return-'+width);
+      if(width===390)await audit(page,'phase4c-purchase-return-390');
+      await page.getByRole('button',{name:/Confirm Purchase Return/}).click();
+      await page.getByText(/Purchase return saved/).waitFor({timeout:12000});
+      assert.equal(calls.filter(c=>c.method==='ASSERT'&&c.path==='/api/purchase-returns').length,1);
+      results.apiCalls.push(...calls);
+      await ctx.close();
     });
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
