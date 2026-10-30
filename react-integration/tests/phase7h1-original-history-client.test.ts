@@ -45,3 +45,23 @@ test('7H1 corrupt or unrecognized movement data fails closed instead of fabricat
     else Object.defineProperty(globalThis,'localStorage',{configurable:true,value:oldStorage});
   }
 });
+
+test('7H1 negative-sale stock balances are genuine signed quantities, never suppressed',async()=>{
+  const oldFetch=globalThis.fetch,oldStorage=globalThis.localStorage;
+  try{
+    Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=> 'phase7h1-test-token',removeItem:()=>{}}});
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,items:[{
+      movementId:'M-NEG-SALE',productId:'P-A',date:'2026-10-30 11:00:00',
+      type:'SALE_OUT',quantityIn:0,quantityOut:3,balanceAfter:-2,note:'Verified negative sale',lotId:null
+    }]}),{status:200,headers:{'Content-Type':'application/json'}});
+    const history=await loadInventoryHistory();
+    assert.equal(history.length,1);
+    assert.equal(history[0].type,'Sale');
+    assert.equal(history[0].quantity,-3);
+    assert.equal(history[0].balance,-2);
+  }finally{
+    globalThis.fetch=oldFetch;
+    if(oldStorage===undefined)delete globalThis.localStorage;
+    else Object.defineProperty(globalThis,'localStorage',{configurable:true,value:oldStorage});
+  }
+});
