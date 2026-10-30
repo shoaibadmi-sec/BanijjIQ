@@ -84,14 +84,28 @@ function startMocking(context,calls){
       mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
       reports:[{id:'sales',en:'Sales register',bn:'বিক্রির হিসাব',group:'sales',status:'needs-review',reason:'Unreconciled invoice sources.'}]});
     if(path==='/api/reports/v2/summary'&&request.method()==='GET')return respond({
-      ok:true,range:{from:'2026-10-01',to:'2026-10-30'},metrics:[],
-      coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
-    if(path==='/api/reports/v2/rows'&&request.method()==='GET')return respond({
-      ok:true,report:'sales',range:{from:'2026-10-01',to:'2026-10-30'},page:1,pageSize:50,totalRows:1,metrics:[],
-      rows:[{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
-        label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',
-        reason:'Recorded invoice amount, not reconciled net sales.'}],
-      coverage:{status:'needs-review',reason:'Returns and FIFO costs are not reconciled.'}});
+      ok:true,range:{from:'2026-10-01',to:'2026-10-30'},metrics:[
+        ...[['inventoryValue',5000],['receivablesBalance',4000],['payablesBalance',7000]].map(
+          ([key,valueMinor])=>({key,valueMinor,status:'needs-review',
+            reason:'Current snapshot only; no historical due ageing.',asOf:'2026-10-30',sources:[]}))
+      ],coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
+    if(path==='/api/reports/v2/rows'&&request.method()==='GET'){
+      const kind=url.searchParams.get('report')||'sales';
+      const fixtures={
+        sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
+          label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
+        stock:{sourceId:'STK-LIVE-001',sourceModule:'products',date:'2026-10-30',
+          label:'Verified Cable Roll',amountMinor:5000,status:'needs-review',reason:'Current FIFO snapshot only.'},
+        receivables:{sourceId:'CUS-LIVE-001',sourceModule:'customers',date:'2026-10-30',
+          label:'Current Buyer Due',amountMinor:4000,status:'needs-review',reason:'Current dues, ageing unavailable.'},
+        payables:{sourceId:'SUP-LIVE-001',sourceModule:'suppliers',date:'2026-10-30',
+          label:'Current Supplier Due',amountMinor:null,status:'incomplete',reason:'Supplier ledger mismatch.'}
+      };
+      const record=fixtures[kind]||null;
+      return respond({ok:true,report:kind,range:{from:'2026-10-01',to:'2026-10-30'},page:1,pageSize:50,
+        totalRows:record?1:0,metrics:[],rows:record?[record]:[],coverage:{
+          status:record?.status||'unavailable',reason:record?.reason||'Report unavailable.'}});
+    }
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
@@ -255,6 +269,32 @@ try{
       await inspectLayout(page,'reports-two-tabs-'+width);
       await screenshot(page,'reports-two-tabs-'+width);
       await audit(page,'reports-two-tabs-'+width);
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 5D current stock and dues UI '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
+      await page.getByText('STK-LIVE-001').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Current FIFO value'}).waitFor();
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await screenshot(page,'reports-stock-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
+      await page.getByText('SUP-LIVE-001').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Current due'}).waitFor();
+      await page.getByText('Needs checking').first().waitFor();
+      await screenshot(page,'reports-supplier-dues-'+width);
+      await page.getByRole('tab',{name:'Dashboard'}).click();
+      await page.locator('[data-current-balance="inventoryValue"]').waitFor();
+      assert.match(await page.locator('[data-current-balance="inventoryValue"]').innerText(),/50/);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await inspectLayout(page,'reports-current-balances-'+width);
+      await audit(page,'reports-current-balances-'+width);
+      assert.ok(calls.every(x=>x.method!=='POST'||!x.path.startsWith('/api/reports')));
       await ctx.close();
     });
   }
