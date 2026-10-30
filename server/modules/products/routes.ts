@@ -29,6 +29,7 @@ import {
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { updateProductCatalog } from './catalog.service.js';
+import { createBundleRecipe } from './bundleRecipes.service.js';
 import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
@@ -50,6 +51,7 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'GET') return getSupplierWarrantyOverviewRoute(db);
   if (path === '/api/product-tracking/supplier-warranty' && request.method === 'POST') return createSupplierWarrantyRmaRoute(db, await readBody<any>(request), user);
   if (path === '/api/products' && request.method === 'POST') return createProduct(db, await readBody<ProductInput>(request));
+  if (path === '/api/products/bundle-recipes' && request.method === 'POST') return createBundleRecipe(db,await readBody<any>(request));
   if (path === '/api/categories' && request.method === 'GET') return listLookups(db, 'category');
   if (path === '/api/categories' && request.method === 'POST') return addLookup(db, 'category', await readBody<{ name?: string }>(request));
   if (path === '/api/brands' && request.method === 'GET') return listLookups(db, 'brand');
