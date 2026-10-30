@@ -59,5 +59,9 @@ test('G2-F verified outstanding legacy reclassification is atomic and exactly on
     assert.equal(review.issuedCents,1000);
     assert.equal(review.outstandingCents,1000);
     assert.equal(review.customerAccounts,1);
+    const archived=await api(path);
+    assert.equal(archived.status,200,JSON.stringify(archived));
+    assert.equal(archived.case.status,'verified_outstanding');
+    assert.equal(archived.case.caseId,item.caseId);
   }finally{db.close();}
 });
