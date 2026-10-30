@@ -4,7 +4,7 @@ import type { EvidenceSource, LiveReportPage, LiveReportQuery, LiveReportRow, Re
 type StockProduct={product_id:string;product_name:string;current_stock:number;status:string;created_at:string};
 type StockLot={lot_id:string;product_id:string;remaining_quantity:number;unit_cost:number;source_type:string};
 type Party={id:string;name:string;due:number;created_at:string};
-type Ledger={id:string;debit:number;credit:number;entry_count:number};
+type Ledger={id:string;debit:number;credit:number;entry_count:number;ending_balance:number};
 const price=(n:number):number|null=>{
   if(!Number.isFinite(n))return null;
   const minor=Math.round(n*100);
@@ -115,8 +115,12 @@ async function dues(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
   const [partyR,ledgerR]=await Promise.all([
     db.prepare('SELECT '+partyId+' id,'+partyName+' name,current_due due,created_at FROM '+partyTable+
       ' WHERE is_deleted=0 ORDER BY '+partyId+' LIMIT 5001').all<Party>(),
-    db.prepare('SELECT '+partyId+' id,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COUNT(*) entry_count FROM '+
-      ledgerTable+' WHERE is_deleted=0 GROUP BY '+partyId+' ORDER BY '+partyId+' LIMIT 5001').all<Ledger>()
+    db.prepare('SELECT id,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COUNT(*) entry_count,'+
+      ' MAX(CASE WHEN position=1 THEN balance END) ending_balance FROM ('+
+      ' SELECT '+partyId+' id,debit,credit,balance,'+
+      ' ROW_NUMBER() OVER (PARTITION BY '+partyId+' ORDER BY date DESC,created_at DESC,ledger_id DESC) position'+
+      ' FROM '+ledgerTable+' WHERE is_deleted=0'+
+      ') GROUP BY id ORDER BY id LIMIT 5001').all<Ledger>()
   ]);
   const parties=partyR.results||[],ledgers=ledgerR.results||[];
   const ledgerMap=new Map(ledgers.map(x=>[x.id,x]));
@@ -135,6 +139,8 @@ async function dues(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
     if(!ledger&&master!==0)warnings.push('Non-zero master balance has no supporting ledger.');
     if(ledger&&calculated!==master)warnings.push('Master balance differs from ledger debit minus credit.');
     if(ledger&&calculated===null)warnings.push('Invalid ledger monetary values.');
+    if(ledger&&price(Number(ledger.ending_balance))!==master)
+      warnings.push('Final running balance differs from master balance.');
     const valid=warnings.length===0;
     if(!valid)failures.push('Party '+p.id+': '+warnings.join(' '));
     else sum+=master??0;
