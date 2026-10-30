@@ -80,6 +80,19 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 
+    // Finance 6A uses real endpoint shapes, never the pinned demo account store.
+    if(path==='/api/bank/reconciliation'&&request.method()==='GET')return respond({
+      ok:true,asOf:'2026-10-30T09:00:00.000Z',coverage:{status:'needs-review',reason:'One account differs from bank book.'},
+      accounts:[
+        {id:'BK-OK',name:'Shop Bank',accountType:'Bank',openingBalance:100,
+          recordedBalance:125.6234,bookBalance:125.6234,status:'ready',reason:'Bank-book movements agree.'},
+        {id:'BK-DISPUTED',name:'Disputed Bank',accountType:'Mobile Banking',openingBalance:0,
+          recordedBalance:999,bookBalance:null,status:'needs-review',reason:'Bank-book mismatch.'}
+      ]});
+    if(path==='/api/finance/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,personsAll:[{id:'PERSON-1',name:'Finance Test Owner',type:'Owner',status:'Active',phone:''}],
+      currencySymbol:'৳',activeCashSession:false
+    });
     if(path==='/api/reports/v2/catalog'&&request.method()==='GET')return respond({ok:true,
       mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
       reports:[{id:'sales',en:'Sales register',bn:'বিক্রির হিসাব',group:'sales',status:'needs-review',reason:'Unreconciled invoice sources.'}]});
@@ -227,7 +240,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -241,7 +254,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -271,6 +284,29 @@ try{
     await screenshot(page,'auth-390');
     await ctx.close();
   });
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6A Finance shows only reconciled bank values '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const finance=page.locator('[data-live-finance]');await finance.waitFor({timeout:10000});
+      await page.getByText('Finance Test Owner').waitFor({timeout:10000});
+      assert.ok((await finance.innerText()).includes('Shop Bank'));
+      assert.ok((await finance.innerText()).includes('125.6234'));
+      assert.ok((await finance.innerText()).includes('Disputed Bank'));
+      assert.ok(!(await finance.innerText()).includes('999.00'),'disputed recorded balance must never show');
+      assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/bank/reconciliation'));
+      assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/finance/bootstrap'));
+      assert.ok(!calls.some(c=>c.method!=='GET'&&c.path.includes('/api/bank/')));
+      await screenshot(page,'phase6a-finance-'+width);
+      await inspectLayout(page,'phase6a-finance-'+width);
+      await audit(page,'phase6a-finance-'+width);
+      await ctx.close();
+    });
+  }
 
   for(const width of [390,768,1440]){
     await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
