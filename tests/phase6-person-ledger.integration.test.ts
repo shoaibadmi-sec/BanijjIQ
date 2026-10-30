@@ -126,3 +126,45 @@ test('6D finance posting failure rolls back header, even when bank or cash book 
     assert.equal((f.db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE type='Owner Investment'").get() as any).n,0);
   }finally{f.db.close();}
 });
+
+test('6D posting uses a stable request ID, blocks wrong person type, and never doubles owner capital',async()=>{
+ const f=fixture();
+ try{
+  const input={personId:'OWNER-1',transactionType:'Owner Investment',amount:32.125,paymentMethod:'Cash',clientRequestId:'P6D-OWNER-POST-0001'};
+  const first=await addFinanceTransactionRoute(f.db,input,f.user);
+  assert.equal(first.status,200,await first.text());
+  const firstPayload=await first.json() as any;
+  const retry=await addFinanceTransactionRoute(f.db,input,f.user);
+  assert.equal(retry.status,200,await retry.text());
+  assert.equal((await retry.json() as any).id,firstPayload.id);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM finance_transactions').get() as any).n,1);
+  assert.equal((f.db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE type='Owner Investment'").get() as any).n,1);
+  assert.equal((await read(f.db,'OWNER-1')).balance,32.125);
+  assert.equal((await addFinanceTransactionRoute(f.db,{...input,amount:33},f.user)).status,409);
+  assert.notEqual((await addFinanceTransactionRoute(f.db,{...input,clientRequestId:'P6D-WRONG-KIND',personId:'LENDER-1'},f.user)).status,200);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM finance_transactions').get() as any).n,1);
+ }finally{f.db.close();}
+});
+test('6D bank posting uses the original account, rejects inactive account and rolls back failed leg',async()=>{
+ const f=fixture();
+ try{
+  f.db.native.prepare("UPDATE bank_accounts SET current_balance=0 WHERE bank_account_id='FIN-BANK'").run();
+  const input={personId:'LENDER-1',transactionType:'Loan Received',amount:90,paymentMethod:'Bank',bankAccountId:'FIN-BANK',clientRequestId:'P6D-LOAN-IN-00001'};
+  const posted=await addFinanceTransactionRoute(f.db,input,f.user);
+  assert.equal(posted.status,200,await posted.text());
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,90);
+  const out=await addFinanceTransactionRoute(f.db,{...input,transactionType:'Loan Repayment',amount:30,clientRequestId:'P6D-LOAN-OUT-0001'},f.user);
+  assert.equal(out.status,200,await out.text());
+  assert.equal((await read(f.db,'LENDER-1')).balance,60);
+  f.db.native.prepare("UPDATE bank_accounts SET status='Inactive' WHERE bank_account_id='FIN-BANK'").run();
+  const blocked=await addFinanceTransactionRoute(f.db,{...input,clientRequestId:'P6D-LOAN-INACTIVE'},f.user);
+  assert.notEqual(blocked.status,200);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM finance_transactions').get() as any).n,2);
+  f.db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id='FIN-BANK'").run();
+  f.db.native.exec("CREATE TRIGGER p6d_bank_leg_failure BEFORE INSERT ON bank_book WHEN NEW.reference LIKE 'FIN-%' BEGIN SELECT RAISE(ABORT,'bank insert failed'); END;");
+  const failed=await addFinanceTransactionRoute(f.db,{...input,clientRequestId:'P6D-LOAN-FAILURE'},f.user);
+  assert.notEqual(failed.status,200);
+  assert.equal((f.db.native.prepare('SELECT COUNT(*) n FROM finance_transactions').get() as any).n,2);
+  assert.equal((f.db.native.prepare("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='FIN-BANK'").get() as any).n,60);
+ }finally{f.db.close();}
+});
