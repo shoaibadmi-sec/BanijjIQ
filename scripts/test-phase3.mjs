@@ -31,6 +31,7 @@ const tests=[
   'tests/partial-split-refund-d1.integration.test.ts',
   'tests/partial-split-audit-seal.integration.test.ts',
   'tests/partial-split-cash-bank-posting.integration.test.ts',
+  'tests/partial-split-credit-issue.integration.test.ts',
   'tests/phase3-split-refund-permissions.integration.test.ts'
 ];
 function run(label,cmd,args,cwd=root){
