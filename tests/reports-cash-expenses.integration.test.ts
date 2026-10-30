@@ -137,3 +137,25 @@ test('orphan active expense money-book posting withholds operating expense certi
   assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before);
  }finally{db.close();}
 });
+
+test('5G22: altered Finance source posting date must withhold period totals and keep reports read-only',async()=>{
+ const db=fixture();try{
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const baseline=await readCashExpenses(db,query('finance'));
+  assert.equal(baseline.coverage.status,'needs-review');
+  assert.equal(metric(baseline,'ownerCapitalIn').valueMinor,30000);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before);
+  db.native.prepare("UPDATE cash_book SET date='2026-10-17' WHERE entry_id='C-CAP'").run();
+  const alteredBefore=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  for(const report of ['finance','cash'] as const){
+   const page=await readCashExpenses(db,query(report));
+   assert.equal(page.coverage.status,'incomplete',report+' must reject source/journal date drift');
+   assert.match(page.coverage.reason,/finance|date|posting/i);
+   assert.equal(metric(page,'ownerCapitalIn').valueMinor,null);
+   assert.equal(metric(page,'cashReceipts').valueMinor,null);
+   if(report==='finance')assert.equal(page.rows[0].amountMinor,null);
+  }
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,alteredBefore,
+   'Report GET must not alter tampered source, journals or money balances');
+ }finally{db.close();}
+});
