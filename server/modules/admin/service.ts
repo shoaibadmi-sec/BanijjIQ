@@ -184,7 +184,9 @@ export async function setManagedRoleStatusRoute(db:SherDatabase,id:string,status
 export async function deleteManagedRoleRoute(db:SherDatabase,id:string,user:AuthUser):Promise<Response>{
   const denied=await requireManagementDelete(db,user,'roles');if(denied)return denied;
   const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
-  if(await db.prepare(`SELECT 1 ok FROM app_users WHERE role=? LIMIT 1`).bind(row.role_name).first<any>())return error('This role is assigned to one or more users and can’t be deleted. Deactivate it instead, or reassign those users first.');
+  if(await db.prepare(`SELECT 1 ok FROM app_users WHERE role=? LIMIT 1`).bind(row.role_name).first<any>() ||
+    await db.prepare(`SELECT 1 ok FROM app_user_roles WHERE role_name=? LIMIT 1`).bind(row.role_name).first<any>())
+    return error('This role is assigned to one or more users and can’t be deleted. Deactivate it instead, or reassign those users first.');
   await db.prepare(`DELETE FROM app_roles WHERE role_id=?`).bind(id).run();return json({ok:true,id});
 }
 
@@ -195,7 +197,7 @@ const SYSTEM_BACKUP_TABLES = [
   'invoice_edit_logs','cash_sessions','cash_book','bank_book','customers','customer_ledger','vendors','vendor_ledger',
   'sales','sale_items','sale_item_lots','sale_item_tracking','warranty_records','warranty_claims','warranty_replacements','supplier_warranty_rmas','supplier_warranty_rma_received_items','supplier_warranty_rma_financials','vendor_sourcing','sales_returns','sales_return_items','app_settings',
   'expense_categories','expenses','bank_transfers','expense_payees','finance_persons','finance_transactions',
-  'app_roles','app_users','audit_logs','vendor_returns','vendor_issues','vendor_returns_received'
+  'app_roles','app_users','app_user_roles','audit_logs','vendor_returns','vendor_issues','vendor_returns_received'
 ] as const;
 function requireSystemAdministrator(user:AuthUser):Response|null{return user.role==='admin'?null:error('Administrator permission is required for System tools.',403)}
 export async function getSystemOverviewRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
