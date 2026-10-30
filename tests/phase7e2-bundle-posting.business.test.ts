@@ -4,6 +4,8 @@ import {resolve} from 'node:path';
 import {SqliteDatabase} from '../server/db/sqlite.ts';
 import {runMigrations} from '../server/db/migrate.ts';
 import {handleApiRequest} from '../server/core/handler.ts';
+import {readSalesProfit} from '../server/modules/reporting/live/sales-profit.ts';
+import {parseLiveReportQuery} from '../server/modules/reporting/live/query.ts';
 
 function fixture(){
  const db=new SqliteDatabase(':memory:');runMigrations(db.native,resolve('migrations'));
@@ -54,6 +56,13 @@ test('Phase 7E2 business: saved bundle appears on one cash invoice line; mixed-c
    [['KIT-1','WIRE-1','W-LOT1',4,8000],['WIRE-1','WIRE-1','W-LOT1',1,2000],['KIT-1','SWITCH-1','S-LOT',2,1000]]);
   const profit=db.native.prepare('SELECT product_id,SUM(quantity*unit_cost) c FROM sale_item_lots WHERE invoice_id=? GROUP BY product_id ORDER BY product_id').all(posted.invoiceId) as any[];
   assert.deepEqual(profit.map(x=>[x.product_id,x.c]),[['KIT-1',90],['WIRE-1',20]]);
+  const report=await readSalesProfit(db,parseLiveReportQuery(new URL('http://local.test/api/reports/v2/rows?report=profit&from=2026-10-01&to=2026-10-31')));
+  assert.equal(report.coverage.status,'ready',report.coverage.reason);
+  for(const [key,expected] of Object.entries({grossSales:25000,netSales:25000,fifoCogs:11000,grossProfit:14000,netProfit:14000})){
+    const row=report.metrics.find(x=>x.key===key);
+    assert.equal(row?.valueMinor,expected,key+': '+(row?.reason||''));
+  }
+
   assert.equal((db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE reference=? AND type='Sale'").get(posted.invoiceId) as any).n,1);
   assert.equal((db.native.prepare("SELECT credit FROM cash_book WHERE reference=? AND type='Sale'").get(posted.invoiceId) as any).credit,250);
   assert.equal((db.native.prepare('SELECT COUNT(*) n FROM customer_ledger').get() as any).n,0);
