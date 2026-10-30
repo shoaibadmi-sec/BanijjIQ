@@ -82,7 +82,7 @@ function toHisabStockMovement(value:unknown):HisabStockMovement {
       typeof row.productId!=='string'||!row.productId||
       typeof row.date!=='string'||!/^\d{4}-\d{2}-\d{2}/.test(row.date)||
       !validQty(row.quantityIn)||!validQty(row.quantityOut)||
-      !validQty(row.balanceAfter)||
+      !(typeof row.balanceAfter==='number'&&validQty(Math.abs(row.balanceAfter)))||
       (row.quantityIn as number)>0&&(row.quantityOut as number)>0)
     throw new BackendRequestError('Unreconciled stock movement source. No history shown.',502);
   return {
