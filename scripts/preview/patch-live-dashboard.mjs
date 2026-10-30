@@ -29,12 +29,12 @@ export function patchLiveDashboardSource(source) {
   edit('metric','{c.foot}',"{liveFoot ?? 'Awaiting verified API data'}");
   edit('trend',"import { salesTrend } from '../../data/dashboard';",'');
   edit('trend','export function SalesTrendChart({ height = 220 }: {height?: number;}) {',
-    'export function SalesTrendChart({ height = 220, rows = [] }: {height?: number;rows?:Array<{day:string;sales:number;profit:number}>;}) {');
-  edit('trend','<AreaChart data={salesTrend}', '<AreaChart data={rows}');
+    'export function SalesTrendChart({ height = 220, data = [] }: {height?: number;data?:Array<{day:string;sales:number;profit:number}>;}) {');
+  edit('trend','<AreaChart data={salesTrend}', '<AreaChart data={data}');
   edit('cashflow',"import { cashflow } from '../../data/dashboard';",'');
   edit('cashflow','export function CashflowChart({ height = 220 }: {height?: number;}) {',
-    'export function CashflowChart({ height = 220, rows = [] }: {height?: number;rows?:Array<{month:string;in:number;out:number}>;}) {');
-  edit('cashflow','<BarChart data={cashflow}', '<BarChart data={rows}');
+    'export function CashflowChart({ height = 220, data = [] }: {height?: number;data?:Array<{month:string;in:number;out:number}>;}) {');
+  edit('cashflow','<BarChart data={cashflow}', '<BarChart data={data}');
   edit('sales','export function RecentSalesTable() {',
     'export function RecentSalesTable({sales}: {sales?:typeof recentSales}) {');
   edit('sales','{recentSales.map((s) => {','{(sales ?? recentSales).map((s) => {');

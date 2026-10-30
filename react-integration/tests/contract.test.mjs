@@ -135,7 +135,7 @@ test('source-faithful Dashboard uses authenticated report data and never renders
   assert.ok(patched.dashboard.includes('<CustomizeDialog'),'Source layout controls must remain');
   assert.ok(patched.dashboard.includes('<WidgetFrame'),'Source metric/panel composition must remain');
   assert.ok(patched.metric.includes('liveValue ??'), 'No fixture-backed amount can reach a metric card');
-  for(const [key,required] of [['trend','data={rows}'],['cashflow','data={rows}'],
+  for(const [key,required] of [['trend','data={data}'],['cashflow','data={data}'],
     ['sales','(sales ?? recentSales).map'],['dues','(dues ?? duesToCollect).map']]){
     assert.ok(patched[key].includes(required), key+' source component lost real-data seam');
   }
