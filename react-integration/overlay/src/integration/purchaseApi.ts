@@ -6,7 +6,7 @@ export interface PurchaseSupplier {
 export interface PurchaseRecord {
   purchaseId:string; purchaseDate:string; supplierId:string; supplierName:string;
   grandTotal:number; paidAmount:number; dueAmount:number; paymentStatus:string;
-  items:Array<{productId:string;productName:string;quantity:number;unitPrice:number;lineTotal:number}>;
+  items:Array<{productId:string;productName:string;quantity:number;unitPrice:number;lineTotal:number;unitDescription?:string}>;
 }
 export interface DuePurchaseLine {productId:string;qty:number;unitPrice:number;
  unitQuantities?:Record<string,number>;unitProfileRevision?:number;priceUnit?:string}
