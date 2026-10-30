@@ -81,6 +81,16 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
+    if(path.startsWith('/api/purchases/unit-profile/')&&request.method()==='GET'){
+      const productId=decodeURIComponent(path.slice('/api/purchases/unit-profile/'.length));
+      if(productId==='PRD-000002')return respond({ok:true,productId,revision:1,postingEnabled:true,
+        profile:{baseUnit:'Pcs',units:[
+          {unit:'Carton',symbol:'CT',containsNext:12,factor:240,sellingPrice:2400},
+          {unit:'Box',symbol:'BX',containsNext:20,factor:20,sellingPrice:200},
+          {unit:'Pcs',symbol:'PCS',containsNext:null,factor:1,sellingPrice:20}
+        ]}});
+      return respond({ok:true,productId,revision:0,postingEnabled:true,profile:null});
+    }
     if(path==='/api/purchases/supplier-search'&&request.method()==='GET'){
       const q=(url.searchParams.get('q')||'').toLowerCase();
       const supplier={id:'SUP-UI-001',name:'Khan Hardware',phone:'01700000001',
@@ -96,13 +106,23 @@ function startMocking(context,calls){
       assert.equal(data.supplierId,'SUP-UI-001');
       assert.equal(data.paidAmount,0);
       assert.equal(data.items.length,1);
-      assert.equal(data.items[0].productId,'PRD-000001');
-      assert.equal(data.items[0].qty,3);
-      assert.equal(data.items[0].unitPrice,80);
+      if(data.items[0].unitQuantities){
+        assert.equal(data.items[0].productId,'PRD-000002');
+        assert.equal(data.items[0].unitProfileRevision,1);
+        assert.deepEqual(data.items[0].unitQuantities,{Carton:1,Box:2,Pcs:3});
+        assert.equal(data.items[0].priceUnit,'Carton');
+        assert.equal(data.items[0].unitPrice,2400);
+      }else{
+        assert.equal(data.items[0].productId,'PRD-000001');
+        assert.equal(data.items[0].qty,3);
+        assert.equal(data.items[0].unitPrice,80);
+      }
       calls.push({method:'ASSERT',path:'/api/purchases',payload:data});
-      postedPurchase={purchaseId:'PUR-UI-0001',purchaseDate:'2026-10-30',supplierId:data.supplierId,
-        supplierName:'Khan Hardware',grandTotal:240,paidAmount:0,dueAmount:240,paymentStatus:'Due',items:[]};
-      return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:240,dueAmount:240});
+      const amount=data.items[0].unitQuantities?2830:240;
+      postedPurchase={purchaseId:data.items[0].unitQuantities?'PUR-UI-MIXED':'PUR-UI-0001',
+        purchaseDate:'2026-10-30',supplierId:data.supplierId,supplierName:'Khan Hardware',
+        grandTotal:amount,paidAmount:0,dueAmount:amount,paymentStatus:'Due',items:[]};
+      return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:amount,dueAmount:amount});
     }
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
@@ -304,6 +324,35 @@ try{
       assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases').length,1);
       results.apiCalls.push(...calls);
       await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 4B joined 3-unit purchase and price unit '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('phase4b '+width+': '+e.message));
+      await page.goto(base+'/#/app/purchases/new');
+      await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+      await page.getByRole('combobox',{name:'Search supplier name, phone or ID'}).fill('Khan');
+      await page.getByRole('option',{name:/Khan Hardware/}).click();
+      await page.getByRole('combobox',{name:'Product'}).selectOption('PRD-000002');
+      await page.locator('[data-multi-quantity]').waitFor({timeout:10000});
+      await page.getByRole('textbox',{name:'Quantity in Carton for PVC Pipe 20mm'}).fill('1');
+      await page.getByRole('textbox',{name:'Quantity in Box for PVC Pipe 20mm'}).fill('2');
+      await page.getByRole('textbox',{name:'Quantity in Pcs for PVC Pipe 20mm'}).fill('3');
+      await page.getByRole('combobox',{name:'Purchase price unit'}).selectOption('Carton');
+      await page.getByRole('spinbutton',{name:'Purchase unit cost'}).fill('2400');
+      assert.ok((await page.locator('[data-live-purchase-editor]').innerText()).includes('2,830'));
+      await inspectLayout(page,'phase4b-mixed-purchase-'+width);
+      await screenshot(page,'phase4b-mixed-purchase-'+width);
+      if(width===390)await audit(page,'phase4b-mixed-purchase-390');
+      await page.getByRole('button',{name:/Confirm Due Purchase/}).click();
+      await page.locator('[data-live-purchases]').waitFor({timeout:12000});
+      await page.getByText('PUR-UI-MIXED').waitFor();
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases').length,1);
+      results.apiCalls.push(...calls);await ctx.close();
     });
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
