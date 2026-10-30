@@ -746,6 +746,14 @@ try{
         await inspectLayout(page,'products-'+width+'-'+theme);
         await screenshot(page,'products-'+width+'-'+theme);
         await audit(page,'products-'+width+'-'+theme);
+        if(width!==390||theme!=='light'){
+          await page.getByRole('tab',{name:/Stock lots/i}).click();
+          await page.getByText('PURCHASE-MOCK-1').waitFor();
+          await inspectLayout(page,'stock-lots-'+width+'-'+theme);
+          await screenshot(page,'original-stock-lots-'+width+'-'+theme);
+          await audit(page,'original-stock-lots-'+width+'-'+theme);
+          await page.getByRole('tab',{name:/Product list/i}).click();
+        }
         if(width===390&&theme==='light'){
           assert.equal(await page.getByRole('region',{name:'Live stock alerts'}).count(),0,
             'Pinned Products must not gain unapproved alert panels');
