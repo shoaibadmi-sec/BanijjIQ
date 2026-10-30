@@ -16,6 +16,7 @@ const wrangler=join(root,'node_modules/wrangler',typeof pkg.bin==='string'?pkg.b
 const state=mkdtempSync(join(tmpdir(),'hisabiq-historical-credit-ci-'));
 const port=8796,base='http://127.0.0.1:'+port,secret='ISOLATED-CREDIT-TEST-ONLY';
 let worker,logs='';
+let stage='initializing';
 function cli(args){
   const p=spawnSync(process.execPath,[wrangler,...args,'--config',cfg],{
     cwd:root,encoding:'utf8',timeout:120000,
@@ -48,7 +49,9 @@ async function stop(){
   if(worker.exitCode===null)worker.kill('SIGKILL');
 }
 try{
+  stage='Applying isolated D1 migrations';
   cli(['d1','migrations','apply','DB','--local','--persist-to',state]);
+  stage='Seeding isolated D1 fixtures';
   // Seed only when the Worker is stopped. Wrangler CLI and a running Worker
   // must never be used simultaneously against the same persistence directory.
   const fixtureSql=[
@@ -67,7 +70,11 @@ try{
     "INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('D1-SPLIT-RETURN','D1-SPLIT-ORIGINAL','WIRE-1','Wire',3,10,30)",
     "INSERT INTO customer_store_credit_entries(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_by) VALUES ('D1-SPLIT-ISSUE','D1-SPLIT-CUS','ISSUE','Sales Return','D1-SPLIT-RETURN',3000,3000,'tester')"
   ];
-  for(const stmt of fixtureSql)sql(stmt);
+  for(const [index,stmt] of fixtureSql.entries()){
+    stage='Seeding fixture '+index;
+    sql(stmt);
+  }
+  stage='Starting isolated Worker';
   worker=spawn(process.execPath,[wrangler,'dev','--config',cfg,'--local','--persist-to',state,
     '--ip','127.0.0.1','--port',String(port),'--var','SETUP_SECRET:'+secret],{
     cwd:root,stdio:['ignore','pipe','pipe'],
@@ -127,6 +134,7 @@ try{
   assert.equal((await api('POST','/api/pos/sales',{
     ...splitInput,tenders:[{method:'Cash',amountCents:2001},{method:'Store Credit',amountCents:2999}]
   },token)).status,409);
+  stage='Checking source reversal preflight';
   const sourcePreview=await api('GET',
     '/api/sales-management/'+encodeURIComponent(mixed.invoice.invoiceId)+'/split-reversal',
     undefined,token);
@@ -138,6 +146,7 @@ try{
   const remaining=await api('GET','/api/pos/store-credit/D1-SPLIT-CUS',undefined,token);
   assert.equal(remaining.availableCents,0,JSON.stringify(remaining));
   const reverseUrl='/api/sales-management/'+encodeURIComponent(mixed.invoice.invoiceId)+'/split-reversal';
+  stage='Posting atomic source-exact refund';
   const refund=await api('POST',reverseUrl,{reason:'Refund each original source; reissue original credit'},token);
   assert.equal(refund.ok,true,JSON.stringify(refund));
   assert.equal(refund.refundCents,2000);
@@ -145,6 +154,7 @@ try{
   assert.equal((await api('POST',reverseUrl,{reason:'Duplicate source refund must fail'},token)).status,409);
   const reinstated=await api('GET','/api/pos/store-credit/D1-SPLIT-CUS',undefined,token);
   assert.equal(reinstated.availableCents,3000,JSON.stringify(reinstated));
+  stage='Validating persisted D1 financial ledgers';
   await stop();
   const sid=mixed.invoice.invoiceId.replace(/'/g,'');
   assert.equal(sql("SELECT COUNT(*) n FROM sale_tender_allocations WHERE invoice_id='"+sid+"'")[0].n,2);
@@ -168,7 +178,7 @@ try{
   assert.equal(sql('SELECT COUNT(*) n FROM bank_book')[0].n,0);
   process.stdout.write('PASS historical credit plus atomic original-source Cash/Store Credit reversal on isolated Worker/D1\n');
 }catch(err){
-  process.stderr.write('FAIL isolated Worker/D1 historical credit reclassification: '+String(err)+'\n'+logs.slice(-2200)+'\n');
+  process.stderr.write('FAIL isolated Worker/D1 historical credit reclassification at '+stage+': '+String(err)+'\n'+logs.slice(-2200)+'\n');
   process.exitCode=1;
 }finally{
   await stop();
