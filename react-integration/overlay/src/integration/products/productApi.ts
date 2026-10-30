@@ -69,18 +69,18 @@ function toHisabStockMovement(value:unknown):HisabStockMovement {
   if(!value||typeof value!=='object')throw new BackendRequestError('Invalid stock movement source.',502);
   const row=value as Record<string,unknown>;
   const source=typeof row.type==='string'?row.type.toUpperCase():'';
-  const type:StockMovementType=
+  const type:StockMovementType|null=
     source.includes('RETURN')?'Return':
     source.includes('PURCHASE')?'Purchase':
     source.includes('SALE')?'Sale':
     source.includes('OPENING')?'Opening':
     /ADJUST|STOCKTAKE|DAMAGE|WASTAGE|LOSS/.test(source)?'Adjustment':
-    null as never;
+    null;
   const validQty=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&
     Math.abs(v*10000-Math.round(v*10000))<0.00001;
   if(!type||typeof row.movementId!=='string'||!row.movementId||
       typeof row.productId!=='string'||!row.productId||
-      typeof row.date!=='string'||!/^\\d{4}-\\d{2}-\\d{2}/.test(row.date)||
+      typeof row.date!=='string'||!/^\d{4}-\d{2}-\d{2}/.test(row.date)||
       !validQty(row.quantityIn)||!validQty(row.quantityOut)||
       !validQty(row.balanceAfter)||
       (row.quantityIn as number)>0&&(row.quantityOut as number)>0)
