@@ -173,9 +173,11 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
  const matchingFinance=finance.filter(x=>x.date>=q.from&&x.date<=q.to);
  const expenseChecks=new Map<string,string>();
  let expenseTotal=0,ownerCapital=0;
- for(const exp of matchingExpenses){
+ for(const exp of expenses){
+   const sourceInPeriod=exp.expense_date>=q.from&&exp.expense_date<=q.to;
    const amount=Number(exp.amount),linked=books.filter(x=>x.reference===exp.expense_id&&
      (x.type==='Expense'||x.type==='Expense Update'||x.type==='Expense Deleted'));
+   if(!sourceInPeriod&&!linked.some(x=>x.type==='Expense'&&x.date>=q.from&&x.date<=q.to))continue;
    const payment=exp.payment_method==='Cash'?'cash_book':
      ['Bank','Mobile Banking'].includes(exp.payment_method)?'bank_book':'';
    const netOut=linked.reduce((n,x)=>n+Number(x.debit)-Number(x.credit),0);
@@ -191,7 +193,7 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
    if(warnings.length) {
      const reason='Expense '+exp.expense_id+': '+warnings.join(' ');
      problems.add(reason);expenseChecks.set(exp.expense_id,reason);
-   }else expenseTotal+=amount;
+   }else if(sourceInPeriod)expenseTotal+=amount;
  }
  const financed=new Map<string,string>();
  const positiveTypes=new Set(['Owner Investment','Loan Received','Opening Owner Capital','Opening Loan']);
