@@ -30,112 +30,38 @@ async function readBody<T>(request: Request): Promise<T> {
   catch { throw new Error('Invalid JSON body'); }
 }
 
+export async function getCashSessionSummaryRoute(db: SherDatabase): Promise<Response> {
+  const session = await getOpenCashSession(db);
+  if (!session) return json({ ok: true, summary: null });
+  const openEntry = await db.prepare(`SELECT rowid AS row_num FROM cash_book WHERE type='Session Open' AND reference=? ORDER BY rowid DESC LIMIT 1`).bind(session.session_id).first<{ row_num: number }>();
+  const totals = await db.prepare(`SELECT COALESCE(SUM(credit),0) cash_in, COALESCE(SUM(debit),0) cash_out FROM cash_book WHERE is_deleted=0 AND rowid>?`).bind(Number(openEntry?.row_num ?? 0)).first<{ cash_in: number; cash_out: number }>();
+  const openingCash = Number(session.opening_cash || 0), cashIn = Number(totals?.cash_in || 0), cashOut = Number(totals?.cash_out || 0);
+  return json({ ok: true, summary: { sessionId: session.session_id, openedAt: session.opened_at, openingCash, cashIn, cashOut, expectedCash: openingCash + cashIn - cashOut } });
+}
 
-type CashSessionOpenInput={openingCash?:number;notes?:string;clientRequestId?:string};
-type CashSessionCloseInput={countedCash?:number;notes?:string;clientRequestId?:string};
-const cashRequestKey=(x:unknown)=>/^[A-Za-z0-9._:-]{8,120}$/.test(cleanText(x))?cleanText(x):'';
-const cashTicks=(raw:unknown):number|null=>{
-  if(raw===undefined||raw===null||raw==='')return null;
-  const amount=Number(raw),ticks=Math.round(amount*10000);
-  return Number.isFinite(amount)&&Number.isSafeInteger(ticks)&&ticks>=0&&
-    Math.abs(amount*10000-ticks)<0.00001?ticks:null;
-};
-async function cashSessionByOpenKey(db:SherDatabase,key:string){
-  return key?db.prepare('SELECT * FROM cash_sessions WHERE client_request_id=? LIMIT 1')
-    .bind(key).first<any>():null;
+export async function startCashSessionRoute(db: SherDatabase, input: { openingCash?: number; notes?: string }, user: AuthUser): Promise<Response> {
+  const openingCash = Number(input.openingCash ?? 0);
+  if (!Number.isFinite(openingCash) || openingCash < 0) return error('Enter a valid opening cash amount.');
+  if (await getOpenCashSession(db)) return error('A cash session is already open. Close it before starting a new one.');
+  const sessionId = `CS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  await db.batch([
+    db.prepare(`INSERT INTO cash_sessions (session_id,opened_by,opened_at,opening_cash,opening_note,status) VALUES (?,?,datetime('now'),?,?,'Open')`).bind(sessionId, user.fullName, openingCash, cleanText(input.notes)),
+    db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Session Open',?,'Opening cash for the day',0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`, todayDate(), sessionId, openingCash)
+  ]);
+  return json({ ok: true, sessionId });
 }
-async function cashSessionByCloseKey(db:SherDatabase,key:string){
-  return key?db.prepare('SELECT * FROM cash_sessions WHERE close_request_id=? LIMIT 1')
-    .bind(key).first<any>():null;
-}
-async function cashSessionTotals(db:SherDatabase,id:string){
-  const open=await db.prepare("SELECT rowid AS n FROM cash_book WHERE type='Session Open' AND reference=? AND is_deleted=0 ORDER BY rowid DESC LIMIT 1")
-    .bind(id).first<{n:number}>();
-  if(!open)return null;
-  const totals=await db.prepare(
-    "SELECT COALESCE(SUM(credit),0) cash_in,COALESCE(SUM(debit),0) cash_out FROM cash_book WHERE is_deleted=0 AND rowid>? AND type NOT IN ('Session Open','Day Close Adjustment')"
-  ).bind(open.n).first<{cash_in:number;cash_out:number}>();
-  return {cashIn:Number(totals?.cash_in||0),cashOut:Number(totals?.cash_out||0)};
-}
-export async function getCashSessionSummaryRoute(db:SherDatabase):Promise<Response>{
-  const session=await getOpenCashSession(db);
-  if(!session)return json({ok:true,summary:null});
-  const totals=await cashSessionTotals(db,String(session.session_id));
-  if(!totals)return error('Cash session opening book entry is missing; reconcile before closing.',409);
-  const openingCash=Number(session.opening_cash||0);
-  return json({ok:true,summary:{
-    sessionId:session.session_id,openedAt:session.opened_at,openingCash,
-    cashIn:totals.cashIn,cashOut:totals.cashOut,
-    expectedCash:Math.round((openingCash+totals.cashIn-totals.cashOut)*10000)/10000
-  }});
-}
-export async function startCashSessionRoute(db:SherDatabase,input:CashSessionOpenInput,user:AuthUser):Promise<Response>{
-  const ticks=cashTicks(input.openingCash??0);
-  if(ticks===null)return error('Enter an opening cash amount with at most four decimal places.');
-  const openingCash=ticks/10000,notes=cleanText(input.notes),key=cleanText(input.clientRequestId);
-  if(key&&!cashRequestKey(key))return error('Enter a valid client request ID.');
-  const fingerprint=JSON.stringify([ticks,notes]);
-  const duplicate=await cashSessionByOpenKey(db,key);
-  if(duplicate)return duplicate.open_fingerprint===fingerprint?
-    json({ok:true,sessionId:duplicate.session_id,replayed:true}):
-    error('Client request ID was already used for another opening.',409);
-  if(await getOpenCashSession(db))return error('A cash session is already open.',409);
-  const sessionId='CS-'+crypto.randomUUID().slice(0,8).toUpperCase();
-  try{
-    await db.batch([
-      db.prepare("INSERT INTO cash_sessions (session_id,opened_by,opened_at,opening_cash,opening_note,status,client_request_id,open_fingerprint) VALUES (?,?,datetime('now'),?,?,'Open',?,?)")
-        .bind(sessionId,user.fullName,openingCash,notes,key,fingerprint),
-      db.prepare("INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?,'Session Open',?,'Opening cash float',0,?,'Cash',0)")
-        .bind('CB-'+crypto.randomUUID().slice(0,10).toUpperCase(),todayDate(),sessionId,openingCash)
-    ]);
-  }catch{
-    const retry=await cashSessionByOpenKey(db,key);
-    if(retry)return retry.open_fingerprint===fingerprint?
-      json({ok:true,sessionId:retry.session_id,replayed:true}):
-      error('Client request ID was already used for another opening.',409);
-    return error('Cash session was not opened; another session may already be active.',409);
-  }
-  return json({ok:true,sessionId,replayed:false});
-}
-export async function closeCashSessionRoute(db:SherDatabase,input:CashSessionCloseInput,user:AuthUser):Promise<Response>{
-  const ticks=cashTicks(input.countedCash);
-  if(ticks===null)return error('Enter a counted cash amount with at most four decimal places.');
-  const countedCash=ticks/10000,notes=cleanText(input.notes),key=cleanText(input.clientRequestId);
-  if(key&&!cashRequestKey(key))return error('Enter a valid client request ID.');
-  const duplicate=await cashSessionByCloseKey(db,key);
-  if(duplicate){
-    if(Number(duplicate.counted_cash)!==countedCash||cleanText(duplicate.closing_note)!==notes)
-      return error('Client request ID was already used for a different cash count.',409);
-    return json({ok:true,sessionId:duplicate.session_id,expected:Number(duplicate.expected_cash),
-      counted:Number(duplicate.counted_cash),variance:Number(duplicate.variance),replayed:true});
-  }
-  const session=await getOpenCashSession(db);
-  if(!session)return error('No cash session is open.',409);
-  const totals=await cashSessionTotals(db,String(session.session_id));
-  if(!totals)return error('Cash session opening book entry is missing; reconcile before closing.',409);
-  const expected=Math.round((Number(session.opening_cash)+totals.cashIn-totals.cashOut)*10000)/10000;
-  const variance=Math.round((countedCash-expected)*10000)/10000;
-  if(variance!==0){
-    if(notes.length<8)return error('Explain the cash count difference (at least eight characters).');
-    if(!(await hasModulePermission(db,user,'pos','edit')))
-      return error('Only staff with POS edit permission may close with a cash variance.',403);
-  }
-  try{
-    await db.batch([
-      db.prepare("UPDATE cash_sessions SET closed_at=datetime('now'),expected_cash=?,counted_cash=?,variance=?,status='Closed',closing_note=?,closed_by=?,close_request_id=? WHERE session_id=? AND status='Open'")
-        .bind(expected,countedCash,variance,notes,user.userId,key,session.session_id),
-      db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CLOSE_CASH_SESSION','CASH_SESSION',?,?)")
-        .bind(user.userId,session.session_id,'Expected '+expected+'; counted '+countedCash+'; variance '+variance+'; reason '+notes)
-    ]);
-  }catch{
-    const retry=await cashSessionByCloseKey(db,key);
-    if(retry)return Number(retry.counted_cash)===countedCash&&cleanText(retry.closing_note)===notes?
-      json({ok:true,sessionId:retry.session_id,expected:Number(retry.expected_cash),
-        counted:Number(retry.counted_cash),variance:Number(retry.variance),replayed:true}):
-      error('Client request ID was already used for a different cash count.',409);
-    return error('Cash close was not posted; cash book or audit state changed.',409);
-  }
-  return json({ok:true,sessionId:session.session_id,expected,counted:countedCash,variance,replayed:false});
+
+export async function closeCashSessionRoute(db: SherDatabase, input: { countedCash?: number; notes?: string }, user: AuthUser): Promise<Response> {
+  const countedCash = Number(input.countedCash ?? NaN);
+  if (!Number.isFinite(countedCash) || countedCash < 0) return error('Enter a valid counted cash amount.');
+  const session = await getOpenCashSession(db); if (!session) return error('No cash session is open.');
+  const openEntry = await db.prepare(`SELECT rowid AS row_num FROM cash_book WHERE type='Session Open' AND reference=? ORDER BY rowid DESC LIMIT 1`).bind(session.session_id).first<{ row_num: number }>();
+  const totals = await db.prepare(`SELECT COALESCE(SUM(credit),0) cash_in, COALESCE(SUM(debit),0) cash_out FROM cash_book WHERE is_deleted=0 AND rowid>?`).bind(Number(openEntry?.row_num ?? 0)).first<{ cash_in: number; cash_out: number }>();
+  const expected = Number(session.opening_cash || 0) + Number(totals?.cash_in || 0) - Number(totals?.cash_out || 0), variance = countedCash - expected;
+  const stmts: SqlPreparedStatement[] = [db.prepare(`UPDATE cash_sessions SET closed_at=datetime('now'),expected_cash=?,counted_cash=?,variance=?,status='Closed',closing_note=? WHERE session_id=?`).bind(expected,countedCash,variance,cleanText(input.notes),session.session_id)];
+  if (variance !== 0) stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Day Close Adjustment',?,?,?,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`, todayDate(), session.session_id, variance>0?'Cash counted was higher than expected':'Cash counted was lower than expected', variance<0?Math.abs(variance):0, variance>0?variance:0));
+  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CLOSE_CASH_SESSION','CASH_SESSION',?,?)`).bind(user.userId,session.session_id,`Expected ${expected}; counted ${countedCash}; variance ${variance}`));
+  await db.batch(stmts); return json({ ok: true, expected, counted: countedCash, variance });
 }
 
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
@@ -423,14 +349,63 @@ async function restoreMixedUnitLots(db:SherDatabase,invoiceId:string,needed:Map<
 
 export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start your cash session in POS before receiving customer payments.');
-  const customerId=cleanText(input.customerId),amount=Number(input.amount||0),method=cleanText(input.method)||'Cash';if(!customerId||!Number.isFinite(amount)||amount<=0)return error('Enter a valid payment amount.');
-  const c=await db.prepare(`SELECT * FROM customers WHERE customer_id=? AND is_deleted=0`).bind(customerId).first<any>();if(!c)return error('Customer not found.');
-  let bankId='';if(method==='Bank'||method==='Mobile Banking'){bankId=cleanText(input.bankAccountId);if(!bankId)return error('Select a bank/mobile banking account.');const b=await db.prepare(`SELECT 1 x FROM bank_accounts WHERE bank_account_id=? AND status='Active'`).bind(bankId).first();if(!b)return error('Bank/mobile banking account not found.');}
-  const newDue=Number(c.current_due||0)-amount,ledgerId=`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,note=[cleanText(input.reference)?`Ref: ${cleanText(input.reference)}`:'',cleanText(input.note)].filter(Boolean).join(' — '),stmts:SqlPreparedStatement[]=[];
-  stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));
-  stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes,payment_method,bank_account_id,created_by) VALUES (?,?,?,?, 'Payment','',0,?,?,?,?,?,?)`).bind(ledgerId,todayDate(),customerId,c.customer_name,amount,newDue,note,method,bankId,user.fullName));
-  if(method==='Bank'||method==='Mobile Banking')stmts.push(db.prepare(`INSERT INTO bank_book (entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Customer Payment',?,?,0,?,0)`).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,todayDate(),ledgerId,`Payment from ${c.customer_name}`,amount));else stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Customer Payment',?,?,0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,todayDate(),ledgerId,`Payment from ${c.customer_name}`,amount));
-  stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'RECEIVE_CUSTOMER_PAYMENT','CUSTOMER',?,?)`).bind(user.userId,customerId,`Amount ${amount}`));await db.batch(stmts);return json({ok:true,newDue});
+  const customerId=cleanText(input.customerId),amount=Number(input.amount||0);
+  const method=cleanText(input.method)||'Cash';
+  if(!customerId||!Number.isFinite(amount)||amount<=0||!Number.isSafeInteger(Math.round(amount*100))||
+     Math.abs(amount*100-Math.round(amount*100))>0.000001)
+    return error('Enter a valid payment in whole poisha.');
+  if(!['Cash','Bank','Mobile Banking'].includes(method))return error('Choose a supported payment method.');
+  const c=await db.prepare('SELECT * FROM customers WHERE customer_id=? AND is_deleted=0')
+    .bind(customerId).first<any>();
+  if(!c)return error('Customer not found.');
+  if(amount>Number(c.current_due||0)+0.000001)
+    return error('Payment exceeds the outstanding customer due.',409);
+  let bankId='',bankName='';
+  if(method==='Bank'||method==='Mobile Banking'){
+    bankId=cleanText(input.bankAccountId);
+    if(!bankId)return error('Select a bank/mobile banking account.');
+    const b=await db.prepare(
+      "SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active'"
+    ).bind(bankId).first<any>();
+    if(!b||String(b.account_type||'Bank')!==method)
+      return error('Matching active bank/mobile banking account not found.',409);
+    bankName=String(b.account_name||'');
+  }
+  const ledgerId=`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`;
+  const note=[cleanText(input.reference)?`Ref: ${cleanText(input.reference)}`:'',cleanText(input.note)]
+    .filter(Boolean).join(' — ');
+  const stmts:SqlPreparedStatement[]=[
+    // The DB sees the CURRENT due during the atomic batch: if another concurrent
+    // payment already spent it, NULL violates the NOT NULL constraint and rolls back.
+    db.prepare("UPDATE customers SET current_due=CASE WHEN current_due>=? THEN ROUND(current_due-?,2) ELSE NULL END,updated_at=datetime('now') WHERE customer_id=? AND is_deleted=0")
+      .bind(amount,amount,customerId),
+    db.prepare("INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes,payment_method,bank_account_id,created_by) VALUES (?,?,?,?, 'Payment','',0,?,(SELECT current_due FROM customers WHERE customer_id=?),?,?,?,?)")
+      .bind(ledgerId,todayDate(),customerId,c.customer_name,amount,customerId,note,method,bankId,user.fullName)
+  ];
+  if(bankId){
+    stmts.push(db.prepare(
+      "UPDATE bank_accounts SET current_balance=CASE WHEN status='Active' THEN current_balance+? ELSE NULL END WHERE bank_account_id=?"
+    ).bind(amount,bankId));
+    stmts.push(db.prepare(
+      "INSERT INTO bank_book (entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) "+
+      "VALUES (?,?,?,?, 'Customer Payment',?,?,0,?,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,0)"
+    ).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,bankName,todayDate(),ledgerId,
+      `Payment from ${c.customer_name}`,amount,bankId,user.fullName));
+  }else stmts.push(db.prepare(
+    "INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Customer Payment',?,?,0,?,'Cash',0)"
+  ).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,todayDate(),ledgerId,
+    `Payment from ${c.customer_name}`,amount));
+  stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'RECEIVE_CUSTOMER_PAYMENT','CUSTOMER',?,?)")
+    .bind(user.userId,customerId,`Amount ${amount}`));
+  try{await db.batch(stmts);}
+  catch(e){
+    if(/NOT NULL constraint failed|CONSTRAINT/i.test(String(e)))
+      return error('Customer due or payment account changed. Reload before retrying.',409);
+    throw e;
+  }
+  const committed=await db.prepare('SELECT current_due due FROM customers WHERE customer_id=?')
+    .bind(customerId).first<{due:number}>();
+  return json({ok:true,newDue:Number(committed?.due??0)});
 }
 
 /**
@@ -719,7 +694,16 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     if(v.mixedReturn)mixedNeed.set(v.productId,v.q);
     else ordinaryNeed.set(v.productId,v.q);
   }
-  const ordinaryRestore=ordinaryNeed.size?await restoreSaleLotsPlan(db,invoiceId,ordinaryNeed):new Map<string,any>();
+  // Ordinary and mixed-unit returns both require immutable original FIFO
+  // allocations; otherwise reports cannot verify which historical cost was reversed.
+  let ordinaryLots:{plan:Map<string,any>;allocations:Array<{productId:string;lotId:string;quantity:number}>}={
+    plan:new Map(),allocations:[]
+  };
+  if(ordinaryNeed.size){
+    try{ordinaryLots=await restoreMixedUnitLots(db,invoiceId,ordinaryNeed);}
+    catch(e){return error(e instanceof Error?e.message:'Invalid return lots.',409);}
+  }
+  const ordinaryRestore=ordinaryLots.plan;
   let mixedLots:{plan:Map<string,any>;allocations:Array<{productId:string;lotId:string;quantity:number}>}={
     plan:new Map(),allocations:[]
   };
@@ -772,7 +756,7 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
       stmts.push(db.prepare(`UPDATE warranty_records SET remaining_quantity=MAX(0,remaining_quantity-?),status=CASE WHEN remaining_quantity-?<=0 THEN 'Returned' ELSE status END,updated_at=datetime('now') WHERE invoice_id=? AND product_id=? AND serial_id IS NULL`).bind(v.q,v.q,invoiceId,v.productId));
     }
   }
-  for(const alloc of mixedLots.allocations)stmts.push(db.prepare(
+  for(const alloc of [...ordinaryLots.allocations,...mixedLots.allocations])stmts.push(db.prepare(
     'INSERT INTO sales_return_item_lots (return_id,invoice_id,product_id,lot_id,quantity) VALUES (?,?,?,?,?)'
   ).bind(returnId,invoiceId,alloc.productId,alloc.lotId,alloc.quantity));
   for(const x of ordinaryRestore.values()){let next=x.current+x.restore;if(x.sourceType==='OVERSOLD')next=Math.min(0,next);else next=Math.min(x.original,next);stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=?,updated_at=datetime('now'),status=CASE WHEN ?>0 THEN 'Active' WHEN source_type='OVERSOLD' AND ?<0 THEN 'Oversold' ELSE 'Depleted' END WHERE lot_id=?`).bind(next,next,next,x.lotId));}
