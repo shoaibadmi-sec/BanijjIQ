@@ -84,6 +84,7 @@ test('Phase 4C complete mixed original-lot stock, supplier-credit and concurrenc
   const first=await api('POST','/api/purchase-returns',firstPayload);
   assert.equal(first.status,200,JSON.stringify(first));
   assert.equal(first.totalReturnAmount,220);
+  assert.match(first.returnId,/^MPRTN-[0-9a-f-]{36}$/i,'mixed UUID does not poison legacy PRTN-###### IDs');
   assert.deepEqual(state(),{stock:261,lot:261,due:2610,returns:1,allocations:1});
   assert.equal(sql('SELECT balance AS n FROM supplier_ledger WHERE reference=?',first.returnId).n,2610);
   assert.equal(sql('SELECT return_micro AS n FROM purchase_unit_return_allocations WHERE return_id=?',first.returnId).n,2200000);
