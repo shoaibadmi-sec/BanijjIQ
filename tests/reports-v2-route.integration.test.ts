@@ -47,7 +47,14 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(rows.coverage.status,'needs-review');
     const invalid = await call('GET','/api/reports/v2/rows?report=sales&pageSize=500');
     assert.equal(invalid.status,400);
-    const unsupported = await call('GET','/api/reports/v2/rows?report=profit');
+    const uncosted = await call('GET','/api/reports/v2/rows?report=profit&from=2026-10-01&to=2026-10-30');
+    assert.equal(uncosted.status,200);
+    assert.equal(uncosted.coverage.status,'incomplete','no sale item or original FIFO data is certified');
+    assert.equal(uncosted.metrics.find((m:any)=>m.key==='netProfit')?.valueMinor,null);
+    const summary = await call('GET','/api/reports/v2/summary?from=2026-10-01&to=2026-10-30');
+    assert.equal(summary.status,200);
+    assert.equal(summary.metrics.find((m:any)=>m.key==='grossProfit')?.valueMinor,null);
+    const unsupported = await call('GET','/api/reports/v2/rows?report=audit');
     assert.equal(unsupported.status,200);
     assert.equal(unsupported.coverage.status,'unavailable');
     assert.deepEqual(unsupported.rows,[]);
