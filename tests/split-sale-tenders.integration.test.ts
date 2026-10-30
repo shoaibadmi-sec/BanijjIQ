@@ -256,6 +256,20 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       assert.deepEqual(retry.invoice.paymentAllocations.map((t:any)=>t.amountCents),tenders.map(t=>t.amountCents));
       assert.equal((await api('POST','/api/pos/sales',{...sale,tenders:tenders.map((x,i)=>i?x:{...x,amountCents:x.amountCents-1})})).status,409);
       assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,tenders.length);
+      // Until G2-H can reissue each source, never refund credit-funded splits
+      // in Cash or delete/edit an immutable multi-source invoice.
+      assert.equal((await api('POST','/api/sales-returns',{
+        invoiceId:saleId,refundMethod:'Cash',reason:'Reversal must preserve exact tender sources',
+        items:[{productId:product.productId,qty:1,unitPrice:10}]
+      })).status,409);
+      assert.equal((await api('PUT','/api/sales-management/'+saleId,{
+        reason:'Changing historical tender sources is unsafe',
+        customerName:'Split Buyer',customerPhone:'01000007113',
+        items:[{productId:product.productId,qty:5,unitPrice:10}]
+      })).status,409);
+      assert.equal((await api('DELETE','/api/sales-management/'+saleId,{
+        reason:'Unreconciled split tender cannot be deleted'
+      })).status,409);
       assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
     }finally{db.close();}
   });
