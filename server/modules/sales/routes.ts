@@ -2,6 +2,7 @@ import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
 import {getSplitSaleReversalPreviewRoute,postSplitSaleReversalRoute} from './split-reversal.js';
+import {getPartialSplitRefundPreviewRoute} from './partial-split-preview.js';
 import {getStoreCreditCasesRoute,getStoreCreditCaseDetailRoute,resolveStoreCreditCaseRoute} from './store-credit-cases.js';
 import {getStoreCreditOutstandingImpactRoute} from './store-credit-outstanding-impact.js';
 import {
@@ -59,6 +60,9 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnDataMatch = path.match(/^\/api\/sales-returns\/([^/]+)\/data$/);
   if (salesReturnDataMatch && request.method === 'GET') return getSaleReturnDataRoute(db, decodeURIComponent(salesReturnDataMatch[1]));
 
+  const partialPreviewMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-partial-preview$/);
+  if(partialPreviewMatch&&request.method==='GET')
+    return getPartialSplitRefundPreviewRoute(db,decodeURIComponent(partialPreviewMatch[1]),url);
   const splitReversalMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-reversal$/);
   if(splitReversalMatch&&request.method==='GET')
     return getSplitSaleReversalPreviewRoute(db,decodeURIComponent(splitReversalMatch[1]));

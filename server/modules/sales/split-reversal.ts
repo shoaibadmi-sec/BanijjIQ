@@ -40,6 +40,21 @@ export async function getSplitSaleReversalPreviewRoute(db:SherDatabase,id:string
   if(!totalCents||totalCents<=0||cents(sale.paid_amount)!==totalCents||
     cents(sale.due_amount)!==0||sale.payment_type!=='Cash'||sale.bank_account_id)
     return blocked('Split sale total and fully paid status cannot be reconciled.');
+  // Mirror the POST's supported source contract before the cashier confirms.
+  // The POST still rechecks these facts independently before posting money.
+  const originalLines=(await db.prepare(
+    'SELECT product_id,quantity,unit_price,line_total FROM sale_items WHERE invoice_id=?'
+  ).bind(id).all<any>()).results||[];
+  if(cents(sale.discount)!==0||cents(sale.subtotal)!==totalCents||
+    !originalLines.length||
+    new Set(originalLines.map(i=>String(i.product_id))).size!==originalLines.length||
+    originalLines.some(i=>!Number.isSafeInteger(Number(i.quantity))||Number(i.quantity)<=0||
+      cents(i.line_total)!==cents(Number(i.quantity)*Number(i.unit_price)))||
+    originalLines.reduce((sum,i)=>sum+(cents(i.line_total)||0),0)!==totalCents)
+    return blocked('Original invoice discount, quantities or line prices do not reconcile.');
+  if(await db.prepare('SELECT 1 x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1')
+      .bind(id).first())
+    return blocked('Mixed-unit split refunds need original unit-denomination restoration.');
   if(await db.prepare('SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1').bind(id).first()||
      await db.prepare('SELECT 1 x FROM sale_reversal_logs WHERE invoice_id=? LIMIT 1').bind(id).first())
     return blocked('This invoice already has a return or reversal; do not refund again.');
@@ -63,6 +78,20 @@ export async function getSplitSaleReversalPreviewRoute(db:SherDatabase,id:string
     !Number.isSafeInteger(Number(row.sold))||Number(row.sold)<=0||
     Number(row.lot_qty)!==Number(row.sold)))
     return blocked('Original FIFO stock lot allocations are incomplete.');
+  // A lot that is already full cannot be restored again. Check at
+  // preview as well as POST so the cashier never confirms a doomed refund.
+  const restorable=(await db.prepare(
+    'SELECT lot.original_quantity capacity,lot.remaining_quantity remaining,'+
+    'lot.source_type kind,COALESCE(SUM(used.quantity),0) restore '+
+    'FROM sale_item_lots used JOIN stock_lots lot ON lot.lot_id=used.lot_id '+
+    'WHERE used.invoice_id=? GROUP BY lot.lot_id'
+  ).bind(id).all<any>()).results||[];
+  if(!restorable.length||restorable.some(row=>
+    row.kind==='OVERSOLD'||!Number.isSafeInteger(Number(row.restore))||
+    Number(row.restore)<=0||!Number.isFinite(Number(row.capacity))||
+    !Number.isFinite(Number(row.remaining))||Number(row.remaining)<0||
+    Number(row.remaining)+Number(row.restore)>Number(row.capacity)))
+    return blocked('Original FIFO lots cannot safely accept returned stock.');
   const a=await db.prepare(
     'SELECT method,amount_cents,bank_account_id,customer_id,source_key '+
     'FROM sale_tender_allocations WHERE invoice_id=? ORDER BY line_number'
@@ -151,7 +180,12 @@ export async function postSplitSaleReversalRoute(
 ):Promise<Response>{
   if(!(await hasModulePermission(db,user,'returns','add')))
     return respond({ok:false,error:'Sales Return permission required.'},403);
-  const reason=String(input?.reason||'').trim();
+  // This endpoint always refunds the ENTIRE invoice. Ignore no unknown body
+  // fields: a client requesting one item must never silently refund everything.
+  if(!input||typeof input!=='object'||Array.isArray(input)||
+    Object.keys(input).some(key=>key!=='reason'))
+    return respond({ok:false,error:'Full split refund accepts only a reason; partial refunds are not enabled.'},400);
+  const reason=String(input.reason||'').trim();
   if(reason.length<8||reason.length>500)
     return respond({ok:false,error:'Give an 8–500 character refund reason.'},400);
   const preview=await (await getSplitSaleReversalPreviewRoute(db,id)).json() as any;

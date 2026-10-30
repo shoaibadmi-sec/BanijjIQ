@@ -180,6 +180,13 @@ export async function runRealD1Browser(){
           await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
           const resetVersionBefore=await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version');
           await name.fill('Real Browser Due Buyer');
+          // Playwright can fire two controlled-input change events before React
+          // has committed the first one. Mirror a real user's field transition:
+          // let the customer-name render commit before entering a new phone.
+          await page.evaluate(() => new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+            'A newly typed customer must persist through the React render');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
           // A stale receipt/dialog close event must not erase the next sale.
