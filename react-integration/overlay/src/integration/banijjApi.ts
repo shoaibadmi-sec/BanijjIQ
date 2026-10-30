@@ -127,10 +127,19 @@ export interface PosInvoice {
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
 }
 export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');
-export const startCashSession = (openingCash: number) =>
-  request<{ ok: true; sessionId: string }>('/api/pos/cash-session/start', {
-    method: 'POST', body: JSON.stringify({ openingCash })
+export const startCashSession = (openingCash: number, clientRequestId = crypto.randomUUID(),notes = '') =>
+  request<{ ok: true; sessionId: string; replayed?: boolean }>('/api/pos/cash-session/start', {
+    method: 'POST', body: JSON.stringify({ openingCash, clientRequestId, notes })
   });
+export interface CashSessionSummary {
+  sessionId:string;openedAt:string;openingCash:number;cashIn:number;cashOut:number;expectedCash:number;
+}
+export const getCashSessionSummary = () =>
+  request<{ok:true;summary:CashSessionSummary|null}>('/api/pos/cash-session/summary');
+export const closeCashSession = (countedCash:number,notes:string,clientRequestId:string) =>
+  request<{ok:true;sessionId:string;expected:number;counted:number;variance:number;replayed?:boolean}>(
+    '/api/pos/cash-session/close',{method:'POST',body:JSON.stringify({countedCash,notes,clientRequestId})});
+
 export const postSale = (payload: PosSalePayload) =>
   request<{ ok: true; invoice: PosInvoice }>('/api/pos/sales', {
     method: 'POST', body: JSON.stringify(payload)
