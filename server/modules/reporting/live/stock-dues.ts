@@ -118,7 +118,7 @@ async function dues(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
     db.prepare('SELECT id,COALESCE(SUM(debit),0) debit,COALESCE(SUM(credit),0) credit,COUNT(*) entry_count,'+
       ' MAX(CASE WHEN position=1 THEN balance END) ending_balance FROM ('+
       ' SELECT '+partyId+' id,debit,credit,balance,'+
-      ' ROW_NUMBER() OVER (PARTITION BY '+partyId+' ORDER BY date DESC,created_at DESC,ledger_id DESC) position'+
+      ' ROW_NUMBER() OVER (PARTITION BY '+partyId+' ORDER BY rowid DESC) position'+
       ' FROM '+ledgerTable+' WHERE is_deleted=0'+
       ') GROUP BY id ORDER BY id LIMIT 5001').all<Ledger>()
   ]);
