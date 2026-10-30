@@ -2,6 +2,7 @@ import type { SherDatabase } from '../../../db/types.js';
 import type { LiveReportQuery, LiveReportPage, LiveReportRow } from './types.js';
 import { liveReportCatalog } from './catalog.js';
 import { LiveReportQueryError, parseLiveReportQuery, parseLiveReportRange } from './query.js';
+import { readSalesProfit } from './sales-profit.js';
 
 function json(data:unknown,status=200):Response {
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
@@ -51,12 +52,13 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
         {id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],reports:liveReportCatalog});
     if(path==='/api/reports/v2/rows') {
       const query=parseLiveReportQuery(url);
-      return json(query.report==='sales'?await salesRows(db,query):unavailable(query));
+      return json(query.report==='sales'?await salesRows(db,query):
+        query.report==='profit'?await readSalesProfit(db,query):unavailable(query));
     }
     if(path==='/api/reports/v2/summary') {
       const query=parseLiveReportQuery(url);
-      return json({ok:true,range:{from:query.from,to:query.to},metrics:[],coverage:{
-        status:'unavailable',reason:'Verified dashboard aggregates are not yet available.'}});
+      const result=await readSalesProfit(db,{...query,report:'profit'});
+      return json({ok:true,range:result.range,metrics:result.metrics,coverage:result.coverage});
     }
     if(path==='/api/reports/v2/audit') {
       const range=parseLiveReportRange(url);
