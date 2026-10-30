@@ -7,7 +7,7 @@ import {
   getSaleReturnDataRoute, getSalesByPhoneRoute, getSalesManagementRoute, getSalesReturnDetailRoute,
   getSalesReturnHistoryRoute, getSaleUpdateDataRoute, receiveCustomerPaymentRoute,
   searchSalesInvoicesForReturnRoute, startCashSessionRoute, updateSaleRoute,
-  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute, getStoreCreditAccountRoute
+  getMixedSaleReversalPreviewRoute, reverseMixedSaleRoute, getStoreCreditAccountRoute, getStoreCreditReconciliationRoute
 } from './service.js';
 
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
@@ -28,6 +28,8 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   if (path === '/api/sales-returns' && request.method === 'POST') return completeSalesReturnRoute(db, await readBody<any>(request), user);
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
+  if(path==='/api/pos/store-credit/reconciliation' && request.method==='GET')
+    return getStoreCreditReconciliationRoute(db,user);
   const creditMatch=path.match(/^\/api\/pos\/store-credit\/([^/]+)$/);
   if(creditMatch && request.method==='GET')return getStoreCreditAccountRoute(db,decodeURIComponent(creditMatch[1]),user);
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
