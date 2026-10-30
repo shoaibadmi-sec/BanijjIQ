@@ -5,7 +5,7 @@ import {
   getBankAccountsRoute, createBankAccountRoute, updateBankAccountRoute, setBankAccountStatusRoute,
   getBankReconciliationRoute, getBankLedgerBootstrapRoute, getBankLedgerRoute, addBankManualEntryRoute, reverseBankEntryRoute,
   transferBankRoute, reverseBankTransferRoute, getBankTransfersRoute, getFinanceBootstrapRoute, addFinancePersonRoute,
-  setFinancePersonStatusRoute, updateFinancePersonRoute, addFinanceTransactionRoute, getFinanceLedgerRoute, getFinanceTransactionRoute,
+  setFinancePersonStatusRoute, updateFinancePersonRoute, addFinanceTransactionRoute, getFinanceLedgerRoute, getFinancePersonLedgerRoute, getFinanceTransactionRoute,
   updateFinanceTransactionRoute, deleteFinanceTransactionRoute
 } from './service.js';
 
@@ -20,6 +20,8 @@ export async function handleBankFinanceRoute(db: SherDatabase, request: Request,
   if (path === '/api/finance/transactions' && request.method === 'POST') return addFinanceTransactionRoute(db, await readBody<FinanceInput>(request), auth);
   if (path === '/api/finance/ledger' && request.method === 'GET') return getFinanceLedgerRoute(db, url);
 
+  const personLedgerMatch=path.match(/^\/api\/finance\/persons\/([^/]+)\/ledger$/);
+  if(personLedgerMatch && request.method==='GET')return getFinancePersonLedgerRoute(db,decodeURIComponent(personLedgerMatch[1]),url);
   const financePersonStatusMatch = path.match(/^\/api\/finance\/persons\/([^/]+)\/status$/);
   if (financePersonStatusMatch && request.method === 'PUT') { const body=await readBody<{status?:string}>(request); return setFinancePersonStatusRoute(db, decodeURIComponent(financePersonStatusMatch[1]), cleanText(body.status)); }
   const financePersonMatch = path.match(/^\/api\/finance\/persons\/([^/]+)$/);
