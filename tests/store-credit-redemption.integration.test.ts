@@ -120,6 +120,14 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   });
   assert.equal(conflictingReplay.status,409,JSON.stringify(conflictingReplay));
   assert.match(String(conflictingReplay.error),/already used for different sale details/);
+  // A request key is also bound to its original tender. Switching a
+  // successful credit checkout to Cash on replay must not manufacture a
+  // cash receipt or return an invoice with the wrong settlement method.
+  const changedTenderReplay=await api('POST','/api/pos/sales',{
+   ...saleInput,paymentMethod:'Cash'
+  });
+  assert.equal(changedTenderReplay.status,409,JSON.stringify(changedTenderReplay));
+  assert.match(String(changedTenderReplay.error),/already used for different sale details/);
   assert.equal(row('SELECT COUNT(*) n FROM sales').n,beforeAuditFailure.sales+1);
   assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,beforeAuditFailure.stock-2);
   assert.equal(row("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE entry_type='REDEEM'").n,1);
