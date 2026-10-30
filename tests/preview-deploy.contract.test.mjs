@@ -8,17 +8,23 @@ const workflow=read('.github/workflows/hisabiq-react-build.yml');
 const generated=read('scripts/preview/build-config.mjs');
 const smoke=read('scripts/preview/remote-smoke.mjs');
 
-test('preview deploy requires manual input, explicit confirmation and feature branch',()=>{
+test('Phase 3G2 preview requires manual authorization and exact approved branch',()=>{
   for(const term of [
     "github.event_name == 'workflow_dispatch'",
     "inputs.deploy_hosted_preview == true",
     "inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY'",
-    "github.ref == 'refs/heads/feat/hisabiq-react-api'",
+    "github.ref == 'refs/heads/feat/hisabiq-store-credit-liability-phase3g2'",
     'environment:',
     'name: hisabiq-react-preview',
     'needs: react-build'
   ])assert.ok(workflow.includes(term),term);
   assert.ok(!workflow.includes('deploy-hosted-preview:\n    runs-on:'));
+  assert.equal(workflow.split("github.ref == 'refs/heads/feat/hisabiq-store-credit-liability-phase3g2'").length-1,2,
+    'both deploy and acceptance must be restricted to the reviewed phase branch');
+  const deploy=workflow.split('  deploy-hosted-preview:\n')[1]?.split('  accept-hosted-preview:\n')[0];
+  assert.ok(deploy?.includes('ref: ${{ github.sha }}'),
+    'hosted deployment must check out the exact dispatched commit, not a moving branch');
+  assert.ok(!workflow.includes('  push:\n'), 'remote preview must never deploy on push');
 });
 
 test('preview Worker and D1 names are fixed and protected from production IDs',()=>{
