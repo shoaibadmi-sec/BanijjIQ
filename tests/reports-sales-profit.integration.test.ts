@@ -29,6 +29,7 @@ function fixture() {
   db.native.prepare(`INSERT INTO expenses
     (expense_id,expense_date,category_id,category_name,amount,payment_method)
     VALUES ('EXP-REPORT-001','2026-10-18','CAT-OPERATING','Operating costs',20,'Cash')`).run();
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,debit,credit) VALUES ('CB-EXP-REPORT-001','2026-10-18','Expense','EXP-REPORT-001',20,0)").run();
   return db;
 }
 function metric(result:Awaited<ReturnType<typeof readSalesProfit>>,key:string) {
@@ -128,4 +129,16 @@ test('unposted draft invoices never enter recorded sales or profit',async()=>{
   assert.equal(metric(report,'grossSales').valueMinor,22000);
   assert.ok(!report.rows.some(x=>x.sourceId==='SALE-DRAFT-001'));
  }finally{db.close();}
+});
+
+test('posted FIFO sale with expense missing cash-book proof cannot certify net profit',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare("DELETE FROM cash_book WHERE entry_id='CB-EXP-REPORT-001'").run();
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(metric(report,'operatingExpenses').valueMinor,null);
+  assert.equal(metric(report,'netProfit').valueMinor,null);
+  assert.equal(report.coverage.status,'incomplete');
+  assert.match(report.coverage.reason,/expense.*posting|money.book|expense.*source/i);
+ } finally{db.close();}
 });
