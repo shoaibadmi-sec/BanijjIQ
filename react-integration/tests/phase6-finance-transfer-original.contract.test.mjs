@@ -1,0 +1,22 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {patchSourceFinance} from '../../scripts/preview/patch-source-finance.mjs';
+
+const read=path=>readFileSync(new URL('../../'+path,import.meta.url),'utf8');
+const source=read('apps/hisabiq-web/src/pages/Finance.tsx');
+
+test('source Finance transfer dialog awaits one real API posting before closing',()=>{
+ const page=patchSourceFinance(source);
+ assert.match(page,/postBankTransfer\(/);
+ assert.match(page,/clientRequestId/);
+ assert.match(page,/const save = async \(\) =>/);
+ assert.match(page,/await onSave\(/);
+ assert.match(page,/disabled=\{pending\}/);
+ assert.match(page,/date: businessToday\(\)/);
+ assert.doesNotMatch(page,/id: `TRF-\$\{String\(42/);
+ const adapter=read('react-integration/overlay/src/integration/phase6FinancePosting.ts');
+ assert.match(adapter,/toVerifiedTransferPost/);
+ assert.match(adapter,/Number.isSafeInteger/);
+ assert.match(adapter,/Math.round\(.*10000/);
+});
