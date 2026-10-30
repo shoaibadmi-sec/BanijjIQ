@@ -234,3 +234,41 @@ test('FIFO lot belonging to a different product cannot certify sale profitabilit
     'invalid FIFO source detection must not modify stock or finance');
  }finally{db.close();}
 });
+
+
+test('two return documents cannot restore the same original FIFO lot twice',async()=>{
+ const db=fixture();
+ try {
+  // Original invoice sold one unit from each of two separate FIFO lots.
+  db.native.prepare("UPDATE stock_lots SET original_quantity=1 WHERE lot_id='LOT-FIFO-001'").run();
+  db.native.prepare("UPDATE sale_item_lots SET quantity=1 WHERE lot_id='LOT-FIFO-001'").run();
+  db.native.prepare(`INSERT INTO stock_lots
+    (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost)
+    VALUES ('LOT-FIFO-002','PROD-FIFO-001','PURCHASE','BUY-002',1,0,70)`).run();
+  db.native.prepare(`INSERT INTO sale_item_lots (invoice_id,product_id,lot_id,quantity,unit_cost)
+    VALUES ('SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-002',1,70)`).run();
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-LOT-1','2026-10-19','SALE-PROFIT-001','Cash',110,'First unit'),
+           ('RETURN-LOT-2','2026-10-20','SALE-PROFIT-001','Cash',110,'Second unit')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110),
+           ('RETURN-LOT-2','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  // Each document balances on its own, and the invoice-wide quantities
+  // balance, but both illegally restore the same 1-unit historical lot.
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',1),
+           ('RETURN-LOT-2','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',1)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(report.coverage.status,'incomplete','a sold FIFO lot cannot be restored more than sold');
+  assert.match(report.coverage.reason,/lot.*(exceed|restore|original)|return.*lot/i);
+  assert.equal(metric(report,'netSales').valueMinor,0,'actual invoice and refunds remain visible');
+  for(const key of ['fifoCogs','grossProfit','netProfit'])
+   assert.equal(metric(report,key).valueMinor,null,key+' must fail closed');
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'read-only reports must not correct historical FIFO allocations');
+ }finally{db.close();}
+});
