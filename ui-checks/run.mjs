@@ -84,7 +84,10 @@ function startMocking(context,calls,creditFixture=false){
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
-      ok:true,products:[...posProducts,posMixedProduct],customers:creditFixture?[{id:'CUS-CREDIT-E2E',name:'Credit UI Buyer',phone:'01000009801',fatherName:'',address:'',currentDue:50,storeCreditCents:15000,storeCreditBlocked:false}]:[],bankAccounts:[],
+      ok:true,products:[...posProducts,posMixedProduct],customers:creditFixture?[{id:'CUS-CREDIT-E2E',name:'Credit UI Buyer',phone:'01000009801',fatherName:'',address:'',currentDue:50,storeCreditCents:15000,storeCreditBlocked:false}]:[],bankAccounts:creditFixture?[
+        {id:'UI-BANK-1',name:'UI Bank',accountType:'Bank'},
+        {id:'UI-MOBILE-1',name:'UI Mobile',accountType:'Mobile Banking'}
+      ]:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
       activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
       invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop','Shop Name Bangla':'টেস্ট দোকান',
@@ -693,6 +696,44 @@ try{
       assert.match(await page.locator('[data-split-review]').innerText(),/Store Credit/);
       assert.equal(api.filter(x=>x.path==='/api/pos/sales').length,0);
       await page.getByRole('button',{name:'Cancel'}).click();
+      results.apiCalls.push(...api);
+    }finally{await ctx.close();}
+  });
+  await withCheck('G2-G bank+mobile+Store Credit selects exact active accounts before one post',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    try{
+      await page.goto(base+'/#/app/pos');
+      await page.locator('[data-live-pos]').waitFor();
+      await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+      const name=page.getByRole('combobox',{name:'Customer name'});
+      await name.fill('Credit UI Buyer');await name.press('Tab');
+      await page.locator('[data-pos-store-credit-balance]').waitFor();
+      await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+      await page.getByRole('combobox',{name:'Split method 1'}).selectOption('Bank');
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('20');
+      await page.getByRole('combobox',{name:'Split account 1'}).selectOption('UI-BANK-1');
+      await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('60');
+      await page.getByRole('button',{name:'Add payment · আরও মাধ্যম'}).click();
+      await page.getByRole('combobox',{name:'Split method 3'}).selectOption('Mobile Banking');
+      await page.getByRole('spinbutton',{name:'Split amount 3'}).fill('40');
+      await page.getByRole('combobox',{name:'Split account 3'}).selectOption('UI-MOBILE-1');
+      assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isEnabled(),true);
+      await screenshot(page,'phase3g2-split-bank-mobile-credit-768');
+      await page.getByRole('button',{name:'Review and post real sale'}).click();
+      await page.locator('[data-split-review]').waitFor();
+      await page.getByRole('button',{name:'Confirm and post'}).click();
+      const posts=api.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales');
+      assert.equal(posts.length,1);
+      assert.deepEqual(posts[0].payload.tenders,[
+        {method:'Bank',amountCents:2000,bankAccountId:'UI-BANK-1'},
+        {method:'Store Credit',amountCents:6000},
+        {method:'Mobile Banking',amountCents:4000,bankAccountId:'UI-MOBILE-1'}
+      ]);
+      assert.equal(posts[0].payload.customerId,'CUS-CREDIT-E2E');
+      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
       results.apiCalls.push(...api);
     }finally{await ctx.close();}
   });
