@@ -114,6 +114,7 @@ function permissionRouteInfo(path:string,method:string):{moduleKey:string;action
 
 export async function enforceRequestPermission(db:SherDatabase,user:AuthUser,path:string,method:string):Promise<Response|null>{
   const info=permissionRouteInfo(path,method); if(!info)return null;
+  if(path==='/api/products/bundle-fifo-preview'&&method==='POST') return requireModulePermission(db,user,'products','view');
   if(info.action!=='delete') return requireModulePermission(db,user,info.moduleKey,info.action);
   if(info.moduleKey==='users'||info.moduleKey==='roles') return requireManagementDelete(db,user,info.moduleKey as 'users'|'roles');
   const date=await resolveDeleteRecordDate(db,path,info.moduleKey);
