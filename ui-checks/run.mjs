@@ -570,6 +570,32 @@ try{
       }finally{await ctx.close();}
     });
   }
+  // 5H4: reuse the original Customer Performance report table; group the
+  // authenticated Sales Register source without preview-store customer data.
+  for(const width of [390,768,1440]){
+    await withCheck('native Customer Performance groups real sales '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try{
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=customer-sales&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        const row=page.locator('[data-report-row]').first();
+        await row.getByRole('button',{name:'Real API Mock Buyer'}).waitFor({timeout:10000});
+        const text=await row.innerText();
+        assert.match(text,/৳\s*120(?:\D|$)/,'customer amount must come from persisted invoice');
+        assert.match(text,/৳\s*45(?:\D|$)/,'customer paid must be persisted amount');
+        assert.match(text,/৳\s*75(?:\D|$)/,'customer due must be persisted amount');
+        assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/reports/v2/rows'),
+          'customer report must reuse authenticated sales source API');
+        assert.equal(await page.locator('[data-live-reports]').count(),0);
+        await inspectLayout(page,'native-customer-sales-'+width);
+        await screenshot(page,'native-customer-sales-'+width);
+        await audit(page,'native-customer-sales-'+width);
+      }finally{await ctx.close();}
+    });
+  }
   for(const width of [390,768,1440]){
     await withCheck('native HisabIQ Purchase Register reads posted backend purchase '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
