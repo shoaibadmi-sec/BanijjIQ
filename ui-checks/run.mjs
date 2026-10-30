@@ -749,6 +749,75 @@ try{
     });
   }
   for(const width of [390,768,1440]){
+    await withCheck('Phase 4I-B paid purchase UI and double-submit guard '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      let paidPosts=0;
+      await ctx.route('**/api/purchases',async route=>{
+        if(route.request().method()==='GET')return route.fulfill({
+          status:200,contentType:'application/json',body:JSON.stringify({ok:true,purchases:[
+            {purchaseId:'PUR-UI-PAID',purchaseDate:'2026-10-30',
+             supplierId:'SUP-UI-001',supplierName:'Khan Hardware',grandTotal:240,
+             paidAmount:40,dueAmount:200,paymentStatus:'Partial',items:[]}
+          ]})});
+        const body=route.request().postDataJSON();
+        paidPosts++;
+        calls.push({method:'ASSERT',path:'/api/purchases/paid',payload:body});
+        assert.equal(body.supplierId,'SUP-UI-001');
+        assert.equal(body.paymentMethod,'Bank');
+        assert.equal(body.bankAccountId,'BANK-UI-1');
+        assert.equal(body.paidAmount,40);
+        assert.match(body.clientRequestId,/^[0-9a-f-]{32,36}$/i);
+        assert.deepEqual(body.items,[{productId:'PRD-000001',qty:3,unitPrice:80}]);
+        return route.fulfill({status:200,contentType:'application/json',
+          body:JSON.stringify({ok:true,purchaseId:'PUR-UI-PAID',grandTotal:240,dueAmount:200})});
+      });
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/purchases/new');
+      await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+      assert.equal(await page.getByRole('combobox',{name:'Purchase payment method'}).inputValue(),'Due');
+      await page.getByRole('combobox',{name:'Search supplier name, phone or ID'}).fill('Khan');
+      await page.getByRole('option',{name:/Khan Hardware/}).click();
+      await page.getByRole('combobox',{name:'Product'}).selectOption('PRD-000001');
+      await page.getByRole('spinbutton',{name:'Purchase quantity'}).fill('3');
+      await page.getByRole('spinbutton',{name:'Purchase unit cost'}).fill('80');
+      await page.getByRole('combobox',{name:'Purchase payment method'}).selectOption('Bank');
+      await page.getByRole('spinbutton',{name:'Purchase paid amount'}).fill('241');
+      await page.getByRole('combobox',{name:'Purchase bank account'}).selectOption('BANK-UI-1');
+      assert.equal(await page.getByRole('button',{name:/Confirm Paid Purchase/}).isDisabled(),true);
+      await page.getByRole('spinbutton',{name:'Purchase paid amount'}).fill('40');
+      await page.getByText('৳200',{exact:false}).first().waitFor();
+      await inspectLayout(page,'phase4i-paid-purchase-'+width);
+      await screenshot(page,'phase4i-paid-purchase-'+width);
+      if(width===390)await audit(page,'phase4i-paid-purchase-390');
+      await page.getByRole('button',{name:/Confirm Paid Purchase/}).dblclick();
+      await page.locator('[data-live-purchases]').waitFor({timeout:12000});
+      await page.getByText('PUR-UI-PAID').waitFor();
+      assert.equal(paidPosts,1,'One cash movement and purchase per double-click');
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+  await withCheck('Phase 4I-B mixed-unit paid tender stays disabled while Due works',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:940},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/purchases/new');
+    await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+    await page.getByRole('combobox',{name:'Search supplier name, phone or ID'}).fill('Khan');
+    await page.getByRole('option',{name:/Khan Hardware/}).click();
+    await page.getByRole('combobox',{name:'Product'}).selectOption('PRD-000002');
+    await page.locator('[data-multi-quantity]').waitFor({timeout:10000});
+    await page.getByRole('combobox',{name:'Purchase payment method'}).selectOption('Cash');
+    await page.getByText(/mixed.unit.*due|due.*mixed.unit/i).first().waitFor();
+    assert.equal(await page.getByRole('button',{name:/Confirm Paid Purchase/}).isDisabled(),true);
+    await page.getByRole('combobox',{name:'Purchase payment method'}).selectOption('Due');
+    assert.equal(await page.getByRole('button',{name:/Confirm Due Purchase/}).isDisabled(),false);
+    assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/purchases').length,0);
+    await ctx.close();
+  });
+  for(const width of [390,768,1440]){
     await withCheck('Phase 4B joined 3-unit purchase and price unit '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
       const calls=[];await startMocking(ctx,calls);
