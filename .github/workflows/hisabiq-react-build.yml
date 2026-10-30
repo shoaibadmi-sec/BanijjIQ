@@ -47,6 +47,7 @@ jobs:
           node --test react-integration/tests/phase7h2-original-lots-source.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/original-pos-api-preview.contract.test.mjs
+          node --test react-integration/tests/original-pos-customer-source.contract.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
           node --test react-integration/tests/phase4-purchase-route.test.mjs
@@ -60,6 +61,7 @@ jobs:
           npm ci
           npm run backend:build
           node --import tsx --test react-integration/tests/original-pos-api-catalog.integration.test.ts
+          node --import tsx --test react-integration/tests/original-pos-customer-api.integration.test.ts
           node --import tsx --test tests/phase7g-migration-runtime.test.ts
           node --import tsx --test tests/preview-demo-seed.integration.test.ts
           node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
