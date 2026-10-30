@@ -190,3 +190,22 @@ test('G2-Q forced final-audit rejection rolls back Cash, ISSUE, FIFO and invento
     assert.equal((f.q.prepare("SELECT COUNT(*) n FROM customer_store_credit_entries WHERE source_id='SRT-CR-ROLLBACK'").get() as any).n,0);
   }finally{f.db.close();}
 });
+
+test('G2-Q accepts original Cash and Store Credit tenders in either row order',async()=>{
+  const f=fixture(false);
+  try{
+    // Tender position is a UI choice, not accounting identity.
+    f.q.exec("UPDATE sale_tender_allocations SET line_number=9 WHERE invoice_id='CR-S' AND method='Cash'");
+    f.q.exec("UPDATE sale_tender_allocations SET line_number=1 WHERE invoice_id='CR-S' AND method='Store Credit'");
+    f.q.exec("UPDATE sale_tender_allocations SET line_number=2 WHERE invoice_id='CR-S' AND method='Cash'");
+    const posted=await postCashCreditPartialSplitReturn(f.db,{
+      invoiceId:'CR-S',productId:'CR-P',quantity:1,
+      requestId:'CR-REVERSE-TENDER',reason:'Cash and Store Credit sources were independently verified'
+    });
+    assert.deepEqual(posted.allocations,[
+      {sourceKey:'Cash',amountCents:400},{sourceKey:'Store Credit',amountCents:600}
+    ]);
+    assert.equal((f.q.prepare("SELECT delta_cents n FROM customer_store_credit_entries WHERE source_id='SRT-CR-REVERSE-TENDER'").get() as any).n,600);
+    assert.equal((f.q.prepare("SELECT debit n FROM cash_book WHERE reference='SRT-CR-REVERSE-TENDER'").get() as any).n,4);
+  }finally{f.db.close();}
+});
