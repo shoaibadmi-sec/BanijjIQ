@@ -51,6 +51,7 @@ jobs:
         run: |
           git submodule status
           node --test react-integration/tests/contract.test.mjs
+          node --test react-integration/tests/reports-two-tabs.contract.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
