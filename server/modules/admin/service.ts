@@ -19,6 +19,11 @@ async function countActiveAdmins(db:SherDatabase):Promise<number>{
   const r=await db.prepare(`SELECT COUNT(*) total FROM app_users WHERE role='admin' AND status='Active'`).first<{total:number}>();
   return Number(r?.total||0);
 }
+function requireAdministratorForAdminTarget(actor:AuthUser,targetRole:string):Response|null{
+  return targetRole==='admin' && actor.role!=='admin'
+    ? error('Only an Administrator can manage an Administrator account.',403)
+    : null;
+}
 async function validAssignableRole(db:SherDatabase,role:string):Promise<boolean>{
   if(role==='admin')return true;
   return !!(await db.prepare(`SELECT 1 ok FROM app_roles WHERE role_name=? LIMIT 1`).bind(role).first<any>());
@@ -52,6 +57,7 @@ export async function createManagedUserRoute(db:SherDatabase,input:any,actor:Aut
 export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
+  const adminDenied=requireAdministratorForAdminTarget(actor,existing.role);if(adminDenied)return adminDenied;
   const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role);
   if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
   if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
@@ -64,7 +70,8 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
 }
 export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
-  if(!(await db.prepare(`SELECT 1 ok FROM app_users WHERE user_id=?`).bind(id).first<any>()))return error('User not found.',404);
+  const target=await db.prepare(`SELECT role FROM app_users WHERE user_id=?`).bind(id).first<{role:string}>();if(!target)return error('User not found.',404);
+  const adminDenied=requireAdministratorForAdminTarget(actor,target.role);if(adminDenied)return adminDenied;
   const password=String(input.newPassword||'');if(password.length<6)return error('Password must be at least 6 characters.');
   const hashed=await hashPassword(password);
   await db.prepare(`UPDATE app_users SET password_hash=?,password_salt=?,updated_at=datetime('now') WHERE user_id=?`).bind(hashed.hash,hashed.salt,id).run();
@@ -74,6 +81,7 @@ export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,in
 export async function setManagedUserStatusRoute(db:SherDatabase,id:string,statusRaw:string,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const row=await db.prepare(`SELECT role,status FROM app_users WHERE user_id=?`).bind(id).first<any>();if(!row)return error('User not found.',404);
+  const adminDenied=requireAdministratorForAdminTarget(actor,row.role);if(adminDenied)return adminDenied;
   const status=statusRaw==='Active'?'Active':'Inactive';
   if(status==='Inactive'&&row.role==='admin'&&row.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain.');
   await db.prepare(`UPDATE app_users SET status=?,updated_at=datetime('now') WHERE user_id=?`).bind(status,id).run();
@@ -84,6 +92,7 @@ export async function deleteManagedUserRoute(db:SherDatabase,id:string,actor:Aut
   const denied=await requireManagementDelete(db,actor,'users');if(denied)return denied;
   if(actor.userId===id)return error('You cannot delete your own account while logged in.');
   const row=await db.prepare(`SELECT role,status FROM app_users WHERE user_id=?`).bind(id).first<any>();if(!row)return error('User not found.',404);
+  const adminDenied=requireAdministratorForAdminTarget(actor,row.role);if(adminDenied)return adminDenied;
   if(row.role==='admin'&&row.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain and cannot be deleted.');
   await db.batch([
     db.prepare(`DELETE FROM auth_sessions WHERE user_id=?`).bind(id),
