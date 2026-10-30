@@ -23,7 +23,7 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     const setup = await call('POST','/api/setup/admin',{fullName:'Report Test Admin',phone:'01000008765',password:'LocalTestingPass2026'});
     assert.equal(setup.status,200);
     token = setup.token as string;
-    db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES ('INV-REPORT-001','2026-10-15','Test Buyer','01000000121',120,'Cash','Paid')").run();
+    db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status) VALUES ('INV-REPORT-001','2026-10-15','Test Buyer','01000000121',120,45,75,'Cash','Partial')").run();
     db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status,status) VALUES ('INV-DRAFT-UNPOSTED','2026-10-17','Unposted Buyer','01000000125',900,'Cash','Unpaid','Draft')").run();
     // A valid session for a non-admin without reports.view must not bypass the route guard.
     const adminToken=token;
@@ -52,6 +52,11 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.ok(!rows.rows.some((x:any)=>x.sourceId==='INV-DRAFT-UNPOSTED'), 'unposted invoices cannot appear in Sales Register');
     assert.deepEqual(rows.rows.map((x:any)=>x.sourceId),['INV-REPORT-001']);
     assert.equal(rows.rows[0].amountMinor,12000);
+    // 5H2: native HisabIQ Sales Register has Paid and Due columns;
+    // they must be backed by the saved split, never inferred from sale total.
+    assert.equal(rows.rows[0].paidMinor,4500,'Paid comes from persisted sales.paid_amount');
+    assert.equal(rows.rows[0].dueMinor,7500,'Due comes from persisted sales.due_amount');
+    assert.equal(rows.rows[0].sourceModule,'sales');
     assert.equal(rows.coverage.status,'needs-review');
     const invalid = await call('GET','/api/reports/v2/rows?report=sales&pageSize=500');
     assert.equal(invalid.status,400);
