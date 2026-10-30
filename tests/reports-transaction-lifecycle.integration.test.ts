@@ -127,15 +127,43 @@ test('actual purchase → FIFO sale → cash return → supplier settlement reco
   profit=await report('profit');ok(profit);
   assert.equal(metric(profit,'netProfit').valueMinor,4500,'supplier payment settles debt; not profit/expense');
   assert.equal(metric(profit,'operatingExpenses').valueMinor,0);
+  // Return unused purchased units after the sale and supplier settlement.
+  // The original sold FIFO cost must remain frozen at its purchase value.
+  const purchaseReturn=await api('POST','/api/purchase-returns',{
+   purchaseId:purchase.purchaseId,refundMethod:'Supplier Credit',
+   reason:'Two defective unused units',items:[{productId:pid,qty:2,unitPrice:20}]
+  });
+  ok(purchaseReturn);
+  assert.equal(purchaseReturn.totalReturnAmount,40);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,110);
+  assert.equal(one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,110);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',pid).n,5);
+  assert.equal(one('SELECT remaining_quantity AS n FROM stock_lots WHERE lot_id=?',bought.lot_id).n,5);
+  const payableAfterReturn=await report('payables');ok(payableAfterReturn);
+  assert.equal(metric(payableAfterReturn,'payablesBalance').valueMinor,11000,
+   'purchase return is supplier credit, not a sale or receipt');
+  const stockAfterReturn=await report('stock');ok(stockAfterReturn);
+  assert.equal(metric(stockAfterReturn,'inventoryValue').valueMinor,10000);
+  profit=await report('profit');ok(profit);
+  assert.equal(metric(profit,'netProfit').valueMinor,4500,'purchase credit does not alter historical sold COGS');
+  assert.equal(metric((await report('cash')),'cashBookBalance').valueMinor,5500,
+   'supplier credit does not manufacture a cash receipt');
+  const rejectedDelete=await api('DELETE','/api/purchases/'+purchase.purchaseId,
+   {reason:'Cannot delete purchase after stock returned and supplier paid'});
+  assert.notEqual(rejectedDelete.status,200,'posted and partly returned purchase cannot be deleted');
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,110);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',pid).n,5);
+
   const replay=await api('POST','/api/purchases/supplier-settlements',settlementPayload);ok(replay);
   assert.equal(replay.idempotent,true);
-  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,150);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,110);
   const saleReplay=await api('POST','/api/pos/sales',salePayload);ok(saleReplay);
   assert.equal(saleReplay.invoice.invoiceId,invoice);
   assert.equal(count('sales'),1);
   assert.equal(count('sales_returns'),1);
   assert.equal(count('supplier_settlement_entries'),1);
-  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',pid).n,7);
+  assert.equal(count('purchase_returns'),1);
+  assert.equal(one('SELECT current_stock AS n FROM products WHERE product_id=?',pid).n,5);
  });
 });
 
