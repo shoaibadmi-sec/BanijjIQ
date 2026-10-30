@@ -1,6 +1,7 @@
 import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
+import {getSplitSaleReversalPreviewRoute} from './split-reversal.js';
 import {getStoreCreditCasesRoute,getStoreCreditCaseDetailRoute,resolveStoreCreditCaseRoute} from './store-credit-cases.js';
 import {getStoreCreditOutstandingImpactRoute} from './store-credit-outstanding-impact.js';
 import {
@@ -58,6 +59,9 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnDataMatch = path.match(/^\/api\/sales-returns\/([^/]+)\/data$/);
   if (salesReturnDataMatch && request.method === 'GET') return getSaleReturnDataRoute(db, decodeURIComponent(salesReturnDataMatch[1]));
 
+  const splitReversalMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-reversal$/);
+  if(splitReversalMatch&&request.method==='GET')
+    return getSplitSaleReversalPreviewRoute(db,decodeURIComponent(splitReversalMatch[1]));
   const reverseMatch=path.match(/^\/api\/sales-management\/([^/]+)\/reverse$/);
   if(reverseMatch && request.method==='GET')return getMixedSaleReversalPreviewRoute(db,decodeURIComponent(reverseMatch[1]));
   if(reverseMatch && request.method==='POST')return reverseMixedSaleRoute(
