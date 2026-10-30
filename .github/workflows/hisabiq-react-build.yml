@@ -70,6 +70,7 @@ jobs:
           node --test react-integration/tests/reports-two-tabs.contract.test.mjs
           node --test react-integration/tests/phase6-finance-contract.test.mjs
           node --test react-integration/tests/phase6-bank-transfer-contract.test.mjs
+          node --test react-integration/tests/phase6-cash-session-contract.test.mjs
           node --test react-integration/tests/reports-live-route.test.mjs
           node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
