@@ -47,7 +47,8 @@ const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
 const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
 const reportsAnchor = '<Route path="reports" element={<Reports />} />';
-if (![importAnchor, posAnchor, productsAnchor, reportsAnchor].every(anchor => app.includes(anchor))) {
+const financeAnchor = '<Route path="finance" element={<Finance />} />';
+if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, financeAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
@@ -55,6 +56,7 @@ app = app.replace(importAnchor, [
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
   "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
+  "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
   importAnchor
 ].join('\n'));
 app = app.replace(posAnchor,
@@ -63,5 +65,7 @@ app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
   '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
+app = app.replace(financeAnchor,
+  '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
 writeFileSync(appPath, app);
 console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
