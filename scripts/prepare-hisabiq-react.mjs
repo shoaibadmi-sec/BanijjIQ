@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
+import { patchLiveProductSettings } from './preview/patch-live-product-settings.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 
 const root = resolve(process.cwd());
@@ -33,6 +34,9 @@ const sourceProductsPath=join(sourceWeb,'src/pages/Products.tsx');
 const generatedProductsPath=join(web,'src/pages/Products.tsx');
 // Pinned source never changes; the build-copy transform fails closed on unknown JSX.
 writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
+const originalSettingsPath=join(sourceWeb,'src/components/products/ProductSettings.tsx');
+const generatedSettingsPath=join(web,'src/components/products/ProductSettings.tsx');
+writeFileSync(generatedSettingsPath,patchLiveProductSettings(readFileSync(originalSettingsPath,'utf8')));
 
 // Phase 5: simplify generated Reports navigation without touching the pinned React source.
 const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
