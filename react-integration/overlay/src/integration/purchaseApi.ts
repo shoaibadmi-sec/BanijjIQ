@@ -65,7 +65,7 @@ function exact4(n:number,name:string,positive:boolean){
     throw new Error(name+' must be a valid non-negative value with up to 4 decimals.');
   return n;
 }
-export function validateDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[]){
+export function validateDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[],purchasePlanOrderId=''){
  if(!supplier?.id)throw Error('Select a saved supplier.');
  if(supplier.needsReconciliation)throw Error('Supplier balance needs reconciliation.');
  if(lines.length===0)throw Error('Add at least one product.');
@@ -81,14 +81,14 @@ export function validateDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurc
    exact4(l.qty,'Quantity',true);exact4(l.unitPrice,'Unit cost',false);
   }
  }
- return {supplierId:supplier.id,paidAmount:0,discount:0,
+ return {supplierId:supplier.id,paidAmount:0,discount:0,purchasePlanOrderId,
   items:lines.map(l=>l.unitQuantities!==undefined
    ?{productId:l.productId,unitQuantities:l.unitQuantities,unitProfileRevision:l.unitProfileRevision,
       priceUnit:l.priceUnit,unitPrice:l.unitPrice}
    :{productId:l.productId,qty:l.qty,unitPrice:l.unitPrice})};
 }
-export async function createDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[]){
-  const payload=validateDuePurchase(supplier,lines);
+export async function createDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[],purchasePlanOrderId=''){
+  const payload=validateDuePurchase(supplier,lines,purchasePlanOrderId);
   return request<PurchaseCreated>('/api/purchases',{method:'POST',body:JSON.stringify(payload)});
 }
 
@@ -152,4 +152,34 @@ export async function reverseSettlement(id:string,reason:string){
  return request<{ok:true;settlementId:string;reversalLedgerId:string;newDue:number}>(
  '/api/purchases/supplier-settlements/'+encodeURIComponent(id)+'/reverse',{
  method:'POST',body:JSON.stringify({reason})});
+}
+
+export interface PlanSupplier{id:string;name:string}
+export interface PlanRow{productId:string;productName:string;currentStock:number;suggestedQty:number;
+ plannedQty:number;included:boolean;supplierId:string;lastPurchaseCost:number}
+export interface PlanSummary{planId:string;planNo:string;status:string;itemCount:number;totalInvestment:number}
+export interface OrderSummary{orderId:string;orderNo:string;status:string;supplierId:string;
+ supplierName:string;totalQty:number;convertedPurchaseId:string}
+export async function analyzePurchasePlan(){
+ return request<{ok:true;rows:PlanRow[];suppliers:PlanSupplier[]}>('/api/purchases/planner/analyze');
+}
+export async function savePurchasePlan(items:Array<{productId:string;supplierId:string;plannedQty:number;included:boolean}>){
+ return request<{ok:true;planId:string}>('/api/purchases/planner/plans',{
+  method:'POST',body:JSON.stringify({items})});
+}
+export async function listPurchasePlans(){
+ const x=await request<{ok:true;plans:PlanSummary[]}>('/api/purchases/planner/plans');return x.plans;
+}
+export async function approvePurchasePlan(id:string){
+ return request<{ok:true;planId:string}>('/api/purchases/planner/plans/'+encodeURIComponent(id)+'/approve',{
+ method:'POST',body:'{}'});
+}
+export async function listPurchaseOrders(){
+ const x=await request<{ok:true;orders:OrderSummary[]}>('/api/purchases/planner/orders');return x.orders;
+}
+export async function getOrderToPurchase(id:string){
+ return request<{ok:true;purchase:{purchasePlanOrderId:string;orderNo:string;
+  supplierId:string;supplierName:string;
+  items:Array<{productId:string;productName:string;quantity:number;unitPrice:number}>}}>(
+ '/api/purchases/planner/orders/'+encodeURIComponent(id)+'/convert-data');
 }

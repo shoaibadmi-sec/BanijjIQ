@@ -2,6 +2,7 @@ import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Link,useNavigate,useSearchParams} from 'react-router-dom';
 import {LiveMixedPurchaseReturns} from './LiveMixedPurchaseReturns';
 import {LiveSupplierSettlements} from './LiveSupplierSettlements';
+import {LivePurchasePlans} from './LivePurchasePlans';
 import {ArrowLeft,Plus,RefreshCw,Search,Trash2} from 'lucide-react';
 import {Button} from '../components/Button';
 import {Input} from '../components/Input';
@@ -10,7 +11,7 @@ import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from '../compo
 import {canUseModule,useBackendSession} from './BackendGate';
 import {BackendRequestError,type BackendProduct,type PosProfilePreview} from './banijjApi';
 import {LiveMultiUnitQuantity} from './LiveMultiUnitQuantity';
-import {createDuePurchase,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,
+import {createDuePurchase,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,getOrderToPurchase,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,
  type DuePurchaseLine,type PurchaseSupplier,type PurchaseRecord} from './purchaseApi';
 
 type Line=DuePurchaseLine&{key:string;profile?:PosProfilePreview|null;profileBusy?:boolean;profileError?:string};
@@ -22,7 +23,7 @@ export function LivePurchasesPage(){
   const user=useBackendSession(),permitted=canUseModule(user,'purchase');
   const navigate=useNavigate();
   const [params]=useSearchParams();
-  const tab=params.get('tab')==='return'?'return':params.get('tab')==='payments'?'payments':'purchases';
+  const tab=params.get('tab')==='return'?'return':params.get('tab')==='payments'?'payments':params.get('tab')==='plans'?'plans':'purchases';
   const [items,setItems]=useState<PurchaseRecord[]>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
@@ -50,13 +51,14 @@ export function LivePurchasesPage(){
       <Link to="/app/purchases" className={'px-3 py-2 '+(tab==='purchases'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchases · ক্রয়</Link>
       <Link to="/app/purchases?tab=return" className={'px-3 py-2 '+(tab==='return'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Return · ক্রয় ফেরত</Link>
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
-      <span className="px-3 py-2 text-ink-500">Purchase Plans · Phase 4E</span>
+      <Link to="/app/purchases?tab=plans" className={'px-3 py-2 '+(tab==='plans'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Plans · পরিকল্পনা</Link>
     </nav>
     {tab==='return'?<LiveMixedPurchaseReturns
       purchaseId={params.get('purchaseId')||''}
       purchases={items} loading={loading}
       onRefresh={()=>void refresh()}/>:
     tab==='payments'?<LiveSupplierSettlements supplierId={params.get('supplierId')||''}/>:
+    tab==='plans'?<LivePurchasePlans/>:
     <>
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -101,6 +103,8 @@ export function LivePurchasesPage(){
 
 export function LivePurchaseEditorPage(){
   const user=useBackendSession(),navigate=useNavigate();
+  const [params]=useSearchParams();
+  const orderId=params.get('orderId')||'';
   const permitted=canUseModule(user,'purchase','add');
   const [products,setProducts]=useState<BackendProduct[]>([]);
   const [loading,setLoading]=useState(true);
@@ -122,6 +126,21 @@ export function LivePurchaseEditorPage(){
       .finally(()=>{if(live)setLoading(false);});
     return ()=>{live=false;};
   },[permitted]);
+  useEffect(()=>{
+    if(!permitted||!orderId)return;
+    let live=true;
+    getOrderToPurchase(orderId).then(async result=>{
+      const suppliers=await searchPurchaseSuppliers(result.purchase.supplierId);
+      if(!live)return;
+      const found=suppliers.find(s=>s.id===result.purchase.supplierId);
+      if(!found||found.needsReconciliation)throw Error('Supplier unavailable or ledger unreconciled');
+      setChosen(found);setSearch(found.name);setOpen(false);
+      setLines(result.purchase.items.map(i=>({
+        key:crypto.randomUUID(),productId:i.productId,qty:i.quantity,unitPrice:i.unitPrice
+      })));
+    }).catch(e=>{if(live)setError(e instanceof Error?e.message:'Cannot load approved order');});
+    return ()=>{live=false;};
+  },[permitted,orderId]);
   useEffect(()=>{
     if(!permitted||!open)return;
     let live=true;
@@ -173,7 +192,7 @@ export function LivePurchaseEditorPage(){
   async function submit(){
     if(posting.current||!canPost)return;
     setError('');
-    try{validateDuePurchase(chosen,lines);}catch(e){setError(e instanceof Error?e.message:'Invalid purchase');return;}
+    try{validateDuePurchase(chosen,lines,orderId);}catch(e){setError(e instanceof Error?e.message:'Invalid purchase');return;}
     posting.current=true;setSaving(true);
     try{
       // Refresh balances immediately before posting. Never trust a stale screen snapshot.
@@ -181,7 +200,7 @@ export function LivePurchaseEditorPage(){
       const supplier=refreshed.find(s=>s.id===chosen!.id);
       if(!supplier)throw new Error('Supplier no longer available.');
       setChosen(supplier);
-      const result=await createDuePurchase(supplier,lines);
+      const result=await createDuePurchase(supplier,lines,orderId);
       if(!result.purchaseId)throw new Error('Purchase response missing invoice reference; verify Purchase History.');
       navigate('/app/purchases',{replace:true});
     }catch(e){
@@ -192,7 +211,7 @@ export function LivePurchaseEditorPage(){
   if(!permitted)return <p role="alert" className="text-danger">Purchases add permission required · ক্রয় এন্ট্রির অনুমতি নেই</p>;
   return <section className="mx-auto max-w-[1200px] space-y-4" data-live-purchase-editor>
     <PageHeader title="New Purchase" titleBn="নতুন ক্রয়" compact
-      description="Live supplier, joined 2–4-unit quantities and cost-per-unit purchasing."
+      description={orderId?'Approved supplier order '+orderId+' · quantities locked':'Live supplier, joined 2–4-unit quantities and cost-per-unit purchasing.'}
       actions={<Button variant="outline" size="sm" onClick={()=>navigate('/app/purchases')}><ArrowLeft className="size-4"/> Purchase list</Button>}/>
     {error&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {outcomeUnknown&&<div role="alert" className="rounded-lg border border-warning bg-warning-bg p-3 text-sm text-warning">
@@ -205,7 +224,7 @@ export function LivePurchaseEditorPage(){
         <Input value={search} aria-label="Search supplier name, phone or ID"
           role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls="phase4-supplier-options"
           onFocus={()=>setOpen(true)}
-          onChange={e=>{setSearch(e.target.value);setChosen(null);setOpen(true);}}
+          disabled={!!orderId} onChange={e=>{setSearch(e.target.value);setChosen(null);setOpen(true);}}
           onKeyDown={e=>{
             if(!open)return;
             if(e.key==='ArrowDown'){e.preventDefault();setActiveIndex(i=>Math.min(i+1,suggestions.length-1));}
@@ -235,7 +254,7 @@ export function LivePurchaseEditorPage(){
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink">Products · পণ্য</h2>
-        <Button variant="outline" size="sm" onClick={()=>setLines(v=>[...v,newLine()])} disabled={saving||outcomeUnknown}>
+        <Button variant="outline" size="sm" onClick={()=>setLines(v=>[...v,newLine()])} disabled={!!orderId||saving||outcomeUnknown}>
           <Plus className="size-4"/> Add line</Button>
       </div>
       {loading?<p role="status" className="py-6 text-center text-sm">Loading real products…</p>:
@@ -247,7 +266,7 @@ export function LivePurchaseEditorPage(){
           </TableRow></TableHeader>
           <TableBody>{lines.map(l=><TableRow key={l.key}>
             <TableCell><select aria-label="Product" value={l.productId}
-              onChange={e=>void selectProduct(l.key,e.target.value)}
+              disabled={!!orderId} onChange={e=>void selectProduct(l.key,e.target.value)}
               className="h-9 w-full min-w-[190px] rounded-md border border-border bg-card px-2 text-sm text-ink">
                 <option value="">Choose product…</option>
                 {products.map(p=><option key={p.productId} value={p.productId}>{p.displayName||p.productName}</option>)}
@@ -260,7 +279,7 @@ export function LivePurchaseEditorPage(){
                 onChange={(unit,value)=>changeMixedQty(l,unit,value)}
                 onLastEnter={()=>{}} disabled={saving||outcomeUnknown}/></div>
               :<Input aria-label="Purchase quantity" type="number" min="0.0001" step="0.0001"
-                disabled={!!l.profileBusy||!!l.profileError}
+                disabled={!!orderId||!!l.profileBusy||!!l.profileError}
                 value={l.qty} onChange={e=>edit(l.key,{qty:e.target.value===''?0:Number(e.target.value)})}
                 className="w-24"/>}
               {l.profileBusy&&<span className="text-xs text-ink-500">Loading units…</span>}
@@ -284,7 +303,7 @@ export function LivePurchaseEditorPage(){
               className="w-28"/></TableCell>
             <TableCell className="text-right text-sm">{Number.isFinite(quote(l))&&positive(String(l.unitPrice))?money(quote(l)):'—'}</TableCell>
             <TableCell><Button size="icon" variant="ghost" title="Remove line" aria-label="Remove purchase line"
-              onClick={()=>setLines(before=>before.filter(x=>x.key!==l.key))} disabled={saving||outcomeUnknown}>
+              onClick={()=>setLines(before=>before.filter(x=>x.key!==l.key))} disabled={!!orderId||saving||outcomeUnknown}>
               <Trash2 className="size-4"/></Button></TableCell>
           </TableRow>)}</TableBody>
         </Table>
