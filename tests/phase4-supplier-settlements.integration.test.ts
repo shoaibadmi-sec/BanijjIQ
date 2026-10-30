@@ -132,6 +132,26 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
   assert.equal(sql('SELECT status AS s FROM supplier_settlement_entries WHERE settlement_id=?',
    bank.settlementId).s,'Posted');
   db.native.prepare('UPDATE bank_book SET credit=0 WHERE reference=?').run(bank.ledgerId);
+  // Phase 4G TDD: reversed payment must still reference its original supplier journal.
+  const originalLedger=sql('SELECT reference,type,payment_method,bank_account_id FROM supplier_ledger WHERE ledger_id=?',bank.ledgerId);
+  for(const [column,tampered] of [
+   ['reference','SST-FORGED'],['type','Adjustment'],
+   ['payment_method','Mobile Banking'],['bank_account_id','BANK-4D-OTHER']
+  ]){
+   db.native.prepare('UPDATE supplier_ledger SET '+column+'=? WHERE ledger_id=?')
+    .run(tampered,bank.ledgerId);
+   const beforeTampered=state();
+   const beforeAudit=sql("SELECT COUNT(*) AS n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n;
+   const invalidReversal=await api('POST',
+    '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
+    {reason:'Original supplier payment journal tampered'});
+   assert.equal(invalidReversal.status,409,'Reject changed source supplier ledger '+column);
+   assert.deepEqual(state(),beforeTampered,'Rejected reversal must not change any balances');
+   assert.equal(sql("SELECT COUNT(*) AS n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n,beforeAudit);
+   assert.equal(sql('SELECT status AS s FROM supplier_settlement_entries WHERE settlement_id=?',bank.settlementId).s,'Posted');
+   db.native.prepare('UPDATE supplier_ledger SET '+column+'=? WHERE ledger_id=?')
+    .run(originalLedger[column],bank.ledgerId);
+  }
   const reverse=await api('POST',
    '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
    {reason:'Wrong bank account selected'});
