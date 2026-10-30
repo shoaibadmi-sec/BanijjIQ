@@ -100,6 +100,36 @@ function startMocking(context,calls,creditFixture=false){
         due:50,availableCents:15000,blocked:false,
         history:[{entryId:'SC-CREDIT-1',type:'ISSUE',sourceType:'Sales Return',
           sourceId:'UI-OLD-RETURN',deltaCents:15000,balanceAfterCents:15000,createdAt:'2026-10-29 11:00:00'}]});
+    if(creditFixture&&path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('SPLIT-REFUND'))
+      return respond({ok:true,matches:[{invoiceId:'UI-SPLIT-REFUND-1',date:'2026-10-30',
+        customerName:'Credit UI Buyer',customerPhone:'01000009801',grandTotal:50,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(creditFixture&&path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('SPLIT-BLOCKED'))
+      return respond({ok:true,matches:[{invoiceId:'UI-SPLIT-BLOCKED',date:'2026-10-30',
+        customerName:'Credit UI Buyer',customerPhone:'01000009801',grandTotal:50,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(creditFixture&&(path==='/api/sales-returns/UI-SPLIT-REFUND-1/data'||
+        path==='/api/sales-returns/UI-SPLIT-BLOCKED/data')&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:path.includes('BLOCKED')?'UI-SPLIT-BLOCKED':'UI-SPLIT-REFUND-1',
+        date:'2026-10-30',customerId:'CUS-CREDIT-E2E',customerName:'Credit UI Buyer',
+        customerPhone:'01000009801',grandTotal:50,subtotal:50,paidAmount:50,dueAmount:0,
+        paymentMethod:'Split',previouslyReturnedAmount:0,netSale:50,
+        items:[{productId:'PRD-000001',name:'Copper Cable 2.5mm',soldQty:1,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:1,unitPrice:50,trackSerial:false,
+          trackExpiry:false,trackWarranty:false,availableSerials:[]}]}} );
+    if(creditFixture&&path==='/api/sales-management/UI-SPLIT-REFUND-1/split-reversal'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-SPLIT-REFUND-1',
+        totalCents:5000,refundCents:2000,creditReissueCents:3000,
+        allocations:[{method:'Cash',amountCents:2000,bankAccountId:'',sourceKey:'Cash'},
+          {method:'Store Credit',amountCents:3000,bankAccountId:'',sourceKey:'Store Credit'}]}});
+    if(creditFixture&&path==='/api/sales-management/UI-SPLIT-BLOCKED/split-reversal'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:false,reason:'Original payment books cannot be reconciled.',
+        invoiceId:'UI-SPLIT-BLOCKED',totalCents:5000,refundCents:0,creditReissueCents:0,allocations:[]}});
+    if(creditFixture&&path==='/api/sales-management/UI-SPLIT-REFUND-1/split-reversal'&&request.method()==='POST'){
+      const payload=request.postDataJSON();assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,returnId:'SRT-UI-SPLIT-1',refundCents:2000,creditReissueCents:3000});
+    }
     if(creditFixture&&path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('STORE-CREDIT'))
       return respond({ok:true,matches:[{invoiceId:'UI-STORE-CREDIT-1',date:'2026-10-29',
         customerName:'Credit UI Buyer',customerPhone:'01000009801',grandTotal:120,
@@ -773,6 +803,61 @@ try{
     assert.equal(payload?.refundMethod,'Store Credit');
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,1);
     results.apiCalls.push(...api);await ctx.close();
+  });
+  for(const width of [390,768,1440]){
+    await withCheck('G2-H full split refund review and one original-source POST '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:960},reducedMotion:'reduce'});
+      const api=[];await startMocking(ctx,api,true);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();let confirmation='';
+      page.on('dialog',d=>{confirmation=d.message();void d.accept();});
+      try{
+        await page.goto(base+'/#/app/live-sales-returns');
+        await page.locator('[data-live-sales-returns]').waitFor();
+        await page.getByRole('textbox',{name:'Search saved invoices'}).fill('SPLIT-REFUND');
+        await page.getByRole('button',{name:'Search',exact:true}).click();
+        await page.getByRole('button',{name:/UI-SPLIT-REFUND-1/}).click();
+        await page.locator('[data-split-refund-review]').waitFor();
+        assert.equal(await page.getByRole('button',{name:'Review real return'}).count(),0,
+          'a split sale must not have an ordinary Cash Sales Return submit button');
+        await page.getByRole('button',{name:'Verify original payment sources'}).click();
+        await page.getByRole('button',{name:'Confirm full original-source refund'}).waitFor();
+        const review=await page.locator('[data-split-refund-review]').innerText();
+        assert.match(review,/Cash/);assert.match(review,/Store Credit/);
+        assert.match(review,/20/);assert.match(review,/30/);
+        const confirm=page.getByRole('button',{name:'Confirm full original-source refund'});
+        assert.equal(await confirm.isEnabled(),false,'reason is required before POST');
+        await page.getByRole('textbox',{name:'Split refund reason'}).fill('Buyer approved full original-source refund');
+        assert.equal(await confirm.isEnabled(),true);
+        await screenshot(page,'phase3g2h-full-source-refund-'+width);
+        await audit(page,'phase3g2h-full-source-refund-'+width);
+        await confirm.click();
+        await page.locator('[data-split-refund-success]').waitFor();
+        assert.match(confirmation,/not Cash/);
+        assert.match(await page.locator('[data-split-refund-success]').innerText(),/SRT-UI-SPLIT-1/);
+        assert.equal(api.filter(x=>x.method==='POST'&&x.path.endsWith('/split-reversal')).length,1);
+        assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
+        results.apiCalls.push(...api);
+      }finally{await ctx.close();}
+    });
+  }
+  await withCheck('G2-H split refund is fail-closed for mismatched source books',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    try{
+      await page.goto(base+'/#/app/live-sales-returns');
+      await page.locator('[data-live-sales-returns]').waitFor();
+      await page.getByRole('textbox',{name:'Search saved invoices'}).fill('SPLIT-BLOCKED');
+      await page.getByRole('button',{name:'Search',exact:true}).click();
+      await page.getByRole('button',{name:/UI-SPLIT-BLOCKED/}).click();
+      await page.getByRole('button',{name:'Verify original payment sources'}).click();
+      await page.getByText('Original payment books cannot be reconciled.').waitFor();
+      assert.equal(await page.getByRole('button',{name:'Confirm full original-source refund'}).count(),0);
+      assert.equal(api.filter(x=>x.method==='POST'&&x.path.endsWith('/split-reversal')).length,0);
+      results.apiCalls.push(...api);
+    }finally{await ctx.close();}
   });
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
     const ctx=await browser.newContext({viewport:{width:390,height:960},reducedMotion:'reduce'});
