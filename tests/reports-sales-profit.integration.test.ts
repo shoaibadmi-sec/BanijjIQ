@@ -142,3 +142,32 @@ test('posted FIFO sale with expense missing cash-book proof cannot certify net p
   assert.match(report.coverage.reason,/expense.*posting|money.book|expense.*source/i);
  } finally{db.close();}
 });
+
+test('two returns cannot conceal mismatched FIFO restoration by balancing invoice-level totals',async()=>{
+ const db=fixture();
+ try{
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-OVERALLOC','2026-10-19','SALE-PROFIT-001','Cash',110,'First unit'),
+           ('RETURN-MISSING','2026-10-20','SALE-PROFIT-001','Store Credit',110,'Second unit')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-OVERALLOC','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110),
+           ('RETURN-MISSING','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  // Global restored quantity (2) matches returned quantity (2), but only the
+  // first return owns FIFO evidence. The second is missing its own restoration.
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-OVERALLOC','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',2)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(report.coverage.status,'incomplete','each return requires matching original FIFO allocation');
+  assert.match(report.coverage.reason,/each return|return.*lot|return.*allocation/i);
+  assert.equal(metric(report,'returns').valueMinor,22000,'actual cash and store-credit refunds are not discounted twice');
+  assert.equal(metric(report,'fifoCogs').valueMinor,null,'ambiguous cost reversals cannot become certified profit');
+  assert.equal(metric(report,'grossProfit').valueMinor,null);
+  assert.equal(metric(report,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'profit reconciliation must not write to accounting tables');
+ }finally{db.close();}
+});
