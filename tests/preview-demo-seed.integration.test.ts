@@ -12,6 +12,10 @@ test('source-derived fixture preserves coherent quantity and due calculations',(
  assert.equal(plan.customers.length,4);
  assert.equal(plan.sales.length,2);
  assert.equal(plan.purchases.length,1);
+ // Never import realistic phone numbers copied from the visual demo; prevent accidental SMS or calls.
+ for(const contact of [...plan.customers,...plan.suppliers,...plan.vendors,...plan.financePeople]){
+   assert.match(contact.phone,/^0109[6-9][0-9]{6}$/,'synthetic preview-only phone required for '+contact.name);
+ }
  assert.equal(plan.products.find(p=>p.sourceId==='p3')?.openingStock,660);
  assert.equal(plan.products.find(p=>p.sourceId==='p9')?.openingStock,84);
  assert.ok(plan.excluded.some(s=>s.includes('historical dashboard')));
