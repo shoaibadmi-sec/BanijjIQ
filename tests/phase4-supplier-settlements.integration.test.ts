@@ -119,6 +119,19 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
    bank.settlementId).s,'Posted');
   db.native.prepare('UPDATE bank_book SET bank_account_id=? WHERE reference=?')
    .run('BANK-4D',bank.ledgerId);
+  // TDD RED: a bank debit with a hidden opposite credit is no longer the original payment.
+  db.native.prepare('UPDATE bank_book SET credit=? WHERE reference=?').run(10,bank.ledgerId);
+  const tamperedBefore=state();
+  const journalBefore=sql('SELECT COUNT(*) AS n FROM supplier_ledger').n;
+  const mixedDirection=await api('POST',
+   '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
+   {reason:'Original bank debit contains an unexpected credit'});
+  assert.equal(mixedDirection.status,409,'Reversal must reject source rows with both debit and credit');
+  assert.deepEqual(state(),tamperedBefore,'Rejected reversal must not touch payable or bank balance');
+  assert.equal(sql('SELECT COUNT(*) AS n FROM supplier_ledger').n,journalBefore);
+  assert.equal(sql('SELECT status AS s FROM supplier_settlement_entries WHERE settlement_id=?',
+   bank.settlementId).s,'Posted');
+  db.native.prepare('UPDATE bank_book SET credit=0 WHERE reference=?').run(bank.ledgerId);
   const reverse=await api('POST',
    '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
    {reason:'Wrong bank account selected'});
