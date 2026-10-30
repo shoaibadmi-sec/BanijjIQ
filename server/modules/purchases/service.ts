@@ -962,7 +962,7 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
 }
 
 export async function getPurchaseReturnHistory(db: SherDatabase): Promise<Response> {
-  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod,refund_status AS refundStatus,reversed_at AS reversedAt, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
+  const rows = await db.prepare(`SELECT return_id AS returnId, return_date AS returnDate, purchase_id AS purchaseId, supplier_name AS supplierName, total_return_amount AS totalReturnAmount, refund_method AS refundMethod,refund_status AS refundStatus,refund_request_id AS refundRequestId,reversed_at AS reversedAt, reason, notes, created_at AS createdAt FROM purchase_returns WHERE COALESCE(is_deleted,0)=0 ORDER BY return_date DESC, created_at DESC LIMIT 200`).all();
   return json({ ok: true, returns: rows.results ?? [] });
 }
 
