@@ -268,6 +268,33 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         tenders.map(t=>[t.method,t.amountCents,t.bankAccountId||'']));
       assert.equal(previewResponse.preview.refundCents,
         profile==='cash-credit'?2000:3000);
+
+      // G2-I: read-only business/accounting quote for a single item quantity.
+      // The quoted source amounts are hand-calculated from immutable tenders.
+      // Posting is intentionally disabled until separate D1 partial-return guards exist.
+      const partialPath='/api/sales-management/'+saleId+'/split-partial-preview';
+      const partial=await api('GET',partialPath+'?productId='+product.productId+'&quantity=1');
+      assert.equal(partial.status,200,JSON.stringify(partial));
+      assert.equal(partial.preview.invoiceId,saleId);
+      assert.equal(partial.preview.productId,product.productId);
+      assert.equal(partial.preview.quantity,1);
+      assert.equal(partial.preview.amountCents,1000);
+      assert.equal(partial.preview.postingEnabled,false);
+      assert.deepEqual(partial.preview.allocations.map((a:any)=>[a.sourceKey,a.amountCents]),
+        profile==='cash-credit'
+          ?[['Cash',400],['Store Credit',600]]
+          :[['Bank:'+bank.id,200],['Mobile Banking:'+mobile.id,400],['Store Credit',400]]);
+      for(const suffix of ['?productId='+product.productId+'&quantity=0',
+        '?productId='+product.productId+'&quantity=6',
+        '?productId='+product.productId+'&quantity=1.5',
+        '?productId=NOT-SOLD&quantity=1','?productId='+product.productId]){
+        const invalid=await api('GET',partialPath+suffix);
+        assert.equal(invalid.status,400,'invalid quantity/product may not return a refund quote');
+      }
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+
       // Full Phase 3 accounting acceptance: a preflight must NOT approve
       // an invoice whose immutable posting proof the POST would later reject.
       // This guards the entire UI "Confirm" workflow from misleading Cash payout.
