@@ -86,6 +86,12 @@ function startMocking(context,calls){
   let planned=null;
   let order=null;
   const supplierSettlements=[];
+  const productSettingsRows={
+    categories:[{id:'CAT-HW',name:'Hardware',nameBn:'হার্ডওয়্যার',usage:0,active:true}],
+    brands:[{id:'BRD-RFL',name:'RFL',nameBn:'আরএফএল',usage:0,active:true}],
+    units:[{id:'UNIT-PCS',name:'Pieces',symbol:'PCS',kind:'Base',usage:0,active:true}]
+  };
+  let settingsSequence=0;
   const adjustedStocks=new Map();
   const adjustedLots=[];
   return context.route('**/api/**',async route=>{
@@ -308,6 +314,40 @@ function startMocking(context,calls){
         {movementId:'UI-HIST-2',productId:'PRD-000002',date:'2026-10-30 09:00:00',type:'STOCK_OUT_ADJUSTMENT',
           quantityIn:0,quantityOut:1,balanceAfter:3,note:'Damage adjustment',lotId:null}
       ]});
+    if(path==='/api/products/settings/lookups'&&request.method()==='GET')
+      return respond({ok:true,...JSON.parse(JSON.stringify(productSettingsRows))});
+    if(path==='/api/products/settings/lookups'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      const key=payload.kind==='category'?'categories':payload.kind==='brand'?'brands':'units';
+      assert.ok(payload.name);
+      assert.ok(!productSettingsRows[key].some(x=>x.name.toLowerCase()===payload.name.toLowerCase()));
+      const item={id:'SET-'+(++settingsSequence),name:payload.name,
+        ...(key==='units'?{symbol:payload.symbol,kind:'Base'}:{nameBn:payload.nameBn||''}),
+        usage:0,active:true};
+      productSettingsRows[key].push(item);
+      calls.push({method:'ASSERT',path:'/api/products/settings/lookups',payload});
+      return respond({ok:true,item});
+    }
+    const settingsStatusMatch=path.match(/^\/api\/products\/settings\/lookups\/(category|brand|unit)\/([^/]+)\/status$/);
+    if(settingsStatusMatch&&request.method()==='PUT'){
+      const key=settingsStatusMatch[1]==='category'?'categories':settingsStatusMatch[1]==='brand'?'brands':'units';
+      const found=productSettingsRows[key].find(x=>x.id===decodeURIComponent(settingsStatusMatch[2]));
+      assert.ok(found);
+      const status=request.postDataJSON().status;
+      assert.ok(status==='Active'||status==='Inactive');
+      found.active=status==='Active';
+      calls.push({method:'ASSERT',path:'/api/products/settings/status',status});
+      return respond({ok:true,id:found.id,active:found.active});
+    }
+    const settingsDeleteMatch=path.match(/^\/api\/products\/settings\/lookups\/(category|brand|unit)\/([^/]+)$/);
+    if(settingsDeleteMatch&&request.method()==='DELETE'){
+      const key=settingsDeleteMatch[1]==='category'?'categories':settingsDeleteMatch[1]==='brand'?'brands':'units';
+      const pos=productSettingsRows[key].findIndex(x=>x.id===decodeURIComponent(settingsDeleteMatch[2]));
+      assert.ok(pos>=0&&productSettingsRows[key][pos].usage===0);
+      productSettingsRows[key].splice(pos,1);
+      calls.push({method:'ASSERT',path:'/api/products/settings/delete'});
+      return respond({ok:true});
+    }
     if(path==='/api/products/inventory-lots'&&request.method()==='GET')return respond({
       ok:true,lots:[
         ...adjustedLots,
@@ -810,6 +850,12 @@ try{
         await screenshot(page,'products-'+width+'-'+theme);
         await audit(page,'products-'+width+'-'+theme);
         if(width!==390||theme!=='light'){
+          await page.getByRole('tab',{name:/Product settings/i}).click();
+          await page.getByText('হার্ডওয়্যার').waitFor();
+          await inspectLayout(page,'original-product-settings-'+width+'-'+theme);
+          await screenshot(page,'original-product-settings-'+width+'-'+theme);
+          await audit(page,'original-product-settings-'+width+'-'+theme);
+          await page.getByRole('tab',{name:/Product list/i}).click();
           await page.getByRole('tab',{name:/Stock lots/i}).click();
           await page.getByText('PURCHASE-MOCK-1').waitFor();
           await inspectLayout(page,'stock-lots-'+width+'-'+theme);
@@ -850,6 +896,28 @@ try{
           await page.getByText('UI-ADJ-1').first().waitFor();
           assert.ok(api.some(x=>x.method==='ASSERT'&&x.path==='/api/products/adjust-stock'&&x.payload.delta===2),
             'original adjustment dialog must post a single real D1 adjustment');
+          await page.getByRole('tab',{name:/Product settings/i}).click();
+          await page.getByText('হার্ডওয়্যার').waitFor();
+          assert.ok(api.some(x=>x.path==='/api/products/settings/lookups'&&x.method==='GET'));
+          await screenshot(page,'original-product-settings-390');
+          await audit(page,'original-product-settings-390');
+          await page.getByPlaceholder('Enter name').fill('New Category');
+          await page.getByRole('button',{name:'Add',exact:true}).click();
+          await page.locator('[data-live-products] tbody').getByText('New Category',{exact:true}).waitFor();
+          assert.ok(api.some(x=>x.path==='/api/products/settings/lookups'&&x.method==='POST'));
+          await page.getByRole('button',{name:'Actions for New Category'}).click();
+          await page.getByRole('button',{name:'Deactivate',exact:true}).click();
+          assert.ok(api.some(x=>x.method==='PUT'&&x.path.endsWith('/status')));
+          await page.getByRole('button',{name:'Actions for New Category'}).click();
+          await page.getByRole('button',{name:'Delete',exact:true}).click();
+          await page.locator('[data-live-products] tbody').getByText('New Category',{exact:true}).waitFor({state:'detached'});
+          assert.ok(api.some(x=>x.method==='DELETE'&&x.path.includes('/settings/lookups/category/')));
+          await page.getByRole('tab',{name:'Units',exact:true}).click();
+          await page.getByText('PCS').first().waitFor();
+          await screenshot(page,'original-product-settings-units-390');
+          await page.getByRole('tab',{name:'Brands',exact:true}).click();
+          await page.getByText('আরএফএল').waitFor();
+          await screenshot(page,'original-product-settings-brands-390');
           await page.getByRole('tab',{name:/Product list/i}).click();
           await page.getByText('Copper Cable 2.5mm').first().waitFor();
           await page.getByRole('button',{name:/Add product/i}).click();

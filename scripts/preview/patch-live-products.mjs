@@ -39,6 +39,7 @@ import { MohimProductEditor } from '../integration/products/MohimProductEditor';
 import { MohimProductActions as ProductActions } from '../integration/products/MohimProductActions';
 import { StockHistoryView } from '../components/products/ProductInventoryViews';
 import { StockLotsView } from '../components/products/ProductInventoryViews';
+import { ProductSettings } from '../components/products/ProductSettings';
 import { StockAdjustmentDialog, type StockAdjustmentResult } from '../components/products/ProductInventoryDialogs';
 import type { StockLot } from '../types/erp';
 import { loadInventoryHistory, loadInventoryLots } from '../integration/products/productApi';
@@ -65,10 +66,10 @@ export function Products() {
   const [category,setCategory]=useState('All');
   const [stockFilter,setStockFilter]=useState<StockFilter>('all');
   const requestedView=searchParams.get('view');
-  const [view,setView]=useState<ProductView>(requestedView==='history'?'history':requestedView==='lots'?'lots':'list');
-  useEffect(()=>setView(requestedView==='history'?'history':requestedView==='lots'?'lots':'list'),[requestedView]);
+  const [view,setView]=useState<ProductView>(requestedView==='history'?'history':requestedView==='lots'?'lots':requestedView==='settings'?'settings':'list');
+  useEffect(()=>setView(requestedView==='history'?'history':requestedView==='lots'?'lots':requestedView==='settings'?'settings':'list'),[requestedView]);
   const chooseView=(next:ProductView)=>{
-    if(next!=='list'&&next!=='history'&&next!=='lots')return;
+    if(next!=='list'&&next!=='history'&&next!=='lots'&&next!=='settings')return;
     setView(next);
     setSearchParams(old=>{
       const params=new URLSearchParams(old);
@@ -170,13 +171,15 @@ export function patchLiveProducts(source) {
   const adjustDialogStart=source.indexOf('      <StockAdjustmentDialog',historyStart);
   const adjustDialogEnd=source.indexOf('      <StockLotDialog',adjustDialogStart);
   const settingsStart=source.indexOf("      {view === 'settings' && (",historyStart);
-  if([blockStart,actionStart,pageStart,jsxStart,afterList,historyStart,settingsStart,adjustDialogStart,adjustDialogEnd].some(n=>n<0)
-     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList&&afterList<historyStart&&historyStart<settingsStart&&settingsStart<adjustDialogStart&&adjustDialogStart<adjustDialogEnd))
+  const settingsEnd=source.indexOf("      <ImportWizard target=",settingsStart);
+  if([blockStart,actionStart,pageStart,jsxStart,afterList,historyStart,settingsStart,settingsEnd,adjustDialogStart,adjustDialogEnd].some(n=>n<0)
+     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList&&afterList<historyStart&&historyStart<settingsStart&&settingsStart<settingsEnd&&settingsEnd<adjustDialogStart&&adjustDialogStart<adjustDialogEnd))
     throw new Error('Pinned Products source JSX anchors changed');
   // Keep original column picker, status badges, table classes, tabs and list JSX intact.
   const primitives=source.slice(blockStart,actionStart);
   let jsx=source.slice(jsxStart,afterList);
   const historyJsx=source.slice(historyStart,settingsStart);
+  const settingsJsx=source.slice(settingsStart,settingsEnd);
   const lotsJsx=source.slice(afterList+1,historyStart);
   const adjustDialogJsx=source.slice(adjustDialogStart,adjustDialogEnd);
   jsx=replaceOnce(jsx,
@@ -201,10 +204,7 @@ export function patchLiveProducts(source) {
   jsx=replaceOnce(jsx,
     'onClick={() => { setEditingProduct(null); setDialogOpen(true); }}',
     'disabled={!canAdd||pendingOperation!==null} onClick={()=>setEditing(null)}','live Add product');
-  jsx=replaceOnce(jsx,
-    "onClick={() => chooseView(id)}",
-    `disabled={id!=='list'&&id!=='history'&&id!=='lots'} title={id!=='list'&&id!=='history'&&id!=='lots'?'Awaiting real API integration.':undefined}
-             onClick={() => chooseView(id)}`,'deferred tabs');
+  // Exact original tabs now have real D1 handlers: no custom disabled markup.
   jsx=replaceOnce(jsx,
     "availableProductCategories().map((c) =>",
     "['All',...new Set([...lookups.categories.map(c=>c.name),...list.map(p=>p.category).filter(Boolean)])].map((c) =>",
@@ -238,7 +238,7 @@ export function patchLiveProducts(source) {
                       onAdjustStock={adjustStock} onSetStatus={setStatus}
                       loadLots={loadLots} loadHistory={loadHistory}`;
   jsx=jsx.slice(0,rowActionStart)+safeActions+jsx.slice(actionEnd);
-  const compiled=header+primitives+controller+jsx+lotsJsx+historyJsx+adjustDialogJsx+"\n    </div>);\n}\n";
+  const compiled=header+primitives+controller+jsx+lotsJsx+historyJsx+settingsJsx+adjustDialogJsx+"\n    </div>);\n}\n";
   const forbidden=[
     'availableProducts(', 'availableProductCategories(', 'availableStockLots(',
     'availableStockMovements(', 'salesInvoices', 'upsertProductPreview',
