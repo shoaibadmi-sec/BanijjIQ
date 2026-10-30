@@ -61,6 +61,15 @@ test('5G20: finance bank→cash edit and delete are atomic across source, journa
   const switchToCash={personId:owner.id,transactionType:'Owner Investment',
    paymentMethod:'Cash',amount:80,notes:'G20 reclassified to owner capital'};
   const path='/api/finance/transactions/'+id;
+  // Source integrity must be checked before reversing a posted Finance journal.
+  // A wrong original amount must never be silently converted into a new posting.
+  db.native.prepare("UPDATE bank_book SET credit=110 WHERE reference=? AND COALESCE(is_deleted,0)=0").run(id);
+  const tampered=snapshot();
+  const refusedTampered=await api('PUT',path,switchToCash);
+  assert.notEqual(refusedTampered.status,200,'Finance edit must reject a journal that differs from the original source amount');
+  assert.deepEqual(snapshot(),tampered,'Rejected source mismatch cannot touch the master, journal, bank, cash or audit');
+  db.native.prepare("UPDATE bank_book SET credit=120 WHERE reference=? AND COALESCE(is_deleted,0)=0").run(id);
+  assert.deepEqual(snapshot(),original,'After restoring the source, original values must be unchanged');
   db.native.exec(`CREATE TRIGGER g20_reject_source_change BEFORE UPDATE ON finance_transactions
    BEGIN SELECT RAISE(ABORT,'g20-source-failure'); END;`);
   const failedEdit=await api('PUT',path,switchToCash);
