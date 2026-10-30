@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       reviewed_commit_sha:
-        description: 'Exact 40-character reviewed commit SHA at the head of draft PR #9'
+        description: 'Exact 40-character reviewed SHA of the current main commit (isolated preview only)'
         required: true
         type: string
       confirm_isolated_preview:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Validate PR #9 head and exact manually reviewed SHA
+      - name: Validate reviewed SHA equals current main
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEWED_SHA: ${{ inputs.reviewed_commit_sha }}
@@ -31,19 +31,12 @@ jobs:
             echo "::error::Expected a full reviewed 40-character commit SHA."
             exit 1
           fi
-          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/9")"
-          actual="$(jq -r '.head.sha' <<< "$pr")"
-          head_repo="$(jq -r '.head.repo.full_name' <<< "$pr")"
-          head_branch="$(jq -r '.head.ref' <<< "$pr")"
-          base_branch="$(jq -r '.base.ref' <<< "$pr")"
-          state="$(jq -r '.state' <<< "$pr")"
-          if [[ "$state" != open || "$head_repo" != "$GITHUB_REPOSITORY" ||
-                "$head_branch" != "feat/hisabiq-react-api" ||
-                "$base_branch" != main || "$REVIEWED_SHA" != "$actual" ]]; then
-            echo "::error::PR #9 branch, repository or reviewed commit has changed. No deployment."
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          if [[ "$REVIEWED_SHA" != "$actual" ]]; then
+            echo "::error::Reviewed SHA is no longer current main. No deployment."
             exit 1
           fi
-          echo "Exact reviewed PR #9 commit verified: $actual"
+          echo "Exact reviewed current main commit verified: $actual"
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.reviewed_commit_sha }}
@@ -127,6 +120,19 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Recheck current main before any remote writes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_SHA: ${{ inputs.reviewed_commit_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          if [[ "$REVIEWED_SHA" != "$actual" ]]; then
+            echo "::error::Main changed since review. No remote preview migration or deployment."
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
       - name: Fail closed on missing or weak preview credentials
         shell: bash
         run: |

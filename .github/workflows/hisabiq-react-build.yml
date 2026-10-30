@@ -52,6 +52,8 @@ jobs:
           npm ci
           npm run backend:build
           npm run test:phase6
+          node --import tsx --test tests/preview-demo-seed.integration.test.ts
+          node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security
           node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
@@ -61,6 +63,7 @@ jobs:
           node --import tsx --test tests/reports-dual-return-accounting.integration.test.ts
           node --import tsx --test tests/reports-finance-transfer-lifecycle.integration.test.ts
           node --import tsx --test tests/reports-expense-cancellation-lifecycle.integration.test.ts
+          node --import tsx --test tests/reports-finance-edit-delete-atomic.integration.test.ts
           node --import tsx --test tests/reports-customer-payment.integration.test.ts
           node --import tsx --test tests/reports-sales-profit.integration.test.ts
           node --import tsx --test tests/reports-stock-dues.integration.test.ts

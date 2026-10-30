@@ -55,14 +55,19 @@ test('hosted smoke never posts inventory, cash, invoices or returns',()=>{
 });
 
 
-test('manual default-branch launcher pins reviewed PR #9 and prevents accidental deploy',()=>{
+test('manual hosted-preview launcher verifies reviewed current main, then rechecks before any remote D1 writes',()=>{
   const launcher=read('.github/workflows/hisabiq-hosted-preview-dispatch.yml');
   for(const marker of ["name: Authorize isolated HisabIQ React preview","workflow_dispatch:",
     "github.ref == 'refs/heads/main'","inputs.confirm_isolated_preview == 'ISOLATED-PREVIEW-ONLY'",
-    "reviewed_commit_sha:","repos/$GITHUB_REPOSITORY/pulls/9",
+    "reviewed_commit_sha:","repos/$GITHUB_REPOSITORY/commits/main",
     '"$REVIEWED_SHA" != "$actual"',"name: hisabiq-react-preview",
-    "needs: verify-reviewed-commit","scripts/preview/preflight-remote-db.mjs"])
+    "needs: verify-reviewed-commit","scripts/preview/preflight-remote-db.mjs",
+    "name: Recheck current main before any remote writes"])
     assert.ok(launcher.includes(marker), marker);
+  const recheck=launcher.indexOf('name: Recheck current main before any remote writes');
+  const migrate=launcher.indexOf('name: Apply migrations to verified remote PREVIEW D1');
+  assert.ok(recheck>0&&migrate>recheck,'Main SHA must be rechecked before remote D1 migrations');
+  assert.ok(!launcher.includes('repos/$GITHUB_REPOSITORY/pulls/9'),'Merged PR #9 is not a release candidate');
   assert.ok(!launcher.includes('\n  push:'));
   assert.ok(!launcher.includes('\n  pull_request:'));
   assert.ok(!launcher.includes('wrangler deploy --config wrangler.jsonc'));
@@ -197,4 +202,30 @@ assert.equal(loginPosts,1);
     assert.equal(proc.status,0,'Mocked smoke '+already+' failed: '+(proc.stderr||proc.stdout).slice(-1800));
     assert.match(proc.stdout,/Preview verified at/);
   }
+});
+
+test('real demo data seeding requires an explicit isolated-preview approval and no production remote writes',()=>{
+  const workflow=read('.github/workflows/hisabiq-preview-demo-seed.yml');
+  const client=read('scripts/preview/demo-seed-remote.mjs');
+  const plan=read('scripts/preview/demo-seed-plan.mjs');
+  for(const marker of [
+    'workflow_dispatch:',
+    "github.ref == 'refs/heads/main'",
+    "inputs.confirm_demo_seeding == 'SEED-ISOLATED-DEMO-ONLY'",
+    'name: hisabiq-react-preview',
+    'node scripts/preview/preflight-remote-db.mjs',
+    'node --import tsx scripts/preview/demo-seed-remote.mjs --apply',
+    'Recheck exact current main immediately before preview writes'
+  ])assert.ok(workflow.includes(marker),marker);
+  assert.ok(!workflow.includes(String.fromCharCode(10)+'  push:'));
+  assert.ok(!workflow.includes(String.fromCharCode(10)+'  pull_request:'));
+  assert.ok(!workflow.includes('wrangler d1 migrations apply DB --remote'));
+  assert.ok(!workflow.includes('wrangler deploy'));
+  assert.ok(client.includes('https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev'));
+  assert.ok(client.includes('HISABIQ_DEMO_SEED_CONFIRM'));
+  assert.ok(!client.includes('shererp-new'));
+  assert.ok(plan.includes('Preview database already contains [DEMO] seed data'));
+  assert.ok(plan.includes("value.startsWith('[DEMO] ')"));
+  assert.ok(plan.includes("await safe('POST','/api/pos/sales'"));
+  assert.ok(plan.includes("await safe('POST','/api/purchases'"));
 });
