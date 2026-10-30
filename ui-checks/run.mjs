@@ -628,7 +628,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/finance');
+      await page.goto(base+'/#/app/finance-backend-check');
       const finance=page.locator('[data-live-finance]');await finance.waitFor({timeout:10000});
       const personSelector=page.getByRole('combobox',{name:'Finance person'});
       await personSelector.waitFor({timeout:10000});
@@ -653,7 +653,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/finance');
+      await page.goto(base+'/#/app/finance-backend-check');
       await page.locator('[data-phase6-bank-transfers]').waitFor({timeout:12000});
       await page.getByRole('combobox',{name:'Transfer from account'}).selectOption('BK-OK');
       await page.getByRole('combobox',{name:'Transfer to account'}).selectOption('BK-DISPUTED');
@@ -682,7 +682,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/finance');
+      await page.goto(base+'/#/app/finance-backend-check');
       const panel=page.locator('[data-phase6-cash-session]');
       await panel.waitFor({timeout:12000});
       await page.getByText('Expected cash').waitFor({timeout:12000});
@@ -707,7 +707,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/finance');
+      await page.goto(base+'/#/app/finance-backend-check');
       const panel=page.locator('[data-finance-person-ledger]');
       await panel.waitFor({timeout:12000});
       await panel.getByText('FIN-UI-6D-001').waitFor({timeout:12000});
@@ -723,6 +723,44 @@ try{
       await screenshot(page,'phase6d-person-ledger-'+width);
       await inspectLayout(page,'phase6d-person-ledger-'+width);
       await audit(page,'phase6d-person-ledger-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  // User-facing Finance is source-authentic; the old API diagnostic stays off navigation
+  // so pre-existing cash/finance/transfer E2E accounting checks cannot silently disappear.
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6 source HisabIQ Finance reads reconciled D1 and posts transfer once '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const finance=page.locator('[data-live-finance]');
+      await finance.waitFor({timeout:12000});
+      await finance.getByText('Shop Bank').first().waitFor({timeout:12000});
+      const content=await finance.innerText();
+      assert.ok(content.includes('125.6234'),'Finance must show verified 4-decimal book balance');
+      assert.ok(content.includes('Disputed Bank'),'Finance must show disputed account identity');
+      assert.ok(!content.includes('999.00'),'Unreconciled recorded amount must remain hidden');
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/bank/reconciliation'));
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/finance/bootstrap'));
+      await finance.getByRole('tab',{name:/Money Accounts/}).click();
+      await finance.getByRole('button',{name:'Transfer',exact:true}).click();
+      const dialog=page.getByRole('dialog',{name:/Transfer between accounts/});
+      await dialog.waitFor({timeout:10000});
+      await dialog.getByRole('combobox',{name:/From account/}).selectOption('BK-OK');
+      await dialog.getByRole('combobox',{name:/To account/}).selectOption('BK-DISPUTED');
+      await dialog.getByRole('textbox',{name:/Amount/}).fill('12.5');
+      await dialog.getByRole('textbox',{name:/Reference/}).fill('operating float');
+      await dialog.getByRole('button',{name:/Review transfer/}).click();
+      await dialog.getByRole('button',{name:/Confirm transfer/}).click();
+      await page.getByText('BTR-UI-6B-POSTED').waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/bank/transfers').length,1);
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.includes('/reverse')));
+      await screenshot(page,'phase6-source-finance-'+width);
+      await inspectLayout(page,'phase6-source-finance-'+width);
+      await audit(page,'phase6-source-finance-'+width);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }

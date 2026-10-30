@@ -3,6 +3,8 @@ import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 import { patchSourceDaybook, patchSourceDaybookActions, patchSourceDaybookDetails } from './preview/patch-source-daybook.mjs';
+import { patchSourceFinance } from './preview/patch-source-finance.mjs';
+import { patchSourceFinanceTransfer } from './preview/patch-source-finance-transfer.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -46,6 +48,9 @@ const daybookActionPath=join(web,'src/components/daybook/DaybookActions.tsx');
 writeFileSync(daybookActionPath,patchSourceDaybookActions(readFileSync(daybookActionPath,'utf8')));
 const daybookDetailsPath=join(web,'src/components/daybook/TransactionDetailsDialog.tsx');
 writeFileSync(daybookDetailsPath,patchSourceDaybookDetails(readFileSync(daybookDetailsPath,'utf8')));
+const financeSourcePath=join(web,'src/pages/Finance.tsx');
+writeFileSync(financeSourcePath,patchSourceFinanceTransfer(patchSourceFinance(readFileSync(financeSourcePath,'utf8'))));
+
 
 
 
@@ -80,8 +85,10 @@ app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
   '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
+// Preserve the already audited Phase 6 workflows on a non-navigation diagnostic route
+// while the original source Finance components are connected one action at a time.
 app = app.replace(financeAnchor,
-  '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
+  '<Route path="finance" element={<Finance />} />\\n          <Route path="finance-backend-check" element={<LiveFinance />} />'.replace('\\n','\n'));
 app = app.replace(expensesAnchor,
   '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
 app = app.replace(purchasesAnchor,
