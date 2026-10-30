@@ -73,6 +73,7 @@ app = app.replace(importAnchor, [
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
   "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
+  "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
   "const LiveExpenses = lazy(() => import('./integration/LiveExpensesPage').then(module => ({ default: module.LiveExpensesPage })));",
   "const LivePurchases = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchasesPage })));",
   "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
@@ -84,6 +85,10 @@ app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
   '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
+// Preserve the already audited Phase 6 workflows on a non-navigation diagnostic route
+// while the original source Finance components are connected one action at a time.
+app = app.replace(financeAnchor,
+  '<Route path="finance" element={<Finance />} />\\n          <Route path="finance-backend-check" element={<LiveFinance />} />'.replace('\\n','\n'));
 app = app.replace(expensesAnchor,
   '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
 app = app.replace(purchasesAnchor,
