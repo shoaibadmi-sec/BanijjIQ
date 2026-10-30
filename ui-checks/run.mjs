@@ -10,6 +10,7 @@ import {runLiveTeamChecks} from './phase8a3-team.mjs';
 import {runAdminEmployeeCreateChecks} from './phase8a3b1-admin-user-create.mjs';
 import { runFinalProductChecks } from './products-final.mjs';
 import {runPaidRefundChecks} from './phase4-paid-refunds.mjs';
+import {runNativePartySourceChecks} from './phase4-native-parties.mjs';
 import {runPurchaseInvoiceSourceChecks} from './phase4-purchase-source-preview.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -864,6 +865,7 @@ try{
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});
   await runPaidRefundChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
+  await runNativePartySourceChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
   await runPurchaseInvoiceSourceChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
   for(const width of [390,768,1440]){
     await withCheck('Phase 4A supplier search + due purchase '+width,async()=>{
