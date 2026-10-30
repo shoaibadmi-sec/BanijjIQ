@@ -9,10 +9,11 @@ import {Button} from '../components/Button';
 import {Input} from '../components/Input';
 import {PageHeader} from '../components/PageHeader';
 import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from '../components/Table';
+import {BillDetailDialog,type BillDetail} from '../components/purchases/BillDetailDialog';
 import {canUseModule,useBackendSession} from './BackendGate';
 import {BackendRequestError,type BackendProduct,type PosProfilePreview} from './banijjApi';
 import {LiveMultiUnitQuantity} from './LiveMultiUnitQuantity';
-import {createDuePurchase,createPurchaseWithPayment,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,getOrderToPurchase,loadSupplierSettlements,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,validatePurchasePayment,
+import {createDuePurchase,createPurchaseWithPayment,getPurchaseProducts,getRealPurchases,getRealPurchaseDetail,getPurchaseUnitProfile,getOrderToPurchase,loadSupplierSettlements,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,validatePurchasePayment,
  type DuePurchaseLine,type PurchaseSupplier,type PurchaseRecord,type PurchaseTender,type SettlementDetails} from './purchaseApi';
 
 type Line=DuePurchaseLine&{key:string;profile?:PosProfilePreview|null;profileBusy?:boolean;profileError?:string};
@@ -29,6 +30,32 @@ export function LivePurchasesPage(){
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
   const [query,setQuery]=useState('');
+  const [invoice,setInvoice]=useState<BillDetail|null>(null);
+  const [invoiceLoading,setInvoiceLoading]=useState('');
+  const [invoiceError,setInvoiceError]=useState('');
+  const invoiceSequence=useRef(0);
+  async function viewInvoice(id:string){
+    const sequence=++invoiceSequence.current;
+    setInvoice(null);setInvoiceError('');setInvoiceLoading(id);
+    try{
+      const source=await getRealPurchaseDetail(id);
+      if(sequence!==invoiceSequence.current)return;
+      if(!source.items.length)throw Error('Purchase invoice has no recorded source lines.');
+      const description=source.items.map(line=>
+        line.productName+' · '+(line.unitDescription||String(line.quantity)+' base units')+
+        ' · '+money(line.unitPrice)+'/unit · '+money(line.lineTotal)).join('; ')+
+        (source.returnedAmount>0
+          ?' · Returns recorded: '+money(source.returnedAmount)+' (original bill amounts shown)':'');
+      setInvoice({ref:source.purchaseId,date:source.purchaseDate,
+        party:source.supplierName,description,
+        total:source.grandTotal,paid:source.paidAmount});
+    }catch(e){
+      if(sequence===invoiceSequence.current)
+        setInvoiceError(e instanceof Error?e.message:'Cannot load purchase invoice');
+    }finally{
+      if(sequence===invoiceSequence.current)setInvoiceLoading('');
+    }
+  }
   const refresh=useCallback(async()=>{
     if(!permitted)return;
     setLoading(true);setError('');
@@ -54,6 +81,7 @@ export function LivePurchasesPage(){
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
       <Link to="/app/purchases?tab=plans" className={'px-3 py-2 '+(tab==='plans'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Plans · পরিকল্পনা</Link>
     </nav>
+    {invoiceError&&<p role="alert" className="rounded-md bg-danger-bg p-3 text-sm text-danger">{invoiceError}</p>}
     {tab==='return'?(params.get('purchaseId')&&items.some(p=>p.purchaseId===params.get('purchaseId')&&!p.items?.some(i=>!!i.unitDescription))
       ?<LiveStandardPurchaseReturns purchaseId={params.get('purchaseId')!} onRefresh={()=>void refresh()}/>
       :<LiveMixedPurchaseReturns purchaseId={params.get('purchaseId')||''}
@@ -85,6 +113,12 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.paidAmount)}</TableCell>
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
           <TableCell><div className="flex flex-wrap gap-3">
+          <Button size="sm" variant="ghost"
+            aria-label={'View invoice '+p.purchaseId}
+            disabled={!!invoiceLoading}
+            onClick={()=>void viewInvoice(p.purchaseId)}>
+            {invoiceLoading===p.purchaseId?'Loading…':'View · দেখুন'}
+          </Button>
           {p.items?.length>0&&
             <Link className="text-xs font-semibold text-teal-700 hover:underline"
               to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}>
@@ -99,6 +133,7 @@ export function LivePurchasesPage(){
        </div>}
     </div>
     </>}
+    <BillDetailDialog bill={invoice} onClose={()=>{invoiceSequence.current++;setInvoice(null);}}/>
   </section>;
 }
 
