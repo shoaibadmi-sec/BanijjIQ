@@ -75,7 +75,8 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
         coverage.some(x=>x.status==='unavailable')?'unavailable':
         coverage.some(x=>x.status==='needs-review')?'needs-review':'ready';
       return json({ok:true,range:profit.range,
-        metrics:[...profit.metrics,...stock.metrics,...receivables.metrics,...payables.metrics,...cash.metrics],
+        metrics:[...profit.metrics.filter(x=>x.key!=='operatingExpenses'),
+          ...stock.metrics,...receivables.metrics,...payables.metrics,...cash.metrics],
         coverage:{status,reason:coverage.map(x=>x.reason).filter(Boolean).join(' ')}});
     }
     if(path==='/api/reports/v2/audit') {
