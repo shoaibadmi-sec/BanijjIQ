@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 
 /** Intercepted API browser contract; the real server controls RBAC and session revocation. */
 export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}){
-  async function open({admin=true,editReject=false,statusReject=false,usersFail=false,width=390}={}){
+  async function open({admin=true,editReject=false,statusReject=false,usersFail=false,initialStatus='Active',width=390}={}){
     const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
     const calls=[];
     const employees=[
       {id:'user-staff',name:'Existing Real Employee',mobile:'01000008301',
-        role:'InventoryStaff',roleLabel:'InventoryStaff',status:'Active',createdAt:'2026-10-30'},
+        role:'InventoryStaff',roleLabel:'InventoryStaff',status:initialStatus,createdAt:'2026-10-30'},
       {id:'user-owner',name:'Business Owner',mobile:'01000008300',
         role:'admin',roleLabel:'Administrator',status:'Active',createdAt:'2026-10-30'}
     ];
@@ -86,6 +86,21 @@ export async function runAdminEmployeeMaintenanceChecks({browser,base,withCheck}
         [{status:'Inactive'}]);
       assert.ok(f.calls.filter(c=>c.path==='/api/users'&&c.method==='GET').length>=2);
       assert.equal(f.employees[0].status,'Inactive');
+    }finally{await f.ctx.close();}
+  });
+  await withCheck('Phase 8A3B3 inactive employee can be reactivated with explicit consent',async()=>{
+    const f=await open({initialStatus:'Inactive'});
+    try{
+      await f.page.getByText('Existing Real Employee').waitFor();
+      await f.page.getByRole('button',{name:'Activate Existing Real Employee'}).click();
+      const dialog=f.page.getByRole('dialog',{name:'Change employee status'});
+      assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+      await dialog.getByRole('button',{name:'Confirm activate'}).click();
+      await f.page.getByRole('button',{name:'Deactivate Existing Real Employee'}).waitFor({timeout:12000});
+      assert.deepEqual(f.calls.filter(c=>c.path==='/api/users/user-staff/status'&&c.method==='PUT').map(c=>c.body),
+        [{status:'Active'}]);
+      assert.ok(f.calls.filter(c=>c.path==='/api/users'&&c.method==='GET').length>=2);
+      assert.equal(f.employees[0].status,'Active');
     }finally{await f.ctx.close();}
   });
   await withCheck('Phase 8A3B3 cancel status confirmation performs no mutation',async()=>{
