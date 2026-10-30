@@ -140,5 +140,19 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
       '/api/pos/store-credit/reconciliation/cases/'+encodeURIComponent(secondary.caseId));
     assert.equal(duplicateEvidence.ok,true,JSON.stringify(duplicateEvidence));
     assert.equal(duplicateEvidence.evidence.return.returnId,'CASE-RETURN');
+    // Pagination and repeat reads must preserve immutable case identities.
+    // A reviewer must not lose or duplicate a historical ledger anomaly
+    // when navigating between pages of the same unchanged source data.
+    const repeatedFirst=await api('GET','/api/pos/store-credit/reconciliation/cases?limit=2&offset=0');
+    const repeatedSecond=await api('GET','/api/pos/store-credit/reconciliation/cases?limit=2&offset=2');
+    assert.equal(repeatedFirst.ok,true,JSON.stringify(repeatedFirst));
+    assert.equal(repeatedSecond.ok,true,JSON.stringify(repeatedSecond));
+    assert.equal(repeatedFirst.total,4);
+    assert.equal(repeatedSecond.total,4);
+    const pagedIds=[...repeatedFirst.cases,...repeatedSecond.cases].map((c:any)=>c.caseId);
+    assert.equal(new Set(pagedIds).size,4);
+    assert.deepEqual(new Set(pagedIds),new Set(duplicates.cases.map((c:any)=>c.caseId)));
+    assert.equal(row('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n,before.reviewCases);
+    assert.equal(row('SELECT COUNT(*) n FROM audit_logs').n,before.audit);
   }finally{db.close();}
 });
