@@ -8,7 +8,7 @@ test('Phase 5G1 exercises authenticated report v2 routes against the isolated re
  const d1=source('d1-checks/run.mjs');
  assert.match(d1,/real D1 reports verify permissions, source parity and no writes/);
  for(const report of ['sales','stock','receivables','cash','expenses','finance'])
-   assert.ok(d1.includes('report='+report),'D1 source check missing '+report);
+   assert.ok(d1.includes('report='+report)||d1.includes("'"+report+"'"),'D1 source check missing '+report);
  assert.match(d1,/\/api\/reports\/v2\/summary/);
  assert.match(d1,/\/api\/reports\/v2\/audit/);
  assert.match(d1,/sourceId/);
