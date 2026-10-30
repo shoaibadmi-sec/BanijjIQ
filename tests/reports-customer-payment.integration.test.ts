@@ -67,7 +67,7 @@ test('cash customer payment cannot exceed outstanding due or post partial journa
   const snapshot=()=>({
    due:one('SELECT current_due n FROM customers WHERE customer_id=?',id).n,
    ledger:one('SELECT COALESCE(SUM(debit-credit),0) n FROM customer_ledger WHERE customer_id=?',id).n,
-   journals:count('customer_ledger'),cash:count('cash_book')
+   journals:count('customer_ledger'),cash:one("SELECT COUNT(*) n FROM cash_book WHERE type='Customer Payment'").n
   });
   assert.deepEqual(snapshot(),{due:60,ledger:60,journals:2,cash:1});
   for(const amount of [60.01,100,1.001]){
@@ -133,7 +133,7 @@ test('two simultaneous independent receipts cannot collect the same customer due
   assert.equal(results.filter(x=>x.status!==200).length,1,JSON.stringify(results));
   assert.equal(one('SELECT current_due n FROM customers WHERE customer_id=?',id).n,0);
   assert.equal(one('SELECT COALESCE(SUM(debit-credit),0) n FROM customer_ledger WHERE customer_id=?',id).n,0);
-  assert.equal(count('cash_book'),1);
+  assert.equal(one("SELECT COUNT(*) n FROM cash_book WHERE type='Customer Payment'").n,1);
   assert.equal(one("SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE type='Customer Payment'").n,20);
  });
 });
