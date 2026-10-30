@@ -37,6 +37,9 @@ import { useLiveProducts } from '../integration/products/useLiveProducts';
 import { toProductView } from '../integration/products/productContracts';
 import { MohimProductEditor } from '../integration/products/MohimProductEditor';
 import { MohimProductActions as ProductActions } from '../integration/products/MohimProductActions';
+import { StockHistoryView } from '../components/products/ProductInventoryViews';
+import { loadInventoryHistory } from '../integration/products/productApi';
+import type { StockMovement as HisabStockMovement } from '../types/erp';
 
 `;
 const controller=String.raw`type ProductView = 'list' | 'lots' | 'history' | 'settings';
@@ -58,9 +61,33 @@ export function Products() {
   useEffect(()=>setQuery(routeQuery),[routeQuery]);
   const [category,setCategory]=useState('All');
   const [stockFilter,setStockFilter]=useState<StockFilter>('all');
-  const [view,setView]=useState<ProductView>('list');
-  const chooseView=(next:ProductView)=>{if(next==='list'){setView('list');
-    setSearchParams(old=>{const params=new URLSearchParams(old);params.delete('view');return params;},{replace:true});}};
+  const requestedView=searchParams.get('view');
+  const [view,setView]=useState<ProductView>(requestedView==='history'?'history':'list');
+  useEffect(()=>setView(requestedView==='history'?'history':'list'),[requestedView]);
+  const chooseView=(next:ProductView)=>{
+    if(next!=='list'&&next!=='history')return;
+    setView(next);
+    setSearchParams(old=>{
+      const params=new URLSearchParams(old);
+      if(next==='list')params.delete('view');else params.set('view','history');
+      return params;
+    },{replace:true});
+  };
+  const [movements,setMovements]=useState<HisabStockMovement[]>([]);
+  const [inventoryProductFilter,setInventoryProductFilter]=useState('');
+  const [historyLoading,setHistoryLoading]=useState(false);
+  const [historyError,setHistoryError]=useState('');
+  const [historyReload,setHistoryReload]=useState(0);
+  useEffect(()=>{
+    if(!permitted||view!=='history')return;
+    let active=true;
+    setHistoryLoading(true);setHistoryError('');setMovements([]);
+    loadInventoryHistory()
+      .then(rows=>{if(active)setMovements(rows);})
+      .catch(reason=>{if(active){setMovements([]);setHistoryError(reason instanceof Error?reason.message:'Could not load stock history');}})
+      .finally(()=>{if(active)setHistoryLoading(false);});
+    return()=>{active=false;};
+  },[permitted,view,items,historyReload]);
   const [editing,setEditing]=useState<undefined|null|typeof items[number]>(undefined);
   const [notice,setNotice]=useState('');
   const {columns:visibleColumns,setColumns:setVisibleColumns}=
@@ -108,23 +135,27 @@ export function patchLiveProducts(source) {
   const pageStart=source.indexOf('export function Products() {');
   const jsxStart=source.indexOf('  return (\n    <div className="mx-auto max-w-[1440px] space-y-4">',pageStart);
   const afterList=source.indexOf("\n      {view === 'lots'",jsxStart);
-  if([blockStart,actionStart,pageStart,jsxStart,afterList].some(n=>n<0)
-     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList))
+  const historyStart=source.indexOf("      {view === 'history' && (",afterList);
+  const settingsStart=source.indexOf("      {view === 'settings' && (",historyStart);
+  if([blockStart,actionStart,pageStart,jsxStart,afterList,historyStart,settingsStart].some(n=>n<0)
+     ||!(blockStart<actionStart&&actionStart<pageStart&&pageStart<jsxStart&&jsxStart<afterList&&afterList<historyStart&&historyStart<settingsStart))
     throw new Error('Pinned Products source JSX anchors changed');
   // Keep original column picker, status badges, table classes, tabs and list JSX intact.
   const primitives=source.slice(blockStart,actionStart);
   let jsx=source.slice(jsxStart,afterList);
+  const historyJsx=source.slice(historyStart,settingsStart);
   jsx=replaceOnce(jsx,
     '    <div className="mx-auto max-w-[1440px] space-y-4">',
     '    <div className="mx-auto max-w-[1440px] space-y-4" data-live-products>','live root');
   jsx=replaceOnce(jsx,
     '      <PageHeader',
     `      {notice&&<p role="status" className="rounded-lg bg-success-bg p-2 text-xs text-success">{notice}</p>}
-      {error&&<div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-bg p-2 text-xs text-danger">
-          <span>{error} · Showing no unverified inventory.</span>
-          <Button size="sm" variant="outline" disabled={loading} onClick={()=>void refresh().catch(()=>{})}>Retry products</Button>
+      {(error||historyError)&&<div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-bg p-2 text-xs text-danger">
+          <span>{error||historyError} · Showing no unverified inventory.</span>
+          <Button size="sm" variant="outline" disabled={loading||historyLoading}
+            onClick={()=>view==='history'?setHistoryReload(n=>n+1):void refresh().catch(()=>{})}>{view==='history'?'Retry history':'Retry products'}</Button>
         </div>}
-      {loading&&<p role="status" className="p-2 text-xs text-ink-500">Loading live products…</p>}
+      {(loading||historyLoading)&&<p role="status" className="p-2 text-xs text-ink-500">{view==='history'?'Loading live stock history…':'Loading live products…'}</p>}
       <PageHeader`,'live fetch state');
   jsx=replaceOnce(jsx,
     "onClick={() => setImportOpen(true)}",
@@ -137,7 +168,7 @@ export function patchLiveProducts(source) {
     'disabled={!canAdd||pendingOperation!==null} onClick={()=>setEditing(null)}','live Add product');
   jsx=replaceOnce(jsx,
     "onClick={() => chooseView(id)}",
-    `disabled={id!=='list'} title={id!=='list'?'Use a product row Actions menu for real lots and history; settings are not connected.':undefined}
+    `disabled={id!=='list'&&id!=='history'} title={id!=='list'&&id!=='history'?'Awaiting real API integration.':undefined}
              onClick={() => chooseView(id)}`,'deferred tabs');
   jsx=replaceOnce(jsx,
     "availableProductCategories().map((c) =>",
@@ -172,7 +203,7 @@ export function patchLiveProducts(source) {
                       onAdjustStock={adjustStock} onSetStatus={setStatus}
                       loadLots={loadLots} loadHistory={loadHistory}`;
   jsx=jsx.slice(0,rowActionStart)+safeActions+jsx.slice(actionEnd);
-  const compiled=header+primitives+controller+jsx+"\n    </div>);\n}\n";
+  const compiled=header+primitives+controller+jsx+historyJsx+"\n    </div>);\n}\n";
   const forbidden=[
     'availableProducts(', 'availableProductCategories(', 'availableStockLots(',
     'availableStockMovements(', 'salesInvoices', 'upsertProductPreview',
