@@ -478,6 +478,29 @@ test('4I functions: invalid discounts must not silently change purchase invoice 
  });
 });
 
+test('4I functions: invalid invoice-edit discount must preserve original purchase and ledger',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const create=await api('POST','/api/purchases',{supplierId:supplier.id,
+   paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(create);
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   invoice:one('SELECT discount,grand_total,paid_amount,due_amount FROM purchases WHERE purchase_id=?',create.purchaseId),
+   lines:count('purchase_items'),lots:count('stock_lots'),edits:count('invoice_edit_logs'),
+   audits:count('audit_logs'),stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n
+  });
+  const before=snapshot();
+  for(const discount of [-1,0.00001,101,'10',null]){
+   const edit=await api('PUT','/api/purchases/'+create.purchaseId,{
+    supplierId:supplier.id,reason:'Attempt invalid discount',
+    discount,paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]
+   });
+   assert.equal(edit.status,400,'Malformed discount '+String(discount)+' must not be saved');
+   assert.deepEqual(snapshot(),before,'Rejected edit must leave invoice, journal and stock unchanged');
+  }
+ });
+});
+
 test('4I accounting: multiple purchases reconcile supplier, bank, cash and FIFO by hand',async()=>{
  await fixture(async({api,db,one,supplier,p1})=>{
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')")
