@@ -114,7 +114,7 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
           <TableCell><div className="flex flex-wrap gap-3">
           <Button size="sm" variant="ghost"
-            aria-label={'View invoice '+p.purchaseId}
+            aria-label={'View · দেখুন invoice '+p.purchaseId}
             disabled={!!invoiceLoading}
             onClick={()=>void viewInvoice(p.purchaseId)}>
             {invoiceLoading===p.purchaseId?'Loading…':'View · দেখুন'}
