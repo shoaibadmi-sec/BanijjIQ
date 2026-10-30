@@ -52,5 +52,12 @@ test('G2-F verified outstanding legacy reclassification is atomic and exactly on
     assert.equal(read('SELECT COUNT(*) n FROM cash_book').n,1);
     assert.equal((await api(path+'/resolve',decision)).status,409);
     assert.equal(read("SELECT available_cents n FROM customer_store_credit_balance WHERE customer_id='H-C'").n,1000);
+    const review=await api('/api/pos/store-credit/reconciliation');
+    assert.equal(review.ok,true,JSON.stringify(review));
+    assert.equal(review.flagsCount,0,'source-reviewed historical cases must not remain unresolved anomalies');
+    assert.equal(review.reviewRequired,false);
+    assert.equal(review.issuedCents,1000);
+    assert.equal(review.outstandingCents,1000);
+    assert.equal(review.customerAccounts,1);
   }finally{db.close();}
 });
