@@ -59,12 +59,17 @@ async function resolveEmployeeRoles(db:SherDatabase,input:any,actor:AuthUser,
 }
 export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'users','view');if(denied)return denied;
-  const [ur,rr]=await Promise.all([
+  const [ur,rr,assignments]=await Promise.all([
     db.prepare(`SELECT user_id,full_name,phone,role,status,created_by,created_at,last_login_at FROM app_users ORDER BY full_name COLLATE NOCASE`).all<any>(),
-    db.prepare(`SELECT role_name FROM app_roles WHERE status='Active' ORDER BY role_name COLLATE NOCASE`).all<any>()
+    db.prepare(`SELECT role_name FROM app_roles WHERE status='Active' ORDER BY role_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT user_id,role_name FROM app_user_roles ORDER BY role_name COLLATE NOCASE`).all<any>()
   ]);
+  const linked=new Map<string,string[]>();
+  for(const row of assignments.results||[])linked.set(row.user_id,[...(linked.get(row.user_id)||[]),row.role_name]);
   return json({ok:true,
-    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,roleLabel:displayRoleName(u.role),status:u.status,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
+    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,
+      roleIds:[u.role,...(linked.get(u.user_id)||[]).filter(r=>r.toLowerCase()!==String(u.role).toLowerCase())],
+      roleLabel:displayRoleName(u.role),status:u.status,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
     roles:(rr.results||[]).map((r:any)=>({name:r.role_name,label:r.role_name})),
     canAssignAdministrator:user.role==='admin'
   });
