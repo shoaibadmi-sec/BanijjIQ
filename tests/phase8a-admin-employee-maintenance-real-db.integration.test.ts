@@ -17,7 +17,7 @@ test('Phase 8A3B3 employee edit/status use real DB, revoke sessions and preserve
       const res=await handleApiRequest(new Request('https://isolated.invalid'+path,{
         method,headers,body:body===undefined?undefined:JSON.stringify(body)
       }),db);
-      return {status:res.status,...await res.json() as Record<string,any>};
+      return {...await res.json() as Record<string,any>,status:res.status};
     };
     const owner=await api('POST','/api/setup/admin',{
       fullName:'Local Admin',phone:'01000008501',password:'test-only-owner-password-2026'
