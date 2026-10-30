@@ -1,4 +1,6 @@
-import type {SherDatabase} from '../../db/types.js';
+import type {SherDatabase,SqlPreparedStatement} from '../../db/types.js';
+import type {AuthUser} from '../auth/types.js';
+import {hasModulePermission} from '../auth/permissions.js';
 
 type Source = {
   method:'Cash'|'Bank'|'Mobile Banking'|'Store Credit';
@@ -139,4 +141,160 @@ export async function getSplitSaleReversalPreviewRoute(db:SherDatabase,id:string
     eligible:true,reason:'',invoiceId:id,totalCents,refundCents,
     creditReissueCents,allocations
   }});
+}
+
+
+/** Full original-source refund and credit reissue. No partial, discounted,
+ * tracked, vendor, negative-stock or mixed-unit reversal until separately audited. */
+export async function postSplitSaleReversalRoute(
+  db:SherDatabase,id:string,input:{reason?:string},user:AuthUser
+):Promise<Response>{
+  if(!(await hasModulePermission(db,user,'returns','add')))
+    return respond({ok:false,error:'Sales Return permission required.'},403);
+  const reason=String(input?.reason||'').trim();
+  if(reason.length<8||reason.length>500)
+    return respond({ok:false,error:'Give an 8–500 character refund reason.'},400);
+  const preview=await (await getSplitSaleReversalPreviewRoute(db,id)).json() as any;
+  if(!preview.ok||!preview.preview?.eligible)
+    return respond({ok:false,error:preview.preview?.reason||'Original payment sources cannot be reconciled.'},409);
+  const original=await db.prepare(
+    'SELECT invoice_id,customer_id,customer_name,customer_phone,grand_total,subtotal,discount,sale_date '+
+    'FROM sales WHERE invoice_id=? AND status=? AND is_deleted=0'
+  ).bind(id,'Completed').first<any>();
+  if(!original)return respond({ok:false,error:'Original invoice no longer qualifies.'},409);
+  const rows=await db.prepare(
+    'SELECT product_id,product_name,quantity,unit_price,line_total FROM sale_items WHERE invoice_id=? ORDER BY id'
+  ).bind(id).all<any>();
+  const items=rows.results||[];
+  const total=Number(preview.preview.totalCents);
+  if(!items.length||cents(original.grand_total)!==total||
+    cents(original.discount)!==0||cents(original.subtotal)!==total||
+    items.some(i=>!Number.isSafeInteger(Number(i.quantity))||Number(i.quantity)<=0||
+      cents(i.line_total)!==cents(Number(i.quantity)*Number(i.unit_price)))||
+    items.reduce((sum,i)=>sum+(cents(i.line_total)||0),0)!==total)
+    return respond({ok:false,error:'This refund requires unmodified original line prices and zero discount.'},409);
+  if(await db.prepare(
+    'SELECT 1 x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1'
+  ).bind(id).first())
+    return respond({ok:false,error:'Mixed-unit refunds need original unit-denomination restoration.'},409);
+
+  const allocations=preview.preview.allocations as Source[];
+  const creditAmount=Number(preview.preview.creditReissueCents);
+  const credit=creditAmount>0?await db.prepare(
+    'SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?'
+  ).bind(original.customer_id).first<{available_cents:number}>():null;
+  if(creditAmount>0&&(!credit||!Number.isSafeInteger(Number(credit.available_cents))||
+    Number(credit.available_cents)<0))
+    return respond({ok:false,error:'Store Credit balance changed; review before refund.'},409);
+  const restored=new Map<string,{qty:number;productId:string;original:number;balance:number;type:string}>();
+  const lots=await db.prepare(
+    'SELECT il.lot_id,il.product_id,il.quantity,sl.original_quantity,sl.remaining_quantity,sl.source_type '+
+    'FROM sale_item_lots il JOIN stock_lots sl ON sl.lot_id=il.lot_id WHERE il.invoice_id=? ORDER BY il.id'
+  ).bind(id).all<any>();
+  for(const lot of lots.results||[]){
+    const key=String(lot.lot_id);
+    const current=restored.get(key)||{
+      qty:0,productId:String(lot.product_id),original:Number(lot.original_quantity),
+      balance:Number(lot.remaining_quantity),type:String(lot.source_type)
+    };
+    current.qty+=Number(lot.quantity);restored.set(key,current);
+  }
+  if(!restored.size||[...restored.values()].some(l=>l.type==='OVERSOLD'||
+    !Number.isSafeInteger(l.qty)||l.qty<=0||l.balance+l.qty>l.original))
+    return respond({ok:false,error:'Original FIFO lots cannot be safely restored.'},409);
+
+  const returnId='SRT-'+crypto.randomUUID().slice(0,10).toUpperCase();
+  const date=new Date().toISOString().slice(0,10);
+  const stmts:SqlPreparedStatement[]=[
+    db.prepare(
+      'INSERT INTO sales_returns (return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,'+
+      'refund_method,total_return_amount,reason,notes,processed_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    ).bind(returnId,date,id,original.customer_id,original.customer_name,
+      original.customer_phone,'Split',total/100,reason,
+      'Exact original-source refund; Store Credit reissued as liability',user.fullName)
+  ];
+  for(const i of items){
+    const n=Number(i.quantity),amount=Number(i.line_total);
+    const stock=await db.prepare('SELECT current_stock FROM products WHERE product_id=?')
+      .bind(i.product_id).first<{current_stock:number}>();
+    if(!stock)return respond({ok:false,error:'Returned product no longer exists.'},409);
+    stmts.push(db.prepare(
+      'INSERT INTO sales_return_items (return_id,invoice_id,product_id,product_name,'+
+      'return_quantity,return_price,line_total) VALUES (?,?,?,?,?,?,?)'
+    ).bind(returnId,id,i.product_id,i.product_name,n,Number(i.unit_price),amount));
+    stmts.push(db.prepare(
+      "UPDATE products SET current_stock=current_stock+?,updated_at=datetime('now') WHERE product_id=?"
+    ).bind(n,i.product_id));
+    stmts.push(db.prepare(
+      "INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) "+
+      "VALUES (?,?,'Sales Return',?,0,?,?,NULL)"
+    ).bind('SM-'+crypto.randomUUID().slice(0,10).toUpperCase(),
+      i.product_id,n,Number(stock.current_stock)+n,returnId));
+  }
+  for(const [lotId,lot] of restored){
+    stmts.push(db.prepare(
+      "UPDATE stock_lots SET remaining_quantity=remaining_quantity+?,status='Active',updated_at=datetime('now') "+
+      "WHERE lot_id=? AND source_type<>'OVERSOLD' AND remaining_quantity+?<=original_quantity"
+    ).bind(lot.qty,lotId,lot.qty));
+  }
+  allocations.forEach((a,index)=>stmts.push(db.prepare(
+    'INSERT INTO sales_return_refund_allocations '+
+    '(allocation_id,return_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) '+
+    'VALUES (?,?,?,?,?,?,?,?,?)'
+  ).bind('RA-'+crypto.randomUUID().slice(0,12).toUpperCase(),returnId,id,index+1,
+    a.method,a.amountCents,a.bankAccountId,a.method==='Store Credit'?original.customer_id:'',a.sourceKey)));
+  for(const a of allocations){
+    const amount=a.amountCents/100;
+    if(a.method==='Cash'){
+      stmts.push(db.prepare(
+        "INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) "+
+        "VALUES (?,?,'Sales Return',?,?,?,0,'Cash',0)"
+      ).bind('CB-'+crypto.randomUUID().slice(0,10).toUpperCase(),
+        date,returnId,'Original cash refund for '+id,amount));
+    }else if(a.method==='Bank'||a.method==='Mobile Banking'){
+      const bank=await db.prepare(
+        'SELECT bank_account_id,account_name FROM bank_accounts WHERE bank_account_id=? AND status=? AND account_type=?'
+      ).bind(a.bankAccountId,'Active',a.method).first<any>();
+      if(!bank)return respond({ok:false,error:'Original bank/mobile account changed.'},409);
+      stmts.push(db.prepare(
+        'UPDATE bank_accounts SET current_balance=current_balance-? WHERE bank_account_id=? AND status=? AND account_type=?'
+      ).bind(amount,a.bankAccountId,'Active',a.method));
+      stmts.push(db.prepare(
+        "INSERT INTO bank_book (entry_id,bank_account_id,bank_account_name,date,type,reference,description,"+
+        "debit,credit,balance,status,notes,reversal_of,created_by,is_deleted) "+
+        "VALUES (?,?,?,?,'Sales Return',?,?,?,0,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,?,?,0)"
+      ).bind('BB-'+crypto.randomUUID().slice(0,10).toUpperCase(),a.bankAccountId,
+        bank.account_name,date,returnId,'Original '+a.method+' refund for '+id,
+        amount,a.bankAccountId,reason,id,user.fullName));
+    }else{
+      stmts.push(db.prepare(
+        "INSERT INTO customer_store_credit_entries "+
+        "(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,note,created_by) "+
+        "VALUES (?,?,'ISSUE','Sales Return',?,?,?,?,?)"
+      ).bind('SC-'+crypto.randomUUID().slice(0,12).toUpperCase(),original.customer_id,returnId,
+        a.amountCents,Number(credit!.available_cents)+a.amountCents,
+        'Reissue original split Store Credit from '+id+'; '+reason,user.userId));
+    }
+  }
+  stmts.push(db.prepare(
+    'INSERT INTO sale_reversal_logs '+
+    '(invoice_id,return_id,refund_amount_cents,reason,reversed_by,refund_method,refund_bank_account_id) '+
+    'VALUES (?,?,?,?,?,?,?)'
+  ).bind(id,returnId,total,reason,user.userId,'Split',''));
+  stmts.push(db.prepare(
+    "UPDATE sales SET status='Reversed',updated_at=datetime('now') WHERE invoice_id=? AND status='Completed' AND is_deleted=0"
+  ).bind(id));
+  stmts.push(db.prepare(
+    "INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) "+
+    "VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)"
+  ).bind(user.userId,returnId,'Exact split source refund of '+id));
+  stmts.push(db.prepare(
+    "INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) "+
+    "VALUES (?,'REVERSE_SPLIT_SALE','SALE',?,?)"
+  ).bind(user.userId,id,'Return '+returnId+'; exact source refund '+total+' poisha; '+reason));
+  try{await db.batch(stmts);}catch(err){
+    return respond({ok:false,error:'Source-specific refund failed ledger/FIFO verification; no changes committed.'},409);
+  }
+  return respond({ok:true,returnId,refundCents:Number(preview.preview.refundCents),
+    creditReissueCents:creditAmount});
 }
