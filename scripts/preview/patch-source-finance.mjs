@@ -47,7 +47,6 @@ export function patchSourceFinance(source){
   "onClick={() => setChequeOpen(true)}",
   "onClick={() => setAccountOpen(true)}",
   "onClick={() => openTransfer()}",
-  "onClick={() => setTransferOpen(true)}",
   "onClick={() => setCashDialogOpen(true)}",
   "onClick={() => setTransactionAction(item)}",
   "onClick={() => setAccountAction(account)}"
