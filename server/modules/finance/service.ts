@@ -467,6 +467,66 @@ export async function addFinanceTransactionRoute(db:SherDatabase,input:FinanceIn
   const balances=await financeBalances(db); return json({ok:true,id,...balances});
 }
 
+/** Person balances are only shown if every active financing record matches one source-book posting. */
+export async function getFinancePersonLedgerRoute(db:SherDatabase,personId:string,url:URL):Promise<Response>{
+  const person=await resolveFinancePerson(db,personId);
+  if(!person)return error('Finance person not found.',404);
+  const sizeRaw=url.searchParams.get('pageSize')||'50';
+  if(sizeRaw!=='50'&&sizeRaw!=='100')return error('Choose 50 or 100 rows per page.');
+  const pageRaw=url.searchParams.get('page')||'1',page=Number(pageRaw),pageSize=Number(sizeRaw);
+  if(!/^[1-9]\d*$/.test(pageRaw)||!Number.isSafeInteger(page))return error('Choose a valid page number.');
+  const from=cleanText(url.searchParams.get('dateFrom')),to=cleanText(url.searchParams.get('dateTo'));
+  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(from))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(to))||(from&&to&&from>to))
+    return error('Enter a valid date range.');
+  const entries=await db.prepare("SELECT t.*,\n (SELECT COUNT(*) FROM cash_book c WHERE c.reference=t.finance_id AND COALESCE(c.is_deleted,0)=0) cash_count,\n (SELECT COUNT(*) FROM cash_book c WHERE c.reference=t.finance_id AND COALESCE(c.is_deleted,0)=0\n   AND c.date=t.date AND c.type=t.transaction_type AND c.payment_method='Cash'\n   AND ABS(c.credit-(CASE WHEN t.transaction_type IN ('Owner Investment','Opening Owner Capital','Loan Received','Opening Loan') THEN t.amount ELSE 0 END))<0.0000001\n   AND ABS(c.debit-(CASE WHEN t.transaction_type IN ('Owner Withdrawal','Loan Repayment') THEN t.amount ELSE 0 END))<0.0000001) cash_match,\n (SELECT COUNT(*) FROM bank_book b WHERE b.reference=t.finance_id AND COALESCE(b.is_deleted,0)=0) bank_count,\n (SELECT COUNT(*) FROM bank_book b WHERE b.reference=t.finance_id AND COALESCE(b.is_deleted,0)=0\n   AND b.status='Active' AND b.date=t.date AND b.type=t.transaction_type AND b.bank_account_id=t.bank_account_id\n   AND ABS(b.credit-(CASE WHEN t.transaction_type IN ('Owner Investment','Opening Owner Capital','Loan Received','Opening Loan') THEN t.amount ELSE 0 END))<0.0000001\n   AND ABS(b.debit-(CASE WHEN t.transaction_type IN ('Owner Withdrawal','Loan Repayment') THEN t.amount ELSE 0 END))<0.0000001) bank_match\n FROM finance_transactions t WHERE t.person_id=? AND COALESCE(t.is_deleted,0)=0\n ORDER BY t.date ASC,t.finance_id ASC").bind(personId).all<any>();
+  const ticks=(value:unknown):number|null=>{
+    const v=Number(value),t=Math.round(v*10000);
+    return Number.isFinite(v)&&Number.isSafeInteger(t)&&t>0&&Math.abs(v*10000-t)<0.00001?t:null;
+  };
+  let running=0,unmatched=0;
+  const ledger=(entries.results||[]).map((tx:any)=>{
+    const type=financeType(cleanText(tx.transaction_type));
+    const validKind=type?.account===(person.person_type==='Lender'?'loan':'capital');
+    const value=ticks(tx.amount);
+    const cash=tx.payment_method==='Cash',bank=tx.payment_method==='Bank'||tx.payment_method==='Mobile Banking';
+    const exact=cash?(Number(tx.cash_count)===1&&Number(tx.cash_match)===1&&Number(tx.bank_count)===0):
+      bank?(Number(tx.bank_count)===1&&Number(tx.bank_match)===1&&Number(tx.cash_count)===0):false;
+    const matched=Boolean(type&&validKind&&value!==null&&exact);
+    if(!matched)unmatched++;
+    const signed=(type?.direction==='in'?1:-1)*(value||0);
+    running+=signed;
+    return {
+      financeId:cleanText(tx.finance_id),personId,date:cleanText(tx.date),
+      transactionType:cleanText(tx.transaction_type),paymentMethod:cleanText(tx.payment_method),
+      amount:dbNumber(tx.amount),debit:type?.direction==='out'?dbNumber(tx.amount):0,
+      credit:type?.direction==='in'?dbNumber(tx.amount):0,sourceStatus:matched?'matched':'needs-review',
+      referenceNo:cleanText(tx.reference_no),notes:cleanText(tx.notes),
+      createdBy:cleanText(tx.created_by),createdAt:cleanText(tx.created_at),
+      isBackdated:dbBool(tx.is_backdated),backdatedReason:cleanText(tx.backdated_reason),
+      balanceTicks:running
+    };
+  });
+  const ready=unmatched===0;
+  const range=ledger.filter(x=>(!from||x.date>=from)&&(!to||x.date<=to));
+  const prior=ledger.filter(x=>from&&x.date<from);
+  const through=ledger.filter(x=>!to||x.date<=to);
+  const openingTicks=prior.length?prior[prior.length-1].balanceTicks:0;
+  const closingTicks=through.length?through[through.length-1].balanceTicks:0;
+  const rows=[...range].reverse().slice((page-1)*pageSize,page*pageSize).map(({balanceTicks,...row})=>({
+    ...row,balance:ready?balanceTicks/10000:null
+  }));
+  return json({
+    ok:true,person:{id:cleanText(person.person_id),name:cleanText(person.person_name),type:cleanText(person.person_type),status:cleanText(person.status)},
+    balance:ready?running/10000:null,openingBalance:ready?openingTicks/10000:null,
+    closingBalance:ready?closingTicks/10000:null,rows,
+    totalRows:range.length,totalPages:Math.ceil(range.length/pageSize),page,pageSize,
+    dateFrom:from,dateTo:to,
+    coverage:{status:ready?'ready':'needs-review',
+      reason:ready?'Every finance entry has one matching active cash or bank posting.':
+        unmatched+' finance entries have missing, duplicated or mismatched source postings.'}
+  });
+}
+
 export async function getFinanceLedgerRoute(db:SherDatabase,url:URL):Promise<Response>{
   const history=parseLedgerHistory(url,{from:'dateFrom',to:'dateTo'});
   const typeF=cleanText(url.searchParams.get('transactionType')),personF=cleanText(url.searchParams.get('personId')),q=cleanText(url.searchParams.get('query')).toLowerCase();
