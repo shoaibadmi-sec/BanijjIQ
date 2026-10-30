@@ -2,6 +2,20 @@
 
 These rules apply to **every development phase, module, bug fix, API, UI, database migration, and integration** in this repository, including concurrent agent work. They are mandatory for all human and AI contributors. Keep the existing HisabIQ React UI/design unless a specific approved task changes it.
 
+## Absolute frontend source-of-truth rule — API wiring only
+
+**The existing pinned apps/hisabiq-web React source (shuvodelux-commits/hisabiq_ui) is the authoritative frontend. Do not design, generate, rebuild, clone, substitute or visually approximate existing screens.** This user rule supersedes older hybrid UI proposals and precedent set by earlier Live*Page implementations.
+
+- Preserve actual original HisabIQ screen JSX, layouts, CSS, shadcn components, branding, tabs, compact tables, keyboard/touch interactions, Bangla helpers, animations and responsive behavior. Do not redesign while integrating backend data.
+- Inspect the original screen, its state/handlers and shared components first. **Connect the existing controls and workflows to BanijjIQ APIs** through thin typed adapters, hooks and event handlers. Replace demo/local data with real reads/writes; do not replace a route with a new Live*Page.
+- **If backend functionality is missing, build and test the backend first**: RED → GREEN TDD, authenticated tenant-scoped Hono endpoints, D1 transactions, correct accounting/FIFO/ledger permissions and regression coverage. Then connect the existing frontend. Never implement financial posting only in React.
+- No new standalone React pages, replacement POS/cart/table UI, alternate module screens or CSS lookalikes for an existing HisabIQ screen. An adapter or hook is fine; an independently designed page is not. If the original UI has no control for a desired workflow, document the gap and require explicit *separate* UI approval.
+- Preserve the pinned original source; use narrow, source-verified behavioral wiring or approved source changes while keeping visual DOM/design intact.
+- Existing LivePosPage, LivePurchasesPage, LiveSalesReturnsPage, LiveReportsPage and live Settings screens are **migration debt, not approved precedent**. Rewire the original screens in isolated, tested PRs without removing working backend behavior prematurely.
+- Every frontend PR must show a screen-to-API action matrix, original components reused, missing backend endpoints implemented/tested, screenshot/source-parity tests including tablet/mobile/keyboard/A11y, and real Worker/D1 checks. Similar colors are not the same UI.
+
+See docs/superpowers/hisabiq-ui-api-only-integration-contract.md for the migration inventory.
+
 ## Non-negotiable pipeline
 
 **TEST FIRST → VERIFY RED → MINIMAL IMPLEMENTATION → VERIFY GREEN → FULL LOGIC & REGRESSION TESTS → EXACT-HEAD GITHUB ACTIONS GREEN → REVIEW → MERGE.**

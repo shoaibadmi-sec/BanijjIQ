@@ -13,7 +13,8 @@ export type EvidenceSource = { module: string; sourceId: string; date: string | 
 export type ReportMetric = { key: string; valueMinor: number | null; status: ReportStatus; reason: string; asOf: string; sources: EvidenceSource[] };
 export type LiveReportRow = {
   sourceId: string; sourceModule: string; date: string; label: string;
-  amountMinor: number | null; status: ReportStatus; reason: string;
+  amountMinor: number | null; paidMinor?: number | null; dueMinor?: number | null;
+  status: ReportStatus; reason: string;
 };
 export type LiveReportPage = {
   ok: true; report: LiveReportKey; range: LiveReportRange; page: number; pageSize: 50 | 100;

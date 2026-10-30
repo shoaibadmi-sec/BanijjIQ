@@ -76,8 +76,8 @@ app = app.replace(posAnchor,
 app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
-  '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
+  '<Route path="reports" element={<Reports />} />\n          <Route path="reports-live-legacy" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
 app = app.replace(purchasesAnchor, '<Route path="purchases" element={<LivePurchases />} />\\n          <Route path="purchases-design-preview" element={<Purchases />} />'.replace('\\n','\n'));
 app = app.replace(purchaseEditorAnchor, '<Route path="purchases/new" element={<LivePurchaseEditor />} />\\n          <Route path="purchase-editor-design-preview" element={<PurchaseEditor />} />'.replace('\\n','\n'));
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
+console.log('Prepared isolated React build: real Products and POS; original HisabIQ Reports + authenticated live report data; unreconciled report figures remain unavailable.');
