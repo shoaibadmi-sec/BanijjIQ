@@ -51,6 +51,8 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test tests/preview-demo-seed.integration.test.ts
+          node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security
           node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
