@@ -72,3 +72,31 @@ test('6H upgrade rehearsal preserves legacy financial rows and replay is idempot
   assert.deepEqual(snapshot(),before);
  }finally{db.close();rmSync(sandbox,{recursive:true,force:true});}
 });
+
+test('6H duplicate legacy open sessions block the migration atomically and allow a reconciled retry',()=>{
+ const sandbox=mkdtempSync(join(tmpdir(),'hisabiq-phase6-duplicate-'));
+ const stage=join(sandbox,'migrations');
+ mkdirSync(stage);
+ for(const f of files.filter(n=>Number(n.slice(0,4))<62))
+   copyFileSync(join(source,f),join(stage,f));
+ const db=new SqliteDatabase(join(sandbox,'business.sqlite'));
+ try{
+  runMigrations(db.native,stage);
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,opening_cash,status) VALUES ('P6H-DUP-A','Historical Cashier',100,'Open'),('P6H-DUP-B','Historical Cashier',200,'Open')").run();
+  const before=db.native.prepare('SELECT session_id,opening_cash,status FROM cash_sessions ORDER BY session_id').all();
+  for(const f of phase6.filter(n=>Number(n.slice(0,4))>=62))
+   copyFileSync(join(source,f),join(stage,f));
+  const failed='0062_phase6_cash_session_guards.sql';
+  assert.throws(()=>runMigrations(db.native,stage),/UNIQUE constraint failed|idx_phase6_cash_only_one_open/i);
+  assert.equal((db.native.prepare('SELECT COUNT(*) n FROM schema_migrations WHERE migration=?').get(failed) as any).n,0);
+  assert.equal((db.native.prepare("SELECT COUNT(*) n FROM pragma_table_info('cash_sessions') WHERE name='client_request_id'").get() as any).n,0,
+   'a failed ALTER/CREATE INDEX sequence must not leave partial schema edits');
+  assert.deepEqual(db.native.prepare('SELECT session_id,opening_cash,status FROM cash_sessions ORDER BY session_id').all(),before);
+  db.native.prepare("UPDATE cash_sessions SET status='Closed' WHERE session_id='P6H-DUP-A'").run();
+  const retried=runMigrations(db.native,stage);
+  assert.equal(retried.applied.length,6,'once legacy state is resolved, apply exactly migrations 0062–0067');
+  assert.equal((db.native.prepare("SELECT COUNT(*) n FROM cash_sessions WHERE status='Open'").get() as any).n,1);
+  assert.equal((db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE type='Day Close Adjustment'").get() as any).n,0);
+  assert.equal((db.native.prepare('PRAGMA integrity_check').get() as any).integrity_check,'ok');
+ }finally{db.close();rmSync(sandbox,{recursive:true,force:true});}
+});
