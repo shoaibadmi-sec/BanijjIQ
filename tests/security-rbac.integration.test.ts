@@ -127,3 +127,33 @@ test('RBAC: users.delete cannot delete another administrator even with two admin
     })).status, 200);
   } finally { f.db.close(); }
 });
+
+
+test('RBAC: delegated users.edit cannot reset another staff password', async () => {
+  const f = await isolatedUsersFixture();
+  try {
+    const originalPassword = 'Warehouse-Original-2026!';
+    const newPassword = 'Unauthorized-Replacement-2026!';
+    const target = await f.api('POST', '/api/users', {
+      name: 'Warehouse Operator', mobile: '01000002504',
+      role: 'CashierAdminTools', password: originalPassword,
+    }, f.adminToken);
+    assert.equal(target.status, 200, JSON.stringify(target));
+    const loggedIn = await f.api('POST', '/api/auth/login', {
+      phone: '01000002504', password: originalPassword,
+    });
+    assert.equal(loggedIn.status, 200, JSON.stringify(loggedIn));
+
+    const attempt = await f.api('POST', '/api/users/' + target.id + '/reset-password',
+      { newPassword }, f.staffToken);
+    assert.equal(attempt.status, 403, 'users.edit must not grant credential reset authority');
+    assert.equal((await f.api('POST', '/api/auth/login', {
+      phone: '01000002504', password: originalPassword,
+    })).status, 200, 'existing password must remain valid');
+    assert.equal((await f.api('POST', '/api/auth/login', {
+      phone: '01000002504', password: newPassword,
+    })).status, 401, 'delegated actor must not install a new credential');
+    assert.equal((await f.api('GET', '/api/auth/me', undefined, loggedIn.token)).status, 200,
+      'a rejected reset must not revoke the target session');
+  } finally { f.db.close(); }
+});
