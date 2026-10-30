@@ -3,7 +3,7 @@ import type { AuthUser } from '../auth/types.js';
 import type { BankAccountInput, BankManualInput, BankTransferInput, FinanceInput, FinancePersonInput } from './types.js';
 import {
   getBankAccountsRoute, createBankAccountRoute, updateBankAccountRoute, setBankAccountStatusRoute,
-  getBankLedgerBootstrapRoute, getBankLedgerRoute, addBankManualEntryRoute, reverseBankEntryRoute,
+  getBankReconciliationRoute, getBankLedgerBootstrapRoute, getBankLedgerRoute, addBankManualEntryRoute, reverseBankEntryRoute,
   transferBankRoute, getBankTransfersRoute, getFinanceBootstrapRoute, addFinancePersonRoute,
   setFinancePersonStatusRoute, updateFinancePersonRoute, addFinanceTransactionRoute, getFinanceLedgerRoute, getFinanceTransactionRoute,
   updateFinanceTransactionRoute, deleteFinanceTransactionRoute
@@ -29,6 +29,7 @@ export async function handleBankFinanceRoute(db: SherDatabase, request: Request,
   if (financeTxMatch && request.method === 'PUT') return updateFinanceTransactionRoute(db, decodeURIComponent(financeTxMatch[1]), await readBody<FinanceInput>(request), auth);
   if (financeTxMatch && request.method === 'DELETE') { const body=await readBody<{reason?:string}>(request); return deleteFinanceTransactionRoute(db, decodeURIComponent(financeTxMatch[1]), cleanText(body.reason), auth); }
 
+  if (path === '/api/bank/reconciliation' && request.method === 'GET') return getBankReconciliationRoute(db);
   if (path === '/api/bank/accounts' && request.method === 'GET') return getBankAccountsRoute(db);
   if (path === '/api/bank/accounts' && request.method === 'POST') return createBankAccountRoute(db, await readBody<BankAccountInput>(request));
   if (path === '/api/bank/ledger/bootstrap' && request.method === 'GET') return getBankLedgerBootstrapRoute(db);
