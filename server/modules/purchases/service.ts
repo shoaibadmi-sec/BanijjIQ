@@ -5,6 +5,7 @@ import type { ProductRow } from '../products/types.js';
 import type { PurchaseInput, PurchaseLineInput, PurchaseReturnInput } from './types.js';
 import { prepareNewLotTracking, trackingEnabled } from '../products/tracking.service.js';
 import { quotePurchaseUnits, type PurchaseUnitQuote } from './purchaseUnits.js';
+import { getMixedPurchaseForReturn, completeMixedPurchaseReturn } from './mixedReturn.service.js';
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -548,6 +549,7 @@ async function nextPurchaseReturnId(db: SherDatabase): Promise<string> {
 }
 
 export async function getPurchaseForReturn(db: SherDatabase, purchaseId: string): Promise<Response> {
+  if(await hasMixedUnitPurchase(db,purchaseId))return getMixedPurchaseForReturn(db,purchaseId);
   const purchase = await db.prepare(`SELECT purchase_id AS purchaseId, purchase_date AS purchaseDate, supplier_id AS supplierId, supplier_name AS supplierName, grand_total AS grandTotal, paid_amount AS paidAmount, due_amount AS dueAmount FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
   const rows = await db.prepare(`
@@ -637,7 +639,7 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
   if(await hasMixedUnitPurchase(db,purchaseId))
-    return error('Mixed-unit purchase return requires original-cost allocation (Phase 4C).',409);
+    return completeMixedPurchaseReturn(db,input,user);
   const availableResp = await getPurchaseForReturn(db, purchaseId);
   const availableData = await availableResp.clone().json() as any;
   if (!availableData.ok) return availableResp;
