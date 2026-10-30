@@ -46,18 +46,22 @@ let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
 const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
-if (![importAnchor, posAnchor, productsAnchor].every(anchor => app.includes(anchor))) {
+const reportsAnchor = '<Route path="reports" element={<Reports />} />';
+if (![importAnchor, posAnchor, productsAnchor, reportsAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
+  "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
   importAnchor
 ].join('\n'));
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
+app = app.replace(reportsAnchor,
+  '<Route path="reports" element={<LiveReports />} />\\n          <Route path="reports-design-preview" element={<Reports />} />');
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build: pinned original Products table + authenticated D1 controller + verified Mohim actions, real POS and Returns.');
+console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
