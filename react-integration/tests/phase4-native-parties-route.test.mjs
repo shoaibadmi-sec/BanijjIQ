@@ -18,6 +18,11 @@ test('4L original HisabIQ Party page is reused and reads authenticated D1 source
  assert.ok(sourceHook.includes('getLivePartyLedger')&&sourceHook.includes('getLivePartyDirectory'),
    'Live Party hook must use merged authenticated source APIs');
  assert.ok(output.includes('blockUnconnectedAction'),'Unverified party writes must fail closed');
+ assert.ok(output.includes('Available after server-side Party write integration'),
+   'Unconnected import and add/edit actions must be disabled');
+ const prep=readFileSync(new URL('../../scripts/prepare-hisabiq-react.mjs',import.meta.url),'utf8');
+ assert.ok(prep.includes('patchNativeParties')&&prep.includes('generatedPartiesPath'),
+   'Only generated original Party source is patched at build time');
  assert.ok(output.includes('state.parties'),'Directory must use actual D1 parties');
  assert.ok(output.includes('readOnlyLedgerReady'),'Selected statement must not appear before D1 source fetch');
 });
