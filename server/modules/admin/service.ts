@@ -15,6 +15,22 @@ function error(message: string, status = 400): Response { return json({ ok: fals
 function cleanText(value: unknown): string { return String(value ?? '').trim(); }
 
 function displayRoleName(role:string):string{return role==='admin'?'Administrator':role}
+
+type EmployeeMetadata={email:string|null;joinedDate:string|null};
+function readEmployeeMetadata(input:any, previous:EmployeeMetadata={email:null,joinedDate:null}):EmployeeMetadata|Response{
+  const rawEmail=input?.email===undefined?previous.email:input.email;
+  const rawDate=input?.joinedDate===undefined?previous.joinedDate:input.joinedDate;
+  if(rawEmail!==null && typeof rawEmail!=='string')return error('Enter a valid employee email.');
+  if(rawDate!==null && typeof rawDate!=='string')return error('Enter a valid joining date.');
+  const email=rawEmail===null?null:rawEmail.trim().toLowerCase()||null;
+  const joinedDate=rawDate===null?null:rawDate.trim()||null;
+  if(email && (email.length>254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))
+    return error('Enter a valid employee email.');
+  if(joinedDate && (!/^\d{4}-\d{2}-\d{2}$/.test(joinedDate) ||
+      Number.isNaN(Date.parse(joinedDate)) || new Date(joinedDate).toISOString().slice(0,10)!==joinedDate))
+    return error('Enter a valid joining date.');
+  return {email,joinedDate};
+}
 async function countActiveAdmins(db:SherDatabase):Promise<number>{
   const r=await db.prepare(`SELECT COUNT(*) total FROM app_users WHERE role='admin' AND status='Active'`).first<{total:number}>();
   return Number(r?.total||0);
@@ -31,11 +47,11 @@ async function validAssignableRole(db:SherDatabase,role:string):Promise<boolean>
 export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'users','view');if(denied)return denied;
   const [ur,rr]=await Promise.all([
-    db.prepare(`SELECT user_id,full_name,phone,role,status,created_by,created_at,last_login_at FROM app_users ORDER BY full_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT user_id,full_name,phone,role,status,email,joined_date,created_by,created_at,last_login_at FROM app_users ORDER BY full_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT role_name FROM app_roles WHERE status='Active' ORDER BY role_name COLLATE NOCASE`).all<any>()
   ]);
   return json({ok:true,
-    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,roleLabel:displayRoleName(u.role),status:u.status,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
+    users:(ur.results||[]).map((u:any)=>({id:u.user_id,name:u.full_name,mobile:u.phone,role:u.role,roleLabel:displayRoleName(u.role),status:u.status,email:u.email??null,joinedDate:u.joined_date??null,createdBy:u.created_by||'',createdAt:u.created_at||'',lastLogin:u.last_login_at||''})),
     roles:(rr.results||[]).map((r:any)=>({name:r.role_name,label:r.role_name})),
     canAssignAdministrator:user.role==='admin'
   });
@@ -47,24 +63,31 @@ export async function createManagedUserRoute(db:SherDatabase,input:any,actor:Aut
   if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(password.length<6)return error('Password must be at least 6 characters.');
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const metadata=readEmployeeMetadata(input);if(metadata instanceof Response)return metadata;
+  if(metadata.email && await db.prepare(`SELECT 1 ok FROM app_users WHERE email=? COLLATE NOCASE LIMIT 1`).bind(metadata.email).first<any>())
+    return error('A user with this email already exists.');
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? LIMIT 1`).bind(mobile).first<any>())return error('A user with this mobile number already exists.');
   const id=crypto.randomUUID(),hashed=await hashPassword(password);
-  await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
-    .bind(id,name,mobile,hashed.hash,hashed.salt,role,actor.fullName||actor.phone).run();
+  await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,email,joined_date,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',?,?,datetime('now'),datetime('now'),?)`)
+    .bind(id,name,mobile,hashed.hash,hashed.salt,role,metadata.email,metadata.joinedDate,actor.fullName||actor.phone).run();
   await db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_USER','USER',?,?)`).bind(actor.userId,id,`Created ${name}`).run();
   return json({ok:true,id});
 }
 export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
-  const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
+  const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status,email,joined_date FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,existing.role);if(adminDenied)return adminDenied;
   const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role);
   if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
   if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const metadata=readEmployeeMetadata(input,{email:existing.email??null,joinedDate:existing.joined_date??null});
+  if(metadata instanceof Response)return metadata;
+  if(metadata.email && await db.prepare(`SELECT 1 ok FROM app_users WHERE email=? COLLATE NOCASE AND user_id<>? LIMIT 1`).bind(metadata.email,id).first<any>())
+    return error('A user with this email already exists.');
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? AND user_id<>? LIMIT 1`).bind(mobile,id).first<any>())return error('A user with this mobile number already exists.');
   if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
-  await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id).run();
+  await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,email=?,joined_date=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,metadata.email,metadata.joinedDate,id).run();
   await db.prepare(`UPDATE auth_sessions SET revoked_at=datetime('now') WHERE user_id=? AND revoked_at IS NULL`).bind(id).run();
   return json({ok:true,id});
 }
