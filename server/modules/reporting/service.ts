@@ -297,11 +297,14 @@ export async function getDayBookRoute(db: SherDatabase, url: URL, user: AuthUser
     const deleted = dbBool(b.is_deleted) || cleanText(b.status) === 'Reversed';
     if (deleted && !includeDeleted) continue;
     const debit = dbNumber(b.debit), credit = dbNumber(b.credit), date = cleanText(b.date).slice(0, 10), ts = dayBookTs(b.created_at, date);
-    const canReverse = !deleted && !cleanText(b.reversal_of);
+    const orphanTransfer = cleanText(b.type).startsWith('Transfer');
+    const canReverse = !deleted && !orphanTransfer && !cleanText(b.reversal_of);
     rows.push(dayBookRow({
       ts, date, time: dayBookTime(ts), referenceNo: cleanText(b.entry_id), module: 'Bank', transactionType: cleanText(b.type) || 'Bank Entry',
-      party: b.bank_account_name, description: b.description, paymentMethod: 'Bank', bankIn: deleted ? 0 : credit, bankOut: deleted ? 0 : debit,
-      createdBy: b.created_by, status: deleted ? 'Reversed' : 'Active', isDeleted: deleted, deleteReason: b.notes,
+      party: b.bank_account_name, description: orphanTransfer ? 'Unmatched internal transfer; reconcile the source.' : b.description,
+      paymentMethod: 'Bank', bankIn: deleted || orphanTransfer ? 0 : credit, bankOut: deleted || orphanTransfer ? 0 : debit,
+      createdBy: b.created_by, status: deleted ? 'Reversed' : orphanTransfer ? 'Needs review' : 'Active',
+      isDeleted: deleted, deleteReason: b.notes,
       isBackdated: dbBool(b.is_backdated), backdatedDays: dayBookBackdatedDays(date, b.created_at, b.backdated_days), backdatedReason: b.backdated_reason,
       sourceModule: 'Bank', sourceId: cleanText(b.entry_id), openId: cleanText(b.bank_account_id), deleteAction: canReverse ? 'bank-reverse' : '', deleteId: cleanText(b.entry_id)
     }));
