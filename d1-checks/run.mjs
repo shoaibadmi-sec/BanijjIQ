@@ -97,6 +97,21 @@ try{
       'real isolated D1 must enforce exact refund-source money books');
     assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_audit_inventory'").length,1,
       'real isolated D1 must validate FIFO and stock ledgers before final audit');
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_store_credit_partial_issue_source'").length,1,
+      'real isolated D1 must authorize only source-exact partial Store Credit liability issuance');
+    for(const partialGuard of [
+      'trg_store_credit_partial_issue_tender',
+      'trg_store_credit_partial_issue_money',
+      'trg_store_credit_partial_issue_fifo',
+      'trg_store_credit_partial_issue_history'
+    ]){
+      assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='"+partialGuard+"'").length,1,
+        'real D1 must retain every independent partial Store Credit liability proof: '+partialGuard);
+    }
+    assert.equal(query("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name='trg_store_credit_validate_entry'")[0].n,1,
+      'original full Store Credit validation trigger must remain installed');
+    assert.equal(query("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name='trg_store_credit_split_reissue_source'")[0].n,1,
+      'original exact full Split credit reissue trigger must remain installed');
   });
   worker=spawn(process.execPath,[cliPath,'dev',
     '--config',config,'--local','--persist-to',state,
