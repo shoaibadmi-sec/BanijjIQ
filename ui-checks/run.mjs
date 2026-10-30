@@ -179,6 +179,31 @@ function startMocking(context,calls){
     if(path==='/api/pos/vendors'&&request.method()==='POST')
       return respond({ok:true,vendor:{id:'VEN-UI-2',name:request.postDataJSON().name,
         phone:request.postDataJSON().phone,currentDue:0,status:'Active'}});
+    if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('DUE-REV'))
+      return respond({ok:true,matches:[{invoiceId:'UI-E2E-DUE-REV',date:'2026-10-29',
+        customerName:'Due Cancellation Buyer',customerPhone:'01000000688',grandTotal:2490,
+        paymentStatus:'Due',returnStatus:'No Return'}]});
+    if(path==='/api/sales-management/UI-E2E-DUE-REV/reverse'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-DUE-REV',
+        refundMethod:'Due Adjustment',refundBankAccountId:'',refundAccountName:'',
+        refundAmount:2490,customerDueBefore:2490,previouslyRefundedAmount:0,remainingBaseQuantity:283,
+        items:[{productId:'PRD-MIXED-E2E',qty:283,unitPrice:0,
+          unitQuantities:{Carton:1,Box:2,Pcs:3}}]}});
+    if(path==='/api/sales-management/UI-E2E-DUE-REV/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,returnId:'SRT-UI-DUE-REV-1',totalReturnAmount:2490});
+    }
+    if(path==='/api/sales-returns/UI-E2E-DUE-REV/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-E2E-DUE-REV',date:'2026-10-29',
+        customerId:'CUS-DUE',customerName:'Due Cancellation Buyer',customerPhone:'01000000688',
+        grandTotal:2490,paidAmount:0,dueAmount:2490,previouslyReturnedAmount:0,netSale:2490,
+        items:[{productId:'PRD-MIXED-E2E',name:'Carton Test Cable',soldQty:283,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:283,unitPrice:2490/283,
+          trackSerial:false,trackExpiry:false,trackWarranty:false,availableSerials:[],
+          mixedUnit:{description:'1 CT 2 BOX 3 PCS',netPriceFactor:1,
+            originalQuantities:{Carton:1,Box:2,Pcs:3},availableQuantities:{Carton:1,Box:2,Pcs:3},
+            profile:posMixedProduct.unitProfilePreview}}]}} );
     if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('BANK-REV'))
       return respond({ok:true,matches:[{invoiceId:'UI-E2E-BANK-REV',date:'2026-10-29',
         customerName:'Bank Refund Buyer',customerPhone:'01000000014',grandTotal:2490,
@@ -786,6 +811,32 @@ try{
     await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
     await page.getByText('SRT-UI-BANK-REV-1').waitFor({timeout:12000});
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-BANK-REV/reverse').length,1);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('unpaid mixed invoice reversal cancels customer due and never claims a cash refund',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    let confirmation='';
+    page.on('dialog',d=>{confirmation=d.message();void d.accept()});
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor();
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('DUE-REV');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-E2E-DUE-REV/}).click();
+    await page.getByRole('button',{name:'Check full reversal'}).click();
+    await page.locator('[data-reversal-due-notice]').waitFor();
+    assert.match(await page.locator('[data-reversal-due-notice]').innerText(),/No cash refund/);
+    assert.match(await page.locator('[data-mixed-full-reversal]').innerText(),/Due to cancel/);
+    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Customer cancelled entire unpaid original invoice');
+    await screenshot(page,'phase3g-full-unpaid-due-cancellation');
+    await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
+    await page.getByText('SRT-UI-DUE-REV-1').waitFor({timeout:12000});
+    assert.match(confirmation,/cancel customer due/i);
+    assert.doesNotMatch(confirmation,/cash refund/i);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-DUE-REV/reverse').length,1);
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
     results.apiCalls.push(...api);await ctx.close();
   });

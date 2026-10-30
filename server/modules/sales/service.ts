@@ -366,7 +366,7 @@ export async function receiveCustomerPaymentRoute(db:SherDatabase,input:any,user
  */
 async function planMixedSaleReversal(db:SherDatabase,id:string){
   const no=(reason:string)=>({eligible:false,reason,invoiceId:id,refundAmount:0,
-    refundMethod:'Cash' as 'Cash'|'Bank'|'Mobile Banking',refundBankAccountId:'',refundAccountName:'',
+    refundMethod:'Cash' as 'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment',refundBankAccountId:'',refundAccountName:'',customerDueBefore:0,
     previouslyRefundedAmount:0,remainingBaseQuantity:0,
     items:[] as Array<{productId:string;qty:number;unitPrice:number;unitQuantities:Record<string,number>}>});
   const sale=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0')
@@ -377,12 +377,37 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   if(!cash)return no('Start a cash session first.');
   if(String(sale.created_at||'')<String(cash.opened_at||''))
     return no('Only invoices from this open cash session can be reversed. Use Sales Return for older invoices.');
-  const refundMethod=cleanText(sale.payment_method) as 'Cash'|'Bank'|'Mobile Banking';
+  const isDueAdjustment=sale.payment_type==='Due';
+  const refundMethod=(isDueAdjustment?'Due Adjustment':cleanText(sale.payment_method)) as
+    'Cash'|'Bank'|'Mobile Banking'|'Due Adjustment';
   const bankRefund=refundMethod==='Bank'||refundMethod==='Mobile Banking';
-  if(sale.payment_type!=='Cash'||!['Cash','Bank','Mobile Banking'].includes(refundMethod)||
+  if(isDueAdjustment){
+    if(Number(sale.paid_amount||0)!==0||Number(sale.due_amount||0)!==Number(sale.grand_total||0)||
+       cleanText(sale.payment_method)||cleanText(sale.bank_account_id))
+      return no('A due cancellation requires an entirely unpaid invoice without payment methods.');
+  }else if(sale.payment_type!=='Cash'||!['Cash','Bank','Mobile Banking'].includes(refundMethod)||
       Number(sale.due_amount||0)!==0||
       Math.abs(Number(sale.paid_amount||0)-Number(sale.grand_total||0))>0.001)
     return no('Only fully paid cash, bank or mobile banking sales without customer due are eligible.');
+  if(isDueAdjustment){
+    const customerId=cleanText(sale.customer_id);
+    if(!customerId)return no('This invoice is not linked to a customer ledger.');
+    const customer=await db.prepare(
+      'SELECT customer_id,current_due,is_deleted FROM customers WHERE customer_id=?'
+    ).bind(customerId).first<any>();
+    if(!customer||Number(customer.is_deleted)!==0||
+       Math.round(Number(customer.current_due||0)*100)!==Math.round(Number(sale.grand_total||0)*100))
+      return no('Customer due no longer equals this invoice. Reconcile customer ledger first.');
+    const events=await db.prepare(
+      'SELECT type,reference,debit,credit,balance FROM customer_ledger WHERE customer_id=?'
+    ).bind(customerId).all<any>();
+    if(events.results?.length!==1||
+       events.results[0].type!=='Sale'||events.results[0].reference!==id||
+       Math.round(Number(events.results[0].debit||0)*100)!==Math.round(Number(sale.grand_total||0)*100)||
+       Number(events.results[0].credit||0)!==0||
+       Math.round(Number(events.results[0].balance||0)*100)!==Math.round(Number(sale.grand_total||0)*100))
+      return no('Customer ledger has payments, credits or other transactions. Cannot cancel due automatically.');
+  }
   let refundBankAccountId='',refundAccountName='';
   if(bankRefund){
     refundBankAccountId=cleanText(sale.bank_account_id);
@@ -417,7 +442,7 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
     "SELECT 1 AS x FROM sale_item_lots sil JOIN stock_lots sl ON sl.lot_id=sil.lot_id "+
     "WHERE sil.invoice_id=? AND sl.source_type='OVERSOLD' LIMIT 1"
   ).bind(id).first())return no('Negative-stock invoice reversal is not supported.');
-  if(!bankRefund){
+  if(!bankRefund&&!isDueAdjustment){
     const received=await db.prepare(
       "SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE reference=? AND type='Sale' AND is_deleted=0"
     ).bind(id).first<{n:number}>();
@@ -431,6 +456,7 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   ).bind(id).all<any>();
   const prior=history.results||[];
   if(bankRefund&&prior.length)return no('Bank/mobile full reversal requires zero previous returns. Reconcile prior refunds separately.');
+  if(isDueAdjustment&&prior.length)return no('Due cancellation requires no previous returns or customer credits.');
   if(prior.some((r:any)=>r.refund_method!=='Cash'))
     return no('A previous return used Store Credit. Reconcile customer credit before reversing.');
   // Verify each historical cash refund has a live cash-book debit with the same
@@ -494,6 +520,7 @@ async function planMixedSaleReversal(db:SherDatabase,id:string){
   if(refundCents+priorRefundCents!==grandCents)
     return no('Historical refund rounding does not reconcile to the original sale; manual review required.');
   return {eligible:true,reason:'',invoiceId:id,refundMethod,refundBankAccountId,refundAccountName,
+    customerDueBefore:isDueAdjustment?Number(sale.grand_total||0):0,
     refundAmount:refundCents/100,previouslyRefundedAmount:priorRefundCents/100,
     remainingBaseQuantity,items};
 }
@@ -565,10 +592,11 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   const invoiceId=cleanText(input.invoiceId),refundMethod=cleanText(input.refundMethod),reason=cleanText(input.reason);
   if(!invoiceId)return error('No invoice selected.');
   const isBankRefund=refundMethod==='Bank'||refundMethod==='Mobile Banking';
-  if(!['Cash','Store Credit','Bank','Mobile Banking'].includes(refundMethod))
+  const isDueAdjustment=refundMethod==='Due Adjustment';
+  if(!['Cash','Store Credit','Bank','Mobile Banking','Due Adjustment'].includes(refundMethod))
     return error('Choose a refund method.');
-  if(isBankRefund&&!authorizedReversal)
-    return error('Bank/mobile refunds require the audited full-invoice reversal workflow.',409);
+  if((isBankRefund||isDueAdjustment)&&!authorizedReversal)
+    return error('Bank/mobile refunds and due cancellation require the audited full-invoice reversal workflow.',409);
   const returnDate=/^\d{4}-\d{2}-\d{2}$/.test(cleanText(input.date))?cleanText(input.date):todayDate(),backdated=returnDate<todayDate(),backdatedReason=cleanText(input.backdatedReason);
   if(backdated&&!backdatedReason)return error('A reason is required when dating a return in the past.');
   const backdatedDays=backdated?Math.max(0,daysSince(returnDate)):0;
@@ -685,6 +713,31 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     ).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,refundBankId,cleanText(refundBankAccount.account_name),
       returnDate,returnId,`Refund for ${invoiceId}`,total,refundBankId,reason,invoiceId,user.fullName));
   }
+  else if(isDueAdjustment){
+    const original=await db.prepare(
+      'SELECT customer_id,grand_total,paid_amount,due_amount,payment_type FROM sales WHERE invoice_id=?'
+    ).bind(invoiceId).first<any>();
+    const customer=await db.prepare(
+      'SELECT customer_name,current_due,is_deleted FROM customers WHERE customer_id=?'
+    ).bind(customerId).first<any>();
+    if(!original||original.payment_type!=='Due'||original.customer_id!==customerId||
+       Number(original.paid_amount||0)!==0||
+       Math.round(Number(original.due_amount||0)*100)!==Math.round(total*100)||
+       Math.round(Number(original.grand_total||0)*100)!==Math.round(total*100)||
+       !customer||Number(customer.is_deleted)!==0||
+       Math.round(Number(customer.current_due||0)*100)!==Math.round(total*100))
+      return error('Outstanding customer due no longer reconciles to the original invoice.',409);
+    // Zero the exact original receivable; NEVER credit cash or bank for unpaid sales.
+    stmts.push(db.prepare(
+      'UPDATE customers SET current_due=0,updated_at=datetime(\'now\') WHERE customer_id=? AND current_due=?'
+    ).bind(customerId,total));
+    stmts.push(db.prepare(
+      "INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) "+
+      "VALUES (?,?,?,?, 'Sale Reversal',?,0,?,0,?)"
+    ).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,
+      returnDate,customerId,customer.customer_name,returnId,total,
+      'Cancelled unpaid invoice '+invoiceId+'; '+reason));
+  }
   else{const c=await db.prepare(`SELECT customer_name,current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(c?.current_due||0)-total;stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sales Return Credit',?,0,?,?,?)`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,customerId,c?.customer_name||sale.customerName,returnId,total,newDue,`Store credit for return ${returnId}`));}
   stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));
   if(authorizedReversal){
@@ -692,9 +745,9 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
       .bind(invoiceId,returnId,Math.round(total*100),reason,user.userId,refundMethod,refundBankId));
     stmts.push(db.prepare("UPDATE sales SET status='Reversed',updated_at=datetime('now') WHERE invoice_id=? AND status='Completed' AND is_deleted=0").bind(invoiceId));
     stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'REVERSE_MIXED_SALE','SALE',?,?)")
-      .bind(user.userId,invoiceId,'Return '+returnId+'; cash refund '+total+'; reason '+reason));
+      .bind(user.userId,invoiceId,'Return '+returnId+'; '+(isDueAdjustment?'due cancelled ':refundMethod+' refund ')+total+'; reason '+reason));
   }
-try{await db.batch(stmts);}catch(err){if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund account ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
+try{await db.batch(stmts);}catch(err){if(String(err).includes('DUE_REVERSAL_CONFLICT'))return error('Customer due or ledger changed. Reload before trying to cancel.',409);if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund or due-settlement ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
 }
 
 export async function getSalesReturnHistoryRoute(db:SherDatabase):Promise<Response>{
