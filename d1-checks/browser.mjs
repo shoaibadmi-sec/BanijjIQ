@@ -151,7 +151,7 @@ export async function runRealD1Browser(){
         assert.ok(await page.locator('input:focus').count()>0,'F2 did not focus product search');
         const item=page.locator('[data-live-pos] button').filter({hasText:'D1 CI Copper Wire'}).first();
         await item.click();
-        await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
+        await page.getByRole('textbox',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
         await shots(page,'cart-'+width);
         checks.push('real D1 POS product selection and keyboard '+width);
 
@@ -177,7 +177,7 @@ export async function runRealD1Browser(){
           await page.getByText('D1 CI Copper Wire').first().waitFor({timeout:10000});
           const dueProduct=page.locator('[data-live-pos] button').filter({hasText:'D1 CI Copper Wire'}).first();
           await dueProduct.click();
-          await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
+          await page.getByRole('textbox',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
           const resetVersionBefore=await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version');
           await page.evaluate(()=>{
             window.__posNameTrace=[];
