@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, mkdtempSync, rmSync} from 'node:fs';
+import {existsSync, lstatSync, mkdtempSync, rmSync, symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {SqliteDatabase} from '../server/db/sqlite.ts';
@@ -59,5 +59,19 @@ test('6J backup refuses source-file overwrite and pre-existing snapshot without 
     const restored=new SqliteDatabase(f.backup);
     try {assert.deepEqual(snapshot(restored),before);}
     finally {restored.close();}
+  } finally {f.db.close();rmSync(f.dir,{recursive:true,force:true});}
+});
+
+test('6J backup refuses a dangling symlink destination without writing its target', async () => {
+  const f=fixture();
+  try {
+    const target=join(f.dir,'uncreated-target.sqlite');
+    const alias=join(f.dir,'snapshot-alias.sqlite');
+    symlinkSync(target,alias);
+    const before=snapshot(f.db);
+    await assert.rejects(f.db.backupTo(alias),/exists|overwrite|symlink/i);
+    assert.equal(existsSync(target),false,'backup must not follow a dangling symlink');
+    assert.equal(lstatSync(alias).isSymbolicLink(),true);
+    assert.deepEqual(snapshot(f.db),before,'rejected destination must not mutate source');
   } finally {f.db.close();rmSync(f.dir,{recursive:true,force:true});}
 });
