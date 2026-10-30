@@ -70,6 +70,7 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
 }
 export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,input:any,actor:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
+  if(actor.role!=='admin')return error('Only an Administrator can reset employee passwords.',403);
   const target=await db.prepare(`SELECT role FROM app_users WHERE user_id=?`).bind(id).first<{role:string}>();if(!target)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,target.role);if(adminDenied)return adminDenied;
   const password=String(input.newPassword||'');if(password.length<6)return error('Password must be at least 6 characters.');
