@@ -103,6 +103,22 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
   assert.equal(race.filter(x=>x.status===200).length,1,JSON.stringify(race));
   assert.equal(race.filter(x=>x.status!==200).length,1,JSON.stringify(race));
   assert.deepEqual(state(),{due:100,ledger:100,journals:3,bank:200,cash:600});
+  // TDD: moving the source debit to a different bank must block reversal without posting.
+  db.native.prepare(`INSERT INTO bank_accounts
+   (bank_account_id,account_name,bank_name,current_balance,opening_balance,status)
+   VALUES ('BANK-4D-OTHER','Other Bank','Synthetic Bank',600,600,'Active')`).run();
+  db.native.prepare('UPDATE bank_book SET bank_account_id=? WHERE reference=?')
+   .run('BANK-4D-OTHER',bank.ledgerId);
+  const corruptSourceBefore=state();
+  const wrongSource=await api('POST',
+   '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
+   {reason:'Source account changed after posting'});
+  assert.equal(wrongSource.status,409,'Changed source bank account must block reversal');
+  assert.deepEqual(state(),corruptSourceBefore,'Invalid reversal must not change payables or money');
+  assert.equal(sql('SELECT status s FROM supplier_settlement_entries WHERE settlement_id=?',
+   bank.settlementId).s,'Posted');
+  db.native.prepare('UPDATE bank_book SET bank_account_id=? WHERE reference=?')
+   .run('BANK-4D',bank.ledgerId);
   const reverse=await api('POST',
    '/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
    {reason:'Wrong bank account selected'});
