@@ -116,3 +116,23 @@ test('master and debit-credit sum match but stale final running ledger balance s
   assert.match(page.coverage.reason,/running balance|ledger/i);
  }finally{db.close();}
 });
+
+
+test('same-second supplier and customer entries use last posted running balance, not lexical ledger ID',async()=>{
+ const db=fixture();try{
+  db.native.prepare("INSERT INTO suppliers(supplier_id,supplier_name,current_due) VALUES ('S-CLOCK','Same-second supplier',150)").run();
+  db.native.prepare("INSERT INTO supplier_ledger(ledger_id,date,supplier_id,supplier_name,type,debit,credit,balance,created_at) VALUES ('ZZ-OLDER','2026-10-30','S-CLOCK','Same-second supplier','Purchase',200,0,200,'2026-10-30 12:00:00'),('AA-NEWER','2026-10-30','S-CLOCK','Same-second supplier','Payment',0,50,150,'2026-10-30 12:00:00')").run();
+  db.native.prepare("INSERT INTO customers(customer_id,customer_name,phone,current_due) VALUES ('C-CLOCK','Same-second customer','01000009032',80)").run();
+  db.native.prepare("INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,debit,credit,balance,created_at) VALUES ('ZZ-CUST-OLDER','2026-10-30','C-CLOCK','Same-second customer','Sale',100,0,100,'2026-10-30 12:00:00'),('AA-CUST-NEWER','2026-10-30','C-CLOCK','Same-second customer','Payment',0,20,80,'2026-10-30 12:00:00')").run();
+  const before=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
+  const suppliers=await readStockDues(db,query('payables'));
+  const customers=await readStockDues(db,query('receivables'));
+  assert.equal(suppliers.coverage.status,'needs-review',suppliers.coverage.reason);
+  assert.equal(suppliers.rows[0].amountMinor,15000,'newer supplier payment has the final running balance');
+  assert.equal(metric(suppliers,'payablesBalance').valueMinor,15000);
+  assert.equal(customers.coverage.status,'needs-review',customers.coverage.reason);
+  assert.equal(customers.rows[0].amountMinor,8000,'newer customer receipt has the final running balance');
+  assert.equal(metric(customers,'receivablesBalance').valueMinor,8000);
+  assert.equal((db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n,before);
+ }finally{db.close();}
+});
