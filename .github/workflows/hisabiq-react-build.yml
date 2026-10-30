@@ -53,6 +53,7 @@ jobs:
           git submodule status
           node --test react-integration/tests/contract.test.mjs
           node --test react-integration/tests/reports-two-tabs.contract.test.mjs
+          node --test react-integration/tests/phase6-finance-contract.test.mjs
           node --test react-integration/tests/reports-live-route.test.mjs
           node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
@@ -74,6 +75,7 @@ jobs:
           node --import tsx --test tests/reports-stock-dues-route.integration.test.ts
           node --import tsx --test tests/reports-cash-expenses.integration.test.ts
           node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
+          node --import tsx --test tests/phase6-finance-readonly.integration.test.ts
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
