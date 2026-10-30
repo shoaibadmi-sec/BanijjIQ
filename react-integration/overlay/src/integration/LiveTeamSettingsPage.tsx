@@ -1,18 +1,20 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { SettingsDirectory } from '../settings/SettingsDirectory';
 import { SettingsTabs } from '../settings/SettingsTabs';
 import { sectionNames } from '../settings/fields';
 import { useTenantSettings } from '../settings/TenantSettingsProvider';
-import { Input, SettingCard } from '../settings/ui';
+import { Button, Input, SettingCard, SettingsDialog } from '../settings/ui';
 import { canUseModule, useBackendSession } from './BackendGate';
 import { request } from './banijjApi';
 
 type UserRow = {id:string;name:string;mobile:string;role:string;roleLabel:string;status:string;createdAt:string};
 type Capability = {view?:boolean;add?:boolean;edit?:boolean;delete?:boolean|string;backdate?:boolean|string};
 type RoleRow = {id:string;name:string;status:string;permissions:Record<string,Capability>};
-type UserResponse = {ok:true;users:UserRow[]};
+type UserResponse = {ok:true;users:UserRow[];roles?:Array<{name:string;label:string}>};
+type CreateDraft = {name:string;mobile:string;role:string;password:string};
+const newEmployee = ():CreateDraft=>({name:'',mobile:'',role:'',password:''});
 type RoleResponse = {ok:true;roles:RoleRow[]};
 type Source<T> = {loading:boolean;data:T|null;error:string};
 const pending = <T,>():Source<T>=>({loading:true,data:null,error:''});
@@ -31,6 +33,13 @@ export function LiveTeamSettingsPage(){
   const [users,setUsers]=useState<Source<UserRow[]>>(canUsers?pending():noAccess());
   const [roles,setRoles]=useState<Source<RoleRow[]>>(canRoles?pending():noAccess());
   const [reload,setReload]=useState(0);
+  const [assignableRoles,setAssignableRoles]=useState<string[]>([]);
+  const [createOpen,setCreateOpen]=useState(false);
+  const [createForm,setCreateForm]=useState<CreateDraft>(newEmployee);
+  const [createError,setCreateError]=useState('');
+  const [createSaving,setCreateSaving]=useState(false);
+  const creating=useRef(false);
+  const adminCanCreate=actor?.role==='admin'&&canUsers;
   const active=canUsers&&(tab==='employees'||!canRoles)?'employees':canRoles?'roles':null;
   const language=personal.language;
   const bilingual=(en:string,bn:string)=>language==='Bangla'?bn:en;
@@ -40,9 +49,12 @@ export function LiveTeamSettingsPage(){
     let current=true;
     setUsers(pending());
     request<UserResponse>('/api/users').then(value=>{
-      if(current)setUsers({loading:false,data:value.users,error:''});
+      if(current){
+        setUsers({loading:false,data:value.users,error:''});
+        setAssignableRoles((value.roles||[]).map(r=>r.name).filter(Boolean));
+      }
     }).catch(cause=>{
-      if(current)setUsers({loading:false,data:null,error:toMessage(cause)});
+      if(current){setUsers({loading:false,data:null,error:toMessage(cause)});setAssignableRoles([]);}
     });
     return()=>{current=false;};
   },[canUsers,reload]);
@@ -58,6 +70,28 @@ export function LiveTeamSettingsPage(){
     });
     return()=>{current=false;};
   },[canRoles,reload]);
+
+  function openCreation(){
+    if(!adminCanCreate||users.loading||users.error||!assignableRoles.length)return;
+    setCreateForm(newEmployee());setCreateError('');setCreateOpen(true);
+  }
+  async function createEmployee(event:FormEvent<HTMLFormElement>){
+    event.preventDefault();
+    if(!adminCanCreate||creating.current||!assignableRoles.includes(createForm.role))return;
+    const name=createForm.name.trim(),mobile=createForm.mobile.trim();
+    if(!name||!mobile||createForm.password.length<6){
+      setCreateError('Enter a name, mobile number and a password of at least 6 characters.');return;
+    }
+    creating.current=true;setCreateSaving(true);setCreateError('');
+    try{
+      await request<{ok:true;id:string}>('/api/users',{
+        method:'POST',body:JSON.stringify({name,mobile,role:createForm.role,password:createForm.password})
+      });
+      setCreateForm(newEmployee());setCreateOpen(false);
+      setReload(n=>n+1); // Show the new employee only after a fresh authoritative server GET.
+    }catch(cause){setCreateError(toMessage(cause));}
+    finally{creating.current=false;setCreateSaving(false);}
+  }
 
   const available=users.data||[];
   const shown=useMemo(()=>available.filter(x=>
@@ -81,7 +115,7 @@ export function LiveTeamSettingsPage(){
           {language==='English + Bangla'&&<span lang="bn" className="ml-2 font-bn text-xs font-normal text-helper">কর্মী ও অনুমতি</span>}
         </h1>
         <p className="mt-1 text-[13px] text-ink-500">Manage who can access this business and what they can do.</p>
-        <p className="mt-1 text-[11px] text-helper">Settings · BanijjIQ authenticated users · Read-only</p>
+        <p className="mt-1 text-[11px] text-helper">Settings · BanijjIQ authenticated users · {adminCanCreate?'Administrator account creation':'Read-only'}</p>
       </div>
       <span className="text-xs text-ink-500">{actor?.fullName}</span>
     </header>
@@ -114,7 +148,10 @@ export function LiveTeamSettingsPage(){
                           placeholder="Search employees, phone or role…"
                           value={search} onChange={event=>setSearch(event.target.value)}
                           className="h-9 min-w-[180px] max-w-sm flex-1"/>
-                        <span className="text-xs text-helper">{shown.length} employees</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-helper">{shown.length} employees</span>
+                          {adminCanCreate&&assignableRoles.length>0&&<Button size="sm" onClick={openCreation}>Add employee</Button>}
+                        </div>
                       </div>
                       <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
                         <div className="overflow-x-auto" role="region" tabIndex={0}
@@ -177,7 +214,7 @@ export function LiveTeamSettingsPage(){
                     </>}
               </div>}
             {active&&<div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3 text-xs text-helper">
-              <span>View-only until delegated RBAC review is complete. No changes are saved here.</span>
+              <span>Delegated editing and role changes await RBAC review. Only administrators may create employees.</span>
               <button type="button" className="text-primary underline" onClick={()=>setReload(n=>n+1)}>
                 Refresh live data
               </button>
@@ -186,5 +223,42 @@ export function LiveTeamSettingsPage(){
         </div>
       </div>
     </div>
+    <SettingsDialog title="Add employee" description="Create a real business login. The password is sent only to BanijjIQ."
+      open={createOpen} onClose={()=>{if(!creating.current){setCreateOpen(false);setCreateForm(newEmployee());setCreateError('');}}}>
+      <form className="space-y-4" onSubmit={event=>void createEmployee(event)}>
+        <label className="block space-y-1 text-sm text-ink-700">Employee name
+          <Input aria-label="Employee name" required autoComplete="name" value={createForm.name}
+            disabled={createSaving} onChange={event=>setCreateForm(x=>({...x,name:event.target.value}))}
+            className="h-9 w-full" />
+        </label>
+        <label className="block space-y-1 text-sm text-ink-700">Mobile number
+          <Input aria-label="Mobile number" required inputMode="tel" autoComplete="tel" value={createForm.mobile}
+            disabled={createSaving} onChange={event=>setCreateForm(x=>({...x,mobile:event.target.value}))}
+            className="h-9 w-full" />
+        </label>
+        <label className="block space-y-1 text-sm text-ink-700">Employee role
+          <select aria-label="Employee role" required value={createForm.role} disabled={createSaving}
+            onChange={event=>setCreateForm(x=>({...x,role:event.target.value}))}
+            className="h-9 w-full rounded-md border border-input bg-card px-3 text-sm text-ink">
+            <option value="">Choose role</option>
+            {assignableRoles.map(role=><option value={role} key={role}>{role}</option>)}
+          </select>
+        </label>
+        <label className="block space-y-1 text-sm text-ink-700">Initial password
+          <Input aria-label="Initial password" required type="password" minLength={6} autoComplete="new-password"
+            value={createForm.password} disabled={createSaving}
+            onChange={event=>setCreateForm(x=>({...x,password:event.target.value}))}
+            className="h-9 w-full"/>
+        </label>
+        {createError&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{createError}</p>}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" disabled={createSaving}
+            onClick={()=>{setCreateOpen(false);setCreateForm(newEmployee());setCreateError('');}}>Cancel</Button>
+          <Button type="submit" size="sm" disabled={createSaving||!adminCanCreate||!assignableRoles.length}>
+            {createSaving?'Creating…':'Create employee'}
+          </Button>
+        </div>
+      </form>
+    </SettingsDialog>
   </div>;
 }
