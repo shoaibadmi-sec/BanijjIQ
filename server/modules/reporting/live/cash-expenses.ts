@@ -186,6 +186,8 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
      warnings.push('Expense amount does not match linked money-book posting.');
    if(payment==='bank_book'&&linked.some(x=>x.bank_account_id!==exp.bank_account_id))
      warnings.push('Expense uses an inconsistent bank account.');
+   if(linked.some(x=>x.type==='Expense'&&x.date!==exp.expense_date))
+     warnings.push('Original expense money-book date does not match its source date.');
    if(warnings.length) {
      const reason='Expense '+exp.expense_id+': '+warnings.join(' ');
      problems.add(reason);expenseChecks.set(exp.expense_id,reason);
