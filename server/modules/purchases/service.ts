@@ -212,8 +212,8 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due + ?, updated_at = datetime('now') WHERE supplier_id = ?`).bind(dueAmount, supplier.supplierId));
     batch.push(db.prepare(`
       INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, datetime('now'), ?, ?, 'Purchase', ?, ?, 0, (SELECT current_due + ? FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))
-    `).bind(crypto.randomUUID(), supplier.supplierId, supplier.supplierName, purchaseId, dueAmount, dueAmount, supplier.supplierId, '', user.userId));
+      VALUES (?, datetime('now'), ?, ?, 'Purchase', ?, ?, 0, (SELECT current_due FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))
+    `).bind(crypto.randomUUID(), supplier.supplierId, supplier.supplierName, purchaseId, dueAmount, supplier.supplierId, '', user.userId));
   }
 
   if (purchasePlanOrderId) {
