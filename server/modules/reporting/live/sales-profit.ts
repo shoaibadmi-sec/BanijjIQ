@@ -8,7 +8,7 @@ type Invoice = {
   invoice_id:string; sale_date:string; customer_name:string; subtotal:number; discount:number;
   grand_total:number; status:string;
 };
-type Line = {invoice_id:string;product_id:string;quantity:number;line_total:number};
+type Line = {invoice_id:string;product_id:string;quantity:number;line_total:number;product_type?:string};
 type Lot = {invoice_id:string;product_id:string;lot_id:string;quantity:number;unit_cost:number;source_type:string|null;lot_product_id:string|null};
 type ReturnHeader = {return_id:string;invoice_id:string;return_date:string;total_return_amount:number};
 type ReturnLine = {return_id:string;invoice_id:string;product_id:string;return_quantity:number;line_total:number};
@@ -50,7 +50,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   if(totalRows>5000)reasons.add('More than 5,000 invoices: split the date range before trusting aggregate profit.');
 
   const [linesR,lotsR,returnsR,returnLinesR,returnLotsR,expensesR,reversalsR,vendorR]=await Promise.all([
-    db.prepare("SELECT i.invoice_id,i.product_id,i.quantity,i.line_total FROM sale_items i JOIN sales s ON s.invoice_id=i.invoice_id WHERE "+where)
+    db.prepare("SELECT i.invoice_id,i.product_id,i.quantity,i.line_total,COALESCE(p.product_type,'Standard') AS product_type FROM sale_items i JOIN sales s ON s.invoice_id=i.invoice_id LEFT JOIN products p ON p.product_id=i.product_id WHERE "+where)
       .bind(...params).all<Line>(),
     db.prepare("SELECT l.invoice_id,l.product_id,l.lot_id,l.quantity,l.unit_cost,sl.source_type,sl.product_id AS lot_product_id "+
       "FROM sale_item_lots l JOIN sales s ON s.invoice_id=l.invoice_id LEFT JOIN stock_lots sl ON sl.lot_id=l.lot_id WHERE "+where)
@@ -81,6 +81,61 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const expenseRows=expensesR.results||[];
   const originalReversals=new Set((reversalsR.results||[]).map(x=>x.invoice_id));
   const vendorInvoices=new Set((vendorR.results||[]).map(x=>x.invoice_id));
+  // A virtual bundle is one visible sale item but consumes immutable physical components.
+  // Certification requires every source allocation to reconcile to the saved sale-time recipe,
+  // physical FIFO lot and stock movement; never infer kit cost from catalog defaults.
+  type BundleRecipe={invoice_id:string;bundle_id:string;revision:number;component_id:string;
+    quantity_per_set:number;sets_sold:number;component_quantity:number};
+  type BundleSource={invoice_id:string;visible_product_id:string;component_id:string;
+    lot_id:string;quantity:number;unit_cost:number;cost_minor:number;
+    movement_product_id:string|null;movement_quantity:number|null};
+  const [bundlesR,sourceR]=await Promise.all([
+    db.prepare("SELECT b.invoice_id,b.bundle_id,b.revision,b.component_id,b.quantity_per_set,b.sets_sold,b.component_quantity FROM sale_bundle_components b JOIN sales s ON s.invoice_id=b.invoice_id WHERE "+where)
+      .bind(...params).all<BundleRecipe>(),
+    db.prepare("SELECT a.invoice_id,a.visible_product_id,a.component_id,a.lot_id,a.quantity,a.unit_cost,a.cost_minor,sm.product_id AS movement_product_id,sm.quantity_out AS movement_quantity FROM bundle_sale_allocations a JOIN sales s ON s.invoice_id=a.invoice_id LEFT JOIN stock_movements sm ON sm.movement_id=a.movement_id WHERE "+where)
+      .bind(...params).all<BundleSource>()
+  ]);
+  const bundleRows=(bundlesR.results||[]).filter(x=>byId.has(x.invoice_id));
+  const physicalRows=(sourceR.results||[]).filter(x=>byId.has(x.invoice_id));
+  const bundleParents=new Set(lines.filter(x=>x.product_type==='Bundle').map(x=>key(x.invoice_id,x.product_id)));
+  const visibleLines=new Map(lines.map(x=>[key(x.invoice_id,x.product_id),x]));
+  const soldSources=new Map(lots.map(x=>[lotKey(x.invoice_id,x.product_id,x.lot_id),x]));
+  const recipeByComponent=new Map(bundleRows.map(x=>[JSON.stringify([x.invoice_id,x.bundle_id,x.component_id]),x]));
+  const recordedPhysical=new Map<string,number>();
+  const sourceByLot=new Map<string,BundleSource>();
+  for(const a of physicalRows){
+    const parent=key(a.invoice_id,a.visible_product_id),lk=lotKey(a.invoice_id,a.visible_product_id,a.lot_id);
+    const saleLot=soldSources.get(lk);
+    if(sourceByLot.has(lk)||!saleLot||
+      !eq(Number(saleLot.quantity),Number(a.quantity))||!eq(Number(saleLot.unit_cost),Number(a.unit_cost))||
+      minor(Number(a.quantity)*Number(a.unit_cost))!==Number(a.cost_minor)||
+      a.movement_product_id!==a.component_id||!eq(Number(a.movement_quantity),Number(a.quantity))||
+      saleLot.lot_product_id!==a.component_id)
+      reasons.add('Bundle source FIFO allocation does not match original physical lot and movement.');
+    sourceByLot.set(lk,a);
+    if(bundleParents.has(parent)){
+      const rk=JSON.stringify([a.invoice_id,a.visible_product_id,a.component_id]);
+      if(!recipeByComponent.has(rk))reasons.add('Bundle physical draw has no saved sale-time recipe component.');
+      recordedPhysical.set(rk,(recordedPhysical.get(rk)||0)+Number(a.quantity));
+    }else if(a.visible_product_id!==a.component_id)
+      reasons.add('Standalone sale lot has unexpected bundle component provenance.');
+  }
+  for(const line of lines.filter(x=>x.product_type==='Bundle')){
+    const recipes=bundleRows.filter(x=>x.invoice_id===line.invoice_id&&x.bundle_id===line.product_id);
+    if(recipes.length<1)reasons.add('Bundle invoice has no immutable component recipe snapshot.');
+    for(const recipe of recipes){
+      const rk=JSON.stringify([recipe.invoice_id,recipe.bundle_id,recipe.component_id]);
+      if(recipe.revision<1||recipe.quantity_per_set<=0||recipe.sets_sold!==Number(line.quantity)||
+         !eq(recipe.quantity_per_set*recipe.sets_sold,recipe.component_quantity)||
+         !eq(recordedPhysical.get(rk)||0,recipe.component_quantity))
+        reasons.add('Bundle invoice physical FIFO quantity does not reconcile to its original recipe.');
+    }
+  }
+  for(const recipe of bundleRows)
+    if(!bundleParents.has(key(recipe.invoice_id,recipe.bundle_id))||
+      !visibleLines.has(key(recipe.invoice_id,recipe.bundle_id)))
+      reasons.add('Orphan bundle recipe has no corresponding visible invoice line.');
+
   let gross=0,discounts=0,refund=0,cogs=0,expenses=0;
   const soldQty=new Map<string,number>(),soldLineAmounts=new Map<string,number>();
   const lotQty=new Map<string,number>(),lotCosts=new Map<string,number>();
@@ -122,8 +177,10 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(price)||price<=0||
       lot.source_type===null||lot.source_type==='OVERSOLD')
       reasons.add('Missing, zero or non-FIFO historical lot cost.');
-    if(lot.lot_product_id!==lot.product_id)
+    if(lot.lot_product_id!==lot.product_id && !bundleParents.has(k))
       reasons.add('FIFO lot product does not match recorded sold product.');
+    if(bundleParents.has(k)&&!sourceByLot.has(lk))
+      reasons.add('Bundle visible line lacks original physical component FIFO provenance.');
     soldLotKeys.set(lk,lot);
     lotQty.set(k,(lotQty.get(k)||0)+quantity);
     lotCosts.set(lk,price);
@@ -132,7 +189,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     else cogs+=cost;
   }
   for(const [k,qty] of soldQty){
-    if(!eq(qty,lotQty.get(k)||0))reasons.add('Sale quantity is not fully backed by FIFO lot allocations.');
+    if(!bundleParents.has(k)&&!eq(qty,lotQty.get(k)||0))
+      reasons.add('Sale quantity is not fully backed by FIFO lot allocations.');
   }
 
   for(const item of returns){

@@ -66,7 +66,7 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
   const [pr, cr, br, vr, session, settingsRows, profileRows] = await Promise.all([
-    db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' ORDER BY product_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' AND product_type='Standard' ORDER BY product_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
@@ -142,7 +142,7 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     }
     if(!productId||!Number.isFinite(qRaw)||qRaw<=0||!Number.isInteger(qRaw)) return error(`Line ${i+1}: quantity must be a whole number greater than zero.`); if(!Number.isFinite(price)||price<0) return error(`Line ${i+1}: price must be a valid number.`);
     if(seen.has(productId)) return error(`${cleanText(item.name)||'Product'} appears more than once — combine it into one line.`); seen.add(productId);
-    const product=await db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,unit,purchase_price,current_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<any>(); if(!product) return error(`Product ${cleanText(item.name)} no longer exists.`);
+    const product=await db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,unit,purchase_price,current_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit,product_type FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<any>(); if(!product) return error(`Product ${cleanText(item.name)} no longer exists.`); if(product.product_type==='Bundle') return error('Virtual bundles cannot be sold through ordinary POS before complete return support.',409);
     const isTracked=trackingEnabled(product); let trackingDraws:any[]=[]; const draws:any[]=[]; let need=q;
     if(isTracked){
       if(cleanText(item.vendorId)||cleanText(item.fulfillmentMode)==='negative') return error(`${product.product_name}: tracked products cannot use Vendor Sourcing or Negative Stock.`);
