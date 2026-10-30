@@ -237,7 +237,7 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
    make('cashBookBalance',cashLedgerBalance,now,'needs-review'),
    make('bankCurrentBalance',bankTotal,now,'needs-review'),
    make('ownerCapitalIn',ownerCapital,q.to),
-   make('operatingExpenses',expenseTotal,q.to)
+   make('operatingExpenses',expenseTotal,q.to,'ready')
  ];
  return {ok:true,report:q.report,range:{from:q.from,to:q.to},page:q.page,
    pageSize:q.pageSize,totalRows,rows,metrics,coverage:{status:coverageStatus,reason}};
