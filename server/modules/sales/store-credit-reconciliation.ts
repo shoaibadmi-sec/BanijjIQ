@@ -28,11 +28,11 @@ const SELECTS = [
       COALESCE(NULLIF(l.customer_id,''),s.customer_id,'') customer_id,
       l.return_id reference_id,l.amount_cents expected_cents,0 recorded_cents
     FROM store_credit_legacy_unreconciled l
-    LEFT JOIN sales s ON s.invoice_id=l.invoice_id`,
+    LEFT JOIN sales s ON s.invoice_id=l.invoice_id\n    WHERE NOT EXISTS (SELECT 1 FROM store_credit_historical_adjustments a WHERE a.return_id=l.return_id)`,
   `SELECT 'LEGACY_RECEIVABLE_CREDIT' flag_code,cl.customer_id,
       cl.ledger_id reference_id,CAST(ROUND(cl.credit*100) AS INTEGER) expected_cents,
       0 recorded_cents
-    FROM customer_ledger cl WHERE cl.type='Sales Return Credit'`,
+    FROM customer_ledger cl WHERE cl.type='Sales Return Credit'\n      AND NOT EXISTS (SELECT 1 FROM store_credit_historical_adjustments a WHERE a.old_ledger_id=cl.ledger_id)`,
   `SELECT 'NEGATIVE_RECEIVABLE' flag_code,c.customer_id,
       c.customer_id reference_id,0 expected_cents,
       CAST(ROUND(c.current_due*100) AS INTEGER) recorded_cents
