@@ -1,6 +1,7 @@
 import type { SherDatabase } from '../../db/types.js';
 import { getStockAlertsRoute } from './stock-alerts.service.js';
 import { getInventoryHistoryRoute } from './inventoryHistory.service.js';
+import { getInventoryLotsRoute } from './inventoryLots.service.js';
 import type { ProductInput } from './types.js';
 import {
   addLookup,
@@ -50,6 +51,7 @@ async function readBody<T>(request: Request): Promise<T> {
 export async function handleProductsRoute(db: SherDatabase, request: Request, path: string, user: AuthUser): Promise<Response | null> {
   if (path === '/api/products/stock-alerts' && request.method === 'GET') return getStockAlertsRoute(db,request);
   if (path === '/api/products/inventory-history' && request.method === 'GET') return getInventoryHistoryRoute(db);
+  if (path === '/api/products/inventory-lots' && request.method === 'GET') return getInventoryLotsRoute(db,user);
   if (path === '/api/bootstrap' && request.method === 'GET') {
     const permissions = await getUserPermissions(db, user);
     const canView = (key: string) => permissions === null || !!permissions[key]?.view;
