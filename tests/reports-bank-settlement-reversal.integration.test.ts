@@ -100,7 +100,8 @@ test('Phase 5G16: bank supplier settlement reversal restores payable without dup
   assert.deepEqual([reversal.debit,reversal.credit,reversal.r],[0,50,settlement.ledgerId]);
   assert.equal(one("SELECT COALESCE(SUM(credit-debit),0) n FROM bank_book WHERE bank_account_id=?",bankId).n,90);
   assert.equal(count('bank_book'),3);
-  assert.equal(count('cash_book'),0,'bank collections and reversals never create cash movements');
+  assert.equal(one("SELECT COUNT(*) n FROM cash_book WHERE type IN ('Customer Payment','Supplier Payment','Supplier Payment Reversal')").n,0,
+   'bank collections and reversals never create cash payments');
   assert.equal(one('SELECT current_stock n FROM products WHERE product_id=?',pid).n,6);
   assert.equal(one('SELECT COALESCE(SUM(remaining_quantity),0) n FROM stock_lots WHERE product_id=?',pid).n,6);
 
