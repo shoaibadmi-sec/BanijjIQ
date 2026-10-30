@@ -96,6 +96,18 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
     assert.equal(detail.evidence.cashBook[0].reference,'CASE-SALE');
     assert.equal(detail.evidence.customerDue,-5);
     assert.equal(detail.evidence.customerLedger.length,1);
+    // Neither the case index nor source-level evidence may be exposed to an
+    // unauthenticated caller, even when a valid case ID has been discovered.
+    const adminToken=token;
+    token='';
+    const anonymousCaseList=await api('GET','/api/pos/store-credit/reconciliation/cases?limit=2');
+    const anonymousCaseDetail=await api('GET',
+      '/api/pos/store-credit/reconciliation/cases/'+encodeURIComponent(legacy.caseId));
+    assert.equal(anonymousCaseList.status,401,JSON.stringify(anonymousCaseList));
+    assert.equal(anonymousCaseDetail.status,401,JSON.stringify(anonymousCaseDetail));
+    assert.equal(anonymousCaseList.cases,undefined);
+    assert.equal(anonymousCaseDetail.evidence,undefined);
+    token=adminToken;
     assert.equal((await api('GET','/api/pos/store-credit/reconciliation/cases/invalid')).status,404);
     assert.equal((await api('GET','/api/pos/store-credit/reconciliation/cases?limit=0')).status,400);
     assert.equal((await api('GET','/api/pos/store-credit/reconciliation/cases?limit=101')).status,400);
