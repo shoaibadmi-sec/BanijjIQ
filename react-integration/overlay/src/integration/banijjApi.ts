@@ -345,3 +345,33 @@ export const postFinanceTransaction=(payload:FinanceTransactionPost)=>
   request<{ok:true;id:string;replayed:boolean}>('/api/finance/transactions',{
     method:'POST',body:JSON.stringify(payload)
   });
+
+export interface LiveDaybookEntry {
+  ts:string;date:string;time:string;referenceNo:string;module:string;transactionType:string;
+  party:string;description:string;paymentMethod:string;
+  cashIn:number;cashOut:number;bankIn:number;bankOut:number;amount:number;runningCashBalance:number|null;
+  createdBy:string;status:string;isDeleted:boolean;deletedBy:string;deleteReason:string;
+  isBackdated:boolean;backdatedDays:number;backdatedReason:string;
+  sourceModule:string;sourceId:string;openId:string;deleteAction:string;deleteId:string;canEdit:boolean;
+}
+export interface LiveDaybookQuery {
+  dateFrom:string;dateTo:string;module?:string;paymentMethod?:string;query?:string;
+  sortBy:'createdAt'|'transactionDate';page:number;pageSize:50|100;
+}
+export interface LiveDaybookResponse {
+  ok:true;rows:LiveDaybookEntry[];totalRows:number;totalPages:number;page:number;pageSize:number;
+  dateFrom:string;dateTo:string;sortBy:'createdAt'|'transactionDate';
+  totals:{cashIn:number;cashOut:number;bankIn:number;bankOut:number;netCash:number;netBank:number};
+  isAdmin:boolean;count:number;
+}
+export const getLiveDaybookBootstrap=()=>request<{
+  ok:true;currencySymbol:string;editableDays:number;modules:string[];isAdmin:boolean
+}>('/api/daybook/bootstrap');
+export const getLiveDaybookRows=(query:LiveDaybookQuery)=>{
+  const p=new URLSearchParams({
+    dateFrom:query.dateFrom,dateTo:query.dateTo,module:query.module||'',
+    paymentMethod:query.paymentMethod||'',query:query.query||'',sortBy:query.sortBy,
+    page:String(query.page),pageSize:String(query.pageSize)
+  });
+  return request<LiveDaybookResponse>('/api/daybook?'+p.toString());
+};
