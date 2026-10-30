@@ -272,6 +272,15 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       // G2-I: read-only business/accounting quote for a single item quantity.
       // The quoted source amounts are hand-calculated from immutable tenders.
       // Posting is intentionally disabled until separate D1 partial-return guards exist.
+      const quoteBooks=()=>({
+        cashRows:row('SELECT COUNT(*) n FROM cash_book').n,
+        bankRows:row('SELECT COUNT(*) n FROM bank_book').n,
+        creditRows:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+        creditBalance:row("SELECT available_cents n FROM customer_store_credit_balance WHERE customer_id='SPLIT-CUS'").n,
+        stock:row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,
+        lots:row('SELECT COALESCE(SUM(remaining_quantity),0) n FROM stock_lots WHERE product_id=?',product.productId).n
+      });
+      const preQuoteBooks=quoteBooks();
       const partialPath='/api/sales-management/'+saleId+'/split-partial-preview';
       const partial=await api('GET',partialPath+'?productId='+product.productId+'&quantity=1');
       assert.equal(partial.status,200,JSON.stringify(partial));
@@ -294,6 +303,8 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
       assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
       assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      assert.deepEqual(quoteBooks(),preQuoteBooks,
+        'read-only quote may not change cash, bank, credit, inventory or FIFO ledgers');
 
       // Full Phase 3 accounting acceptance: a preflight must NOT approve
       // an invoice whose immutable posting proof the POST would later reject.
