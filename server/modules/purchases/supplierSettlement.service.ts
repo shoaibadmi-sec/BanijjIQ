@@ -170,7 +170,7 @@ export async function reverseSupplierSettlement(db:SherDatabase,settlementId:str
  const batch:SqlPreparedStatement[]=[
   db.prepare(`UPDATE supplier_settlement_entries SET status='Reversed',
    reversed_at=datetime('now'),reversal_reason=?,reversed_by=?,reversal_ledger_id=?
-   WHERE settlement_id=? AND status='Posted'`).bind(reason,user.userId,reversalLedgerId,settlementId),
+   WHERE settlement_id=?`).bind(reason,user.userId,reversalLedgerId,settlementId),
   db.prepare(`UPDATE suppliers SET current_due=current_due+?,updated_at=datetime('now')
    WHERE supplier_id=?`).bind(amount,original.supplier_id),
   db.prepare(`INSERT INTO supplier_ledger

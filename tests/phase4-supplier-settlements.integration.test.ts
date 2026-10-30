@@ -106,8 +106,14 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
   assert.equal(sql('SELECT status s FROM supplier_settlement_entries WHERE settlement_id=?',bank.settlementId).s,'Reversed');
   assert.equal((await api('POST','/api/purchases/supplier-settlements/'+bank.settlementId+'/reverse',
     {reason:'Again must fail'})).status,409);
-  assert.equal((await api('POST','/api/purchases/supplier-settlements/'+cash.settlementId+'/reverse',
-    {reason:'Wrong cash payment'})).status,200);
+  const concurrentReversal=await Promise.all([
+   api('POST','/api/purchases/supplier-settlements/'+cash.settlementId+'/reverse',
+    {reason:'Wrong cash payment'}),
+   api('POST','/api/purchases/supplier-settlements/'+cash.settlementId+'/reverse',
+    {reason:'Wrong cash payment'})
+  ]);
+  assert.equal(concurrentReversal.filter(r=>r.status===200).length,1,JSON.stringify(concurrentReversal));
+  assert.equal(concurrentReversal.filter(r=>r.status===409).length,1,JSON.stringify(concurrentReversal));
   assert.deepEqual(state(),{due:600,ledger:600,journals:3,bank:500,cash:400});
   const legacy=await api('POST','/api/suppliers/'+supplier.id+'/payments',
    {amount:100,method:'Cash',notes:'Legacy entry must also be atomic'});
