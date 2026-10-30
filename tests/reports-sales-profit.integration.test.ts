@@ -171,3 +171,45 @@ test('two returns cannot conceal mismatched FIFO restoration by balancing invoic
     'profit reconciliation must not write to accounting tables');
  }finally{db.close();}
 });
+
+test('cross-invoice return lines and lots cannot certify another invoice refund',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare(`INSERT INTO stock_lots
+    (lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost)
+    VALUES ('LOT-FIFO-B','PROD-FIFO-001','PURCHASE','BUY-B',1,0,70)`).run();
+  db.native.prepare(`INSERT INTO sales
+    (invoice_id,sale_date,customer_name,customer_phone,subtotal,discount,grand_total,
+     payment_type,payment_status,status)
+    VALUES ('SALE-PROFIT-B','2026-10-16','Second Buyer','01000000123',120,0,120,
+    'Cash','Paid','Completed')`).run();
+  db.native.prepare(`INSERT INTO sale_items
+    (invoice_id,product_id,product_name,quantity,unit_price,line_total)
+    VALUES ('SALE-PROFIT-B','PROD-FIFO-001','Demo Copper Wire',1,120,120)`).run();
+  db.native.prepare(`INSERT INTO sale_item_lots
+    (invoice_id,product_id,lot_id,quantity,unit_cost)
+    VALUES ('SALE-PROFIT-B','PROD-FIFO-001','LOT-FIFO-B',1,70)`).run();
+  // The refund header belongs to A, but BOTH child records are falsely
+  // attributed to B. Document totals and FIFO quantities still balance.
+  db.native.prepare(`INSERT INTO sales_returns
+    (return_id,return_date,invoice_id,refund_method,total_return_amount,reason)
+    VALUES ('RETURN-CROSS-INVOICE','2026-10-19','SALE-PROFIT-001','Cash',110,'Cross-invoice mismatch')`).run();
+  db.native.prepare(`INSERT INTO sales_return_items
+    (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
+    VALUES ('RETURN-CROSS-INVOICE','SALE-PROFIT-B','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
+  db.native.prepare(`INSERT INTO sales_return_item_lots
+    (return_id,invoice_id,product_id,lot_id,quantity)
+    VALUES ('RETURN-CROSS-INVOICE','SALE-PROFIT-B','PROD-FIFO-001','LOT-FIFO-B',1)`).run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(result.coverage.status,'incomplete',
+    'return child invoice IDs must match their actual refund document');
+  assert.match(result.coverage.reason,/return.*invoice|invoice.*return/i);
+  assert.equal(metric(result,'returns').valueMinor,11000);
+  assert.equal(metric(result,'fifoCogs').valueMinor,null);
+  assert.equal(metric(result,'grossProfit').valueMinor,null);
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'source reconciliation must not mutate recorded transactions');
+ }finally{db.close();}
+});
