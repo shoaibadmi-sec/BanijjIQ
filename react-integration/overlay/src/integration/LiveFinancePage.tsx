@@ -5,8 +5,9 @@ import { canUseModule, useBackendSession } from './BackendGate';
 import {
   getBankReconciliation, getFinanceBootstrap, getBankAccounts, getBankTransfers,
   postBankTransfer, reverseBankTransfer, getCashSessionSummary, closeCashSession,
-  startCashSession, BackendRequestError,
-  type LiveBankAccount, type LiveBankTransfer, type BankReconciliation, type FinanceBootstrap
+  startCashSession, getFinancePersonLedger, postFinanceTransaction, BackendRequestError,
+  type LiveBankAccount, type LiveBankTransfer, type BankReconciliation, type FinanceBootstrap,
+  type FinancePersonLedgerResponse
 } from './banijjApi';
 
 const taka = (value:number, symbol:string) =>
@@ -272,10 +273,234 @@ function LiveCashSessionPanel({canAdd,canEdit,text,onChanged}:{
   </section>;
 }
 
+
+function LiveFinancePersonLedger({people,symbol,canAdd,canBankView,activeCashSession,onChanged,text}:{
+  people:FinanceBootstrap['personsAll'];symbol:string;canAdd:boolean;canBankView:boolean;
+  activeCashSession:boolean;onChanged:()=>void;text:(en:string,bn:string)=>string;
+}){
+  const [kind,setKind]=useState<'Owner'|'Lender'>('Owner');
+  const [personId,setPersonId]=useState('');
+  const [dateFrom,setDateFrom]=useState(''),[dateTo,setDateTo]=useState('');
+  const [page,setPage]=useState(1),[pageSize,setPageSize]=useState<50|100>(50);
+  const [ledger,setLedger]=useState<FinancePersonLedgerResponse|null>(null);
+  const [loading,setLoading]=useState(false),[error,setError]=useState('');
+  const [reload,setReload]=useState(0),[accounts,setAccounts]=useState<LiveBankAccount[]>([]);
+  const [action,setAction]=useState(''),[method,setMethod]=useState<'Cash'|'Bank'|'Mobile Banking'>('Cash');
+  const [bankId,setBankId]=useState(''),[amount,setAmount]=useState(''),[notes,setNotes]=useState('');
+  const [transactionDate,setTransactionDate]=useState(''),[backdatedReason,setBackdatedReason]=useState('');
+  const [review,setReview]=useState(false),[pending,setPending]=useState(false),[uncertain,setUncertain]=useState(false);
+  const [notice,setNotice]=useState('');
+  const requestId=useRef(crypto.randomUUID());
+  const matching=people.filter(p=>p.type===kind);
+  const selected=people.find(p=>p.id===personId);
+  useEffect(()=>{
+    if(!matching.some(p=>p.id===personId))setPersonId(matching[0]?.id||'');
+  },[kind,personId,people]);
+  useEffect(()=>{
+    if(!canBankView)return;
+    let live=true;
+    getBankAccounts().then(a=>{if(live)setAccounts(a.bankAccounts);}).catch(()=>{if(live)setAccounts([]);});
+    return ()=>{live=false;};
+  },[canBankView,reload]);
+  useEffect(()=>{
+    if(!personId){setLedger(null);return;}
+    let live=true;setLoading(true);setError('');setLedger(null);
+    getFinancePersonLedger(personId,{dateFrom,dateTo,page,pageSize})
+      .then(r=>{if(live)setLedger(r);})
+      .catch(e=>{if(live)setError(e instanceof Error?e.message:'Unable to load person ledger.');})
+      .finally(()=>{if(live)setLoading(false);});
+    return ()=>{live=false;};
+  },[personId,dateFrom,dateTo,page,pageSize,reload]);
+  const types=kind==='Owner'?[
+    {value:'Owner Investment',en:'Owner investment',bn:'মালিকের মূলধন'},
+    {value:'Owner Withdrawal',en:'Owner withdrawal',bn:'মালিকের উত্তোলন'}
+  ]:[
+    {value:'Loan Received',en:'Loan received',bn:'ঋণ গ্রহণ'},
+    {value:'Loan Repayment',en:'Loan repayment',bn:'ঋণ পরিশোধ'}
+  ];
+  const canPost=canAdd&&activeCashSession&&selected?.status==='Active'&&
+    Number.isFinite(Number(amount))&&Number(amount)>0&&
+    Math.abs(Number(amount)*10000-Math.round(Number(amount)*10000))<0.00001&&
+    Boolean(action)&&
+    (method==='Cash'||accounts.some(a=>a.id===bankId&&a.accountType===method&&a.status==='Active'))&&
+    (!transactionDate||transactionDate>=new Date().toISOString().slice(0,10)||backdatedReason.trim().length>0);
+  const refresh=()=>{setReload(v=>v+1);onChanged();};
+  async function submitFinance(){
+    if(!canPost||pending)return;
+    setPending(true);setError('');setNotice('');
+    try{
+      const result=await postFinanceTransaction({
+        personId,transactionType:action,amount:Number(amount),paymentMethod:method,
+        bankAccountId:method==='Cash'?'':bankId,
+        date:transactionDate||undefined,backdatedReason,notes,
+        clientRequestId:requestId.current
+      });
+      setNotice(text('Finance entry posted: ','অর্থ লেনদেন জমা হয়েছে: ')+result.id);
+      setAmount('');setNotes('');setBackdatedReason('');setAction('');setReview(false);setUncertain(false);
+      requestId.current=crypto.randomUUID();
+      refresh();
+    }catch(e){
+      const ambiguous=e instanceof BackendRequestError&&(e.status===null||e.status>=500);
+      setUncertain(ambiguous);
+      setError(ambiguous?
+        text('Posting status unknown. Retry the same request; it cannot be posted twice.',
+          'পোস্ট হয়েছে কি না অজানা। একই অনুরোধ আবার দিন, দ্বিগুণ হবে না।'):
+        e instanceof Error?e.message:'Could not post finance transaction.');
+    }finally{setPending(false);}
+  }
+  function setPerson(next:string){
+    setPersonId(next);setPage(1);setAction('');setReview(false);setUncertain(false);
+    requestId.current=crypto.randomUUID();
+  }
+  return <section className="space-y-3 rounded-xl border border-border bg-card p-3" aria-label={text('Finance person ledger','ব্যক্তির অর্থ খতিয়ান')}
+    data-finance-person-ledger="">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 className="text-sm font-semibold text-ink"><Users className="mr-2 inline-block size-4 text-primary" aria-hidden="true"/>
+        {text('Owner & lender ledger','মালিক ও ঋণদাতার খতিয়ান')}</h2>
+      <button type="button" onClick={refresh} className="h-9 rounded-lg border border-border px-3 text-xs">
+        {text('Refresh','হালনাগাদ')}</button>
+    </div>
+    <div role="tablist" aria-label={text('Finance person type','ব্যক্তির ধরন')} className="flex gap-5 border-b border-border">
+      {(['Owner','Lender'] as const).map(k=><button type="button" role="tab" key={k}
+        aria-selected={kind===k} onClick={()=>{setKind(k);setPage(1);}}
+        className={"h-9 border-b-2 px-1 text-sm "+(kind===k?'border-primary font-semibold text-primary':'border-transparent text-ink-500')}>
+        {k==='Owner'?text('Owners','মালিক'):text('Lenders','ঋণদাতা')}
+      </button>)}
+    </div>
+    <label className="block max-w-md text-xs text-ink-600">{text('Select person','ব্যক্তি বাছুন')}
+      <select aria-label="Finance person" value={personId} onChange={e=>setPerson(e.target.value)}
+        className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm">
+        {matching.length===0&&<option value="">{text('No people found','কোনো ব্যক্তি নেই')}</option>}
+        {matching.map(p=><option key={p.id} value={p.id}>{p.name}{p.status==='Inactive'?' (Inactive)':''}</option>)}
+      </select>
+    </label>
+    {personId&&<>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <label className="text-xs text-ink-600">{text('From','শুরু')}
+          <input aria-label="Finance ledger from date" type="date" value={dateFrom} onChange={e=>{setDateFrom(e.target.value);setPage(1);}}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>
+        <label className="text-xs text-ink-600">{text('To','শেষ')}
+          <input aria-label="Finance ledger to date" type="date" value={dateTo} onChange={e=>{setDateTo(e.target.value);setPage(1);}}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>
+        <label className="text-xs text-ink-600">{text('Rows','সারি')}
+          <select aria-label="Finance ledger page size" value={pageSize} onChange={e=>{setPageSize(Number(e.target.value) as 50|100);setPage(1);}}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm">
+            <option value={50}>50</option><option value={100}>100</option>
+          </select></label>
+      </div>
+      {loading&&<p role="status" className="text-xs text-ink-500">{text('Loading financing records…','অর্থ লেনদেন লোড হচ্ছে…')}</p>}
+      {error&&<p role="alert" className="rounded-lg border border-danger bg-danger-bg p-2 text-xs text-danger">{error}</p>}
+      {notice&&<p role="status" className="text-xs text-success">{notice}</p>}
+      {ledger&&<>
+        {ledger.coverage.status==='needs-review'&&<p role="alert" className="rounded-lg border border-border p-3 text-sm text-warning">
+          {text('Source records need reconciliation. Balances are withheld until matched.',
+            'মূল খতিয়ান মেলেনি। যাচাই না হওয়া পর্যন্ত জের দেখানো হচ্ছে না।')}
+        </p>}
+        <p role="status" className="text-sm font-medium text-ink">
+          {text(kind==='Owner'?'Owner capital':'Outstanding loan',kind==='Owner'?'মালিকের মূলধন':'বাকি ঋণ')}
+          {': '}{ledger.balance===null?'—':taka(ledger.balance,symbol)}
+        </p>
+        <div role="region" tabIndex={0} aria-label={text('Finance person ledger table','ব্যক্তির অর্থ খতিয়ানের তালিকা')}
+          className="overflow-x-auto rounded-lg border border-border focus-visible:ring-2 focus-visible:ring-primary">
+          <table className="w-full min-w-[660px] text-left text-sm">
+            <thead className="bg-ink-50 text-xs text-ink-500"><tr>
+              <th className="p-2">{text('Date','তারিখ')}</th>
+              <th className="p-2">{text('Transaction','লেনদেন')}</th>
+              <th className="p-2 text-right">{text('Out','দেওয়া')}</th>
+              <th className="p-2 text-right">{text('In','পাওয়া')}</th>
+              <th className="p-2 text-right">{text('Balance','জের')}</th>
+            </tr></thead>
+            <tbody>{ledger.rows.map(row=><tr key={row.financeId} className="border-t border-border">
+              <td className="p-2 text-xs text-ink-600">{row.date}</td>
+              <td className="p-2">
+                <span className="text-ink">{row.transactionType}</span>
+                <span className="block text-xs text-ink-500">{row.financeId} · {row.paymentMethod}</span>
+                {row.isBackdated&&<span className="block text-xs text-warning">{text('Backdated','পুরনো তারিখ')}: {row.backdatedReason}</span>}
+                {row.sourceStatus==='needs-review'&&<span className="block text-xs text-warning">{text('Needs review','যাচাই দরকার')}</span>}
+              </td>
+              <td className="p-2 text-right tabular-nums text-danger">{row.debit?taka(row.debit,symbol):'—'}</td>
+              <td className="p-2 text-right tabular-nums text-success">{row.credit?taka(row.credit,symbol):'—'}</td>
+              <td className="p-2 text-right tabular-nums text-ink">{row.balance===null?'—':taka(row.balance,symbol)}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {ledger.rows.length===0&&<p className="text-xs text-ink-500">{text('No transactions for this date range.','এই সময়ে কোনো লেনদেন নেই।')}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-600">
+          <span>{ledger.totalRows} {text('transactions','লেনদেন')} · {text('Page','পৃষ্ঠা')} {page}/{Math.max(ledger.totalPages,1)}</span>
+          <div className="flex gap-2">
+            <button type="button" disabled={page===1} onClick={()=>setPage(p=>Math.max(1,p-1))}
+              className="h-9 rounded-lg border border-border px-3 disabled:opacity-40">{text('Previous','আগের')}</button>
+            <button type="button" disabled={page>=ledger.totalPages} onClick={()=>setPage(p=>p+1)}
+              className="h-9 rounded-lg border border-border px-3 disabled:opacity-40">{text('Next','পরের')}</button>
+          </div>
+        </div>
+      </>}
+      {canAdd&&selected?.status==='Active'&&<form onSubmit={e=>{e.preventDefault();if(!uncertain){if(!review){setReview(true);return;}}void submitFinance();}}
+        className="space-y-2 border-t border-border pt-3">
+        <h3 className="text-sm font-semibold text-ink">{text('New finance entry','নতুন অর্থ লেনদেন')}</h3>
+        {!activeCashSession&&<p role="status" className="text-xs text-warning">
+          {text('Start the cash session before posting.','লেনদেনের আগে নগদ সেশন শুরু করুন।')}</p>}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="text-xs text-ink-600">{text('Transaction type','লেনদেনের ধরন')}
+            <select value={action} aria-label="Finance transaction type" disabled={pending||uncertain}
+              onChange={e=>{setAction(e.target.value);setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm">
+              <option value="">{text('Choose action','ধরন বাছুন')}</option>
+              {types.map(t=><option key={t.value} value={t.value}>{text(t.en,t.bn)}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-ink-600">{text('Amount','টাকার পরিমাণ')}
+            <input type="number" min="0.0001" step="0.0001" aria-label="Finance transaction amount" value={amount}
+              disabled={pending||uncertain} onChange={e=>{setAmount(e.target.value);setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>
+          <label className="text-xs text-ink-600">{text('Payment method','পেমেন্ট মাধ্যম')}
+            <select value={method} aria-label="Finance payment method" disabled={pending||uncertain}
+              onChange={e=>{setMethod(e.target.value as 'Cash'|'Bank'|'Mobile Banking');setBankId('');setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm">
+              <option value="Cash">{text('Cash','নগদ')}</option>
+              {canBankView&&<option value="Bank">{text('Bank','ব্যাংক')}</option>}
+              {canBankView&&<option value="Mobile Banking">{text('Mobile banking','মোবাইল ব্যাংকিং')}</option>}
+            </select>
+          </label>
+          {method!=='Cash'&&<label className="text-xs text-ink-600">{text('Bank/mobile account','ব্যাংক/মোবাইল হিসাব')}
+            <select value={bankId} aria-label="Finance bank account" disabled={pending||uncertain}
+              onChange={e=>{setBankId(e.target.value);setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm">
+              <option value="">{text('Select account','হিসাব বাছুন')}</option>
+              {accounts.filter(a=>a.accountType===method&&a.status==='Active').map(a=><option value={a.id} key={a.id}>{a.name}</option>)}
+            </select></label>}
+          <label className="text-xs text-ink-600">{text('Date (optional)','তারিখ (ঐচ্ছিক)')}
+            <input type="date" aria-label="Finance transaction date" value={transactionDate}
+              disabled={pending||uncertain} onChange={e=>{setTransactionDate(e.target.value);setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>
+          <label className="text-xs text-ink-600">{text('Note','বিবরণ')}
+            <input aria-label="Finance transaction note" value={notes} disabled={pending||uncertain}
+              onChange={e=>{setNotes(e.target.value);setReview(false);}}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>
+          {transactionDate&&transactionDate<new Date().toISOString().slice(0,10)&&
+            <label className="text-xs text-ink-600">{text('Reason for backdating','পুরনো তারিখের কারণ')}
+              <input aria-label="Finance backdated reason" value={backdatedReason}
+                onChange={e=>{setBackdatedReason(e.target.value);setReview(false);}}
+                disabled={pending||uncertain} className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-2 text-sm"/></label>}
+        </div>
+        {review&&<p role="status" className="rounded-lg border border-border bg-ink-50 p-3 text-sm text-ink">
+          {text('Confirm finance entry','অর্থ লেনদেন নিশ্চিত করুন')}: {selected?.name} · {action} · {amount} · {method}
+        </p>}
+        <button type="submit" disabled={pending||!canPost}
+          className="h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50">
+          {uncertain?text('Retry same request','একই অনুরোধ আবার দিন'):
+            review?text('Confirm entry','নিশ্চিত করুন'):text('Review entry','যাচাই করুন')}
+        </button>
+      </form>}
+    </>}
+  </section>;
+}
+
 export function LiveFinancePage() {
   const user = useBackendSession();
   const { text } = useUiCopy();
   const canFinance = canUseModule(user,'finance','view');
+  const canFinanceAdd=canUseModule(user,'finance','add');
   const canBank = canUseModule(user,'bank','view');
   const canBankAdd=canUseModule(user,'bank','add');
   const canBankEdit=canUseModule(user,'bank','edit');
@@ -370,23 +595,9 @@ export function LiveFinancePage() {
 
     {canBank&&<LiveBankTransferTools add={canBankAdd} edit={canBankEdit} text={text} onChanged={()=>setReload(v=>v+1)}/>}
 
-    {canFinance&&<section className="overflow-hidden rounded-xl border border-border bg-card" aria-label={text('Finance people','অর্থ হিসাবের ব্যক্তি')}>
-      <div className="flex items-center gap-2 border-b border-border p-3">
-        <Users className="size-4 text-primary" aria-hidden="true"/>
-        <h2 className="text-sm font-semibold text-ink">{text('Owners and lenders','মালিক ও ঋণদাতা')}</h2>
-      </div>
-      {finance&&<div className="divide-y divide-border">
-        {finance.personsAll.map(p=><div key={p.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-sm">
-          <span className="font-medium text-ink">{p.name}</span>
-          <span className="text-xs text-ink-500">{p.type==='Owner'?text('Owner','মালিক'):text('Lender','ঋণদাতা')}
-            {' · '}{p.status}</span>
-        </div>)}
-        {finance.personsAll.length===0&&<p className="p-4 text-xs text-ink-500">
-          {text('No finance people yet.','এখনো কোনো অর্থ হিসাবের ব্যক্তি নেই।')}</p>}
-      </div>}
-      <p className="border-t border-border px-3 py-2 text-xs text-ink-500">
-        {text('Person balances require original-ledger reconciliation in Phase 6D. No unverified totals are shown.',
-          'ব্যক্তির জের ৬ডি ধাপে মূল খতিয়ানের সাথে মিলিয়ে দেখানো হবে।')}</p>
-    </section>}
+    {canFinance&&finance&&<LiveFinancePersonLedger people={finance.personsAll} symbol={symbol}
+      canAdd={canFinanceAdd} canBankView={canBank} activeCashSession={finance.activeCashSession}
+      text={text} onChanged={()=>setReload(v=>v+1)}/>}
+
   </main>;
 }
