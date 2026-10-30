@@ -78,6 +78,8 @@ function startMocking(context,calls){
   let postedPurchase=null;
   let returnedQty=0;
   let supplierDue=100;
+  let planned=null;
+  let order=null;
   const supplierSettlements=[];
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
@@ -123,6 +125,35 @@ function startMocking(context,calls){
       supplierDue+=supplierSettlements[0].amount;
       calls.push({method:'ASSERT',path,body:x});
       return respond({ok:true,settlementId:'SST-UI-001',reversalLedgerId:'REV-UI-001',newDue:supplierDue});
+    }
+    if(path==='/api/purchases/planner/analyze'&&request.method()==='GET')
+      return respond({ok:true,rows:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',
+       currentStock:2,suggestedQty:4,plannedQty:4,included:true,supplierId:'',
+       lastPurchaseCost:80}],suppliers:[{id:'SUP-UI-001',name:'Khan Hardware'}]});
+    if(path==='/api/purchases/planner/plans'&&request.method()==='GET')
+      return respond({ok:true,plans:planned?[planned]:[]});
+    if(path==='/api/purchases/planner/plans'&&request.method()==='POST'){
+      const data=request.postDataJSON();assert.equal(data.items.length,1);
+      assert.deepEqual(data.items[0],{productId:'PRD-000001',supplierId:'SUP-UI-001',
+       plannedQty:4,included:true});
+      planned={planId:'PPL-UI-001',planNo:'PPL-UI-001',status:'Draft',itemCount:1,
+       totalInvestment:320};calls.push({method:'ASSERT',path,body:data});
+      return respond({ok:true,planId:planned.planId});
+    }
+    if(path==='/api/purchases/planner/plans/PPL-UI-001/approve'&&request.method()==='POST'){
+      assert.equal(planned?.status,'Draft');planned.status='Approved';
+      order={orderId:'SPO-UI-001',orderNo:'SPO-UI-001',status:'Open',
+       supplierId:'SUP-UI-001',supplierName:'Khan Hardware',totalQty:4,convertedPurchaseId:''};
+      calls.push({method:'ASSERT',path});return respond({ok:true,planId:planned.planId,
+       orders:[{...order}]});
+    }
+    if(path==='/api/purchases/planner/orders'&&request.method()==='GET')
+      return respond({ok:true,orders:order?[order]:[]});
+    if(path==='/api/purchases/planner/orders/SPO-UI-001/convert-data'&&request.method()==='GET'){
+      assert.equal(order.status,'Open');return respond({ok:true,purchase:{
+       purchasePlanOrderId:'SPO-UI-001',orderNo:'SPO-UI-001',
+       supplierId:'SUP-UI-001',supplierName:'Khan Hardware',
+       items:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',quantity:4,unitPrice:80}] }});
     }
     if(path==='/api/purchases/supplier-search'&&request.method()==='GET'){
       const q=(url.searchParams.get('q')||'').toLowerCase();
@@ -176,12 +207,18 @@ function startMocking(context,calls){
         assert.equal(data.items[0].unitPrice,2400);
       }else{
         assert.equal(data.items[0].productId,'PRD-000001');
-        assert.equal(data.items[0].qty,3);
+        assert.equal(data.items[0].qty,data.purchasePlanOrderId?4:3);
         assert.equal(data.items[0].unitPrice,80);
       }
       calls.push({method:'ASSERT',path:'/api/purchases',payload:data});
-      const amount=data.items[0].unitQuantities?2830:240;
-      postedPurchase={purchaseId:data.items[0].unitQuantities?'PUR-UI-MIXED':'PUR-UI-0001',
+      if(data.purchasePlanOrderId){
+        assert.equal(data.purchasePlanOrderId,'SPO-UI-001');
+        assert.equal(order?.status,'Open');order.status='Converted';
+        order.convertedPurchaseId='PUR-UI-ORDER';planned.status='Converted';
+        calls.push({method:'ASSERT',path:'/api/purchases/order-conversion',payload:data});
+      }
+      const amount=data.purchasePlanOrderId?320:data.items[0].unitQuantities?2830:240;
+      postedPurchase={purchaseId:data.purchasePlanOrderId?'PUR-UI-ORDER':data.items[0].unitQuantities?'PUR-UI-MIXED':'PUR-UI-0001',
         purchaseDate:'2026-10-30',supplierId:data.supplierId,supplierName:'Khan Hardware',
         grandTotal:amount,paidAmount:0,dueAmount:amount,paymentStatus:'Due',items:[]};
       return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:amount,dueAmount:amount});
@@ -464,6 +501,32 @@ try{
       await page.getByText(/Reversal recorded · REV-UI-001/).waitFor({timeout:12000});
       assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases/supplier-settlements').length,1);
       assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path.endsWith('/reverse')).length,1);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 4E Purchase Plans → Orders → Purchases '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:930},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('phase4e '+width+': '+e.message));
+      await page.goto(base+'/#/app/purchases?tab=plans');
+      await page.locator('[data-live-purchase-plans]').waitFor({timeout:12000});
+      await page.getByRole('spinbutton',{name:'Planned quantity for Copper Cable 2.5mm'}).fill('4');
+      await page.getByRole('combobox',{name:'Supplier for Copper Cable 2.5mm'}).selectOption('SUP-UI-001');
+      await inspectLayout(page,'phase4e-planner-'+width);
+      await screenshot(page,'phase4e-planner-'+width);
+      if(width===390)await audit(page,'phase4e-planner-390');
+      await page.getByRole('button',{name:'Save Purchase Plan'}).click();
+      await page.getByText(/Draft purchase plan saved/).waitFor({timeout:12000});
+      await page.getByRole('button',{name:'Approve & Create Orders'}).click();
+      await page.getByRole('link',{name:'Convert to Purchase'}).click();
+      await page.locator('[data-live-purchase-editor]').waitFor({timeout:12000});
+      await page.getByText(/Approved supplier order SPO-UI-001/).waitFor({timeout:12000});
+      await page.getByRole('button',{name:/Confirm Due Purchase/}).click();
+      await page.getByText('PUR-UI-ORDER').waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases/order-conversion').length,1);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }
