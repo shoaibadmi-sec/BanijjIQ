@@ -33,6 +33,12 @@ function money(value: unknown): number {
   return Math.round(n * 10000) / 10000;
 }
 
+function validPurchaseDiscount(value: unknown, subtotal: number): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value) &&
+    value >= 0 && value <= subtotal &&
+    Math.abs(value * 10000 - Math.round(value * 10000)) <= 0.000001);
+}
+
 function qty(value: unknown): number {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -233,7 +239,9 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
-  const discount = Math.min(money(input.discount), subtotal);
+  if (!validPurchaseDiscount(input.discount, subtotal))
+    return error('Discount must be a non-negative amount within the subtotal, using up to four decimals.');
+  const discount = input.discount === undefined ? 0 : input.discount;
   const grandTotal = Math.max(0, Math.round((subtotal - discount) * 10000) / 10000);
   if(requestedPayment>grandTotal)return error('Purchase payment exceeds invoice total.',409);
   const paidAmount=requestedPayment;
@@ -362,6 +370,8 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'CREATE_PURCHASE', 'PURCHASE', ?, ?)` ).bind(user.userId, purchaseId, purchasePlanOrderId ? `Purchase grand total ${grandTotal}; source order ${purchasePlanOrderId}` : `Purchase grand total ${grandTotal}`));
   try{await db.batch(batch);}
   catch(e){
+    if(/supplier_due_unreconciled/i.test(String(e)))
+      return error('Supplier balance does not match its ledger. Reconcile before purchasing.',409);
     if(paidAtPurchase){
       const prior=await db.prepare(`SELECT purchase_id,grand_total,due_amount,payment_payload_json
         FROM purchases WHERE payment_request_id=?`).bind(paymentRequestId)
@@ -585,7 +595,9 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
-  const discount = Math.min(money(input.discount), subtotal);
+  if (!validPurchaseDiscount(input.discount, subtotal))
+    return error('Discount must be a non-negative amount within the subtotal, using up to four decimals.');
+  const discount = input.discount === undefined ? 0 : input.discount;
   const grandTotal = Math.max(0, Math.round((subtotal - discount) * 10000) / 10000);
   const paidAmount = Math.min(money(input.paidAmount), grandTotal);
   const dueAmount = Math.max(0, Math.round((grandTotal - paidAmount) * 10000) / 10000);
