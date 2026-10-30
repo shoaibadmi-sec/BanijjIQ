@@ -1,8 +1,8 @@
-# Phase 5 — Reports, Business Advisor & Audit Reporting Implementation Plan
+# Phase 5 — Dashboard & Report Library Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship authenticated real-D1 reporting, verified business insight and a printable 4–5-page A4 internal audit, while preserving the approved HisabIQ React reporting UI and remaining isolated from Phase 3 and 4 draft accounting branches.
+**Goal:** Ship exactly two Reports tabs—Dashboard and Report Library—using authenticated real D1 reporting and a printable 4–5-page A4 internal audit within Library, preserving the approved HisabIQ React design and independent Phase 3/4 draft branches.
 
 **Architecture:** Add read-only `/api/reports/v2/*` endpoints and small dedicated reporting services under `server/modules/reporting/live/`; keep legacy API compatibility. Inject a live React report controller via the existing generated-copy overlay, reuse pinned report presentation components without reading preview/demo stores, and expose explicit evidence/coverage states. Merge only after integration and financial acceptance; no production/remote DB changes.
 
@@ -15,7 +15,8 @@
 - Parent: `main`; working branch: `feat/hisabiq-phase5-reports-advisor`. Phase 3 PRs #18–#20 and Phase 4 PR #21 stay draft; do not import unfinished accounting changes.
 - All read endpoints under `/api/reports/v2/` and GET-only, guarded by existing `reports.view` RBAC. Feature-level entitlements are server-enforced or conspicuously gated until available.
 - Never write through the report APIs, alter transaction source tables, or backfill financial records. No production DB, no remote D1, no hosted preview, no auto-merge or production deploy.
-- Original pinned `apps/hisabiq-web` submodule remains unchanged; use `react-integration/overlay` and `scripts/prepare-hisabiq-react.mjs`. Keep HisabIQ blue branding, Magic Patterns charts, bilingual helper, compact tables and responsive behavior.
+- **Exactly two top-level tabs: Dashboard and Report Library.** No standalone Advisor, Profit Insights, Smart Buying, Cash Forecast, Customers, Sales & Profit, Sales Experiment, Stock, Dues, Cash & Expenses or Overview tabs. Keep existing ordinary report categories inside Library and Business Audit as a library report. No standalone Business Advisor functionality in Phase 5.
+- Original pinned `apps/hisabiq-web` submodule remains unchanged; use `react-integration/overlay`, `scripts/preview/patch-reports-two-tabs.mjs`, and `scripts/prepare-hisabiq-react.mjs`. Keep HisabIQ blue branding, Magic Patterns charts, bilingual helper, compact tables and responsive behavior.
 - Financial metrics use integer paise/cents internally, clear nullable evidence statuses, tested source lineage, and no fake demo values in live routes. Incomplete reconciliation means nullable metric, not fabricated zero.
 - Treat returns/reversals, FIFO original cost, Store Credit liabilities, supplier payable, transfers and capital separately. Historical data inconsistencies must fail closed with visible reason.
 - Report rows use authenticated source IDs; date/filter/sort/page are strict allowlists; only pageSize 50/100. Date-range performance cap is specified and tested before rollout.
@@ -26,18 +27,18 @@
 
 | Component | Responsibility |
 | --- | --- |
-| `server/modules/reporting/live/types.ts` | Public v2 JSON contracts: `ReportStatus`, `EvidenceSource`, `ReportMetric`, `LiveReportRow`, `LiveReportPage`, `AdvisorInsight`, `AuditBook` |
+| `server/modules/reporting/live/types.ts` | Public v2 JSON contracts: `ReportStatus`, `EvidenceSource`, `ReportMetric`, `LiveReportRow`, `LiveReportPage`, `AuditBook` |
 | `server/modules/reporting/live/query.ts` | Strict `parseLiveReportQuery(url: URL)` and `parseLiveReportRange(url: URL)` validation; allowlisted report types/sorts |
 | `server/modules/reporting/live/routes.ts` | `handleLiveReportsRoute(db,request,path)`: pure GET-only dispatch |
 | `server/modules/reporting/live/catalog.ts` | Available report categories, role/entitlement flags, source availability states |
 | `server/modules/reporting/live/sales-profit.ts` | Source-backed sales/returns/FIFO costing and profit/coverage |
 | `server/modules/reporting/live/stock-dues.ts` | Physical lot valuation, inventory anomalies, receivable/payable and aging |
 | `server/modules/reporting/live/cash-expenses.ts` | Cash/bank/expenses/finance presentation, transfer-neutral reporting |
-| `server/modules/reporting/live/advisor.ts` | Deterministic insights and evidence links |
 | `server/modules/reporting/live/audit.ts` | Shared A4 audit JSON snapshot and readiness; no database changes |
 | `server/modules/reporting/routes.ts` | Call v2 dispatcher before legacy GET cases (only additive) |
 | `react-integration/overlay/src/integration/reporting/*` | Live React report model/client helpers, table/nav/charts and audit print |
-| `react-integration/overlay/src/integration/LiveReportsPage.tsx` | Authenticated Report Library screen; never reads preview financial store |
+| `react-integration/overlay/src/integration/LiveReportsPage.tsx` | Authenticated two-tab Dashboard/Library screen; never reads preview financial store |
+| `scripts/preview/patch-reports-two-tabs.mjs` | Guarded generated-source transform that shows only two top-level tabs and routes legacy report screens into Library |
 | `react-integration/overlay/src/integration/banijjApi.ts` | GET-only typed v2 report client methods |
 | `scripts/prepare-hisabiq-react.mjs` | Route `reports` to live page, preserve design-only `reports-design-preview` |
 | `tests/reports-*.integration.test.ts` | Full-schema SQLite API/accounting invariants |
@@ -57,15 +58,15 @@ The directories/files listed as new are proposed creation paths; preserve existi
 
 ---
 
-## Task 1 (5A) — Live Report Library route, navigation and UI skeleton
+## Task 1 (5A) — Two-tab Dashboard / Report Library route and UI skeleton
 
-**Files:** Create `react-integration/overlay/src/integration/LiveReportsPage.tsx`, `react-integration/overlay/src/integration/reporting/ReportNav.tsx`, `react-integration/tests/reports-live-route.test.mjs`. Modify `scripts/prepare-hisabiq-react.mjs`, `react-integration/overlay/src/integration/BackendGate.tsx` only if preview wording needs clarification.
+**Files:** Already added generated-only transform `scripts/preview/patch-reports-two-tabs.mjs`, regression `react-integration/tests/reports-two-tabs.contract.test.mjs` and injector in `scripts/prepare-hisabiq-react.mjs` (CI pending). Then create live `react-integration/overlay/src/integration/LiveReportsPage.tsx`, `react-integration/tests/reports-live-route.test.mjs`; use existing presentation styles rather than a duplicate navigation design.
 
-**Interfaces:** Consumes `useBackendSession()`, `canUseModule(user,'reports')`, original pinned `PageHeader`/`ReportsNav`/`ReportResults` styling. Produces `LiveReportsPage(): JSX.Element` and stable `#/app/reports`, `#/app/reports-design-preview` routes. This task uses read-only explicit unavailable states; no synthetic financial rows.
+**Interfaces:** Consumes `useBackendSession()`, `canUseModule(user,'reports')`, pinned Report Library and Overview components. Produces exactly two visible main navigation tabs, `LiveReportsPage(): JSX.Element`, stable `#/app/reports` and explicit `#/app/reports-design-preview`; old deep links map to Library. Empty/loading/unsupported states must be real, not synthetic money.
 
-- [ ] **Step 1 — Red:** Add `reports-live-route.test.mjs` to assert the route injector references the pinned `<Route path="reports" element={<Reports />} />` anchor and emits a live route plus a separate design-preview route; the new page uses `canUseModule`, never `useReportData`, and has real loading/error/empty states and 50/100 pagination controls.
-- [ ] **Step 2 — Verify red:** Run `node --test react-integration/tests/reports-live-route.test.mjs`; expected missing-file or failed route assertion.
-- [ ] **Step 3 — Implement:** Add the route injection with fail-closed anchor checks, sidebar-style primary report navigation and underline subsection tabs; keep original approved presentation tokens/charts and prevent demo data from being rendered on the live route. Do not rewrite pinned source.
+- [ ] **Step 1 — Red:** Run the new `reports-two-tabs.contract.test.mjs` to verify only the two visible main tabs, two-tab keyboard wrapping, legacy screen normalization, library category/tables/filters preserved, and pinned source unchanged. Then add `reports-live-route.test.mjs` asserting the `<Route path="reports" element={<Reports />} />` anchor produces the live route and a design-preview route; live reports never read `useReportData` and provide actual loading/error/empty states and 50/100 pagination.
+- [ ] **Step 2 — Verify red:** `node --test react-integration/tests/reports-two-tabs.contract.test.mjs react-integration/tests/reports-live-route.test.mjs` before final wiring; missing live-route assertions must fail.
+- [ ] **Step 3 — Implement:** Finish generated-copy two-tab routing and live route injection. Keep Dashboard KPI/charts, preserve the existing full Library structure and group controls, route older Advisor/Profit/Stock/etc screen URLs into relevant Library reports, and ensure the new authenticated live route displays no demo money. Do not rewrite pinned source.
 - [ ] **Step 4 — Green:** Run the contract test and `npm run react:build`; both must pass without modifying `apps/hisabiq-web`.
 - [ ] **Step 5 — Commit:** `git add scripts/prepare-hisabiq-react.mjs react-integration && git commit -m "feat(reports): add isolated live report library shell"`.
 
@@ -77,7 +78,7 @@ The directories/files listed as new are proposed creation paths; preserve existi
 
 - [ ] **Step 1 — Red:** Add full-migrations in-memory API tests: unauthenticated GET => 401; role without reports.view => 403; GET `/api/reports/v2/catalog` authorized => 200; invalid date `2026-02-30`, reversed dates, page=0, pageSize=500, unknown `sort`, unknown `report`, and date range beyond documented cap => 400. POST to v2 must not dispatch. Assert record counts and `total_changes()` unchanged across allowed reads.
 - [ ] **Step 2 — Verify red:** `node --import tsx --test tests/reports-v2-contract.integration.test.ts`; missing endpoints/tests must fail.
-- [ ] **Step 3 — Implement:** strict query parsing; route-only GET dispatch with `/api/reports/v2/catalog`, `/rows`, `/summary`, `/advisor`, `/audit` (unimplemented slices respond `unavailable`, not fake data); bind parameters, stable sort `date DESC,id DESC`, defaults `page=1,pageSize=50`, allowlist, and explainable `coverage`. Initially cap period at 366 days and test this exact cap. Defer new indices unless query plan evidences a need.
+- [ ] **Step 3 — Implement:** strict query parsing; route-only GET dispatch with `/api/reports/v2/catalog`, `/rows`, `/summary`, `/audit` (unimplemented slices respond `unavailable`, not fake data); bind parameters, stable sort `date DESC,id DESC`, defaults `page=1,pageSize=50`, allowlist, and explainable `coverage`. Initially cap period at 366 days and test this exact cap. Defer new indices unless query plan evidences a need.
 - [ ] **Step 4 — Green:** Run the v2 contract test and `npm run backend:build`; validate no existing `/api/reports/*` behavior changed.
 - [ ] **Step 5 — Commit:** `git add server/modules/reporting react-integration/overlay/src/integration/banijjApi.ts tests && git commit -m "feat(reports): add authorized read-only v2 contract"`.
 
@@ -117,21 +118,9 @@ The directories/files listed as new are proposed creation paths; preserve existi
 - [ ] **Step 4 — Green:** Run task test, full `tests/pos-accounting.integration.test.ts`, backend build.
 - [ ] **Step 5 — Commit:** `git add server/modules/reporting/live tests react-integration && git commit -m "feat(reports): reconcile cash bank and expenses"`.
 
-## Task 6 (5F) — Deterministic Business Advisor with traceable evidence
+## Task 6 (5F) — 4–5-page A4 monthly/yearly Business Audit inside Report Library
 
-**Files:** Create `server/modules/reporting/live/advisor.ts`, `tests/reports-advisor.integration.test.ts`, `react-integration/overlay/src/integration/reporting/BusinessAdvisor.tsx`; add v2 advisor routing.
-
-**Interfaces:** `buildAdvisorInsights(db:SherDatabase,query:LiveReportQuery): Promise<AdvisorInsight[]>`, where `AdvisorInsight={id:string;severity:'info'|'warning'|'urgent';title:string;why:string;action:string;status:ReportStatus;source:EvidenceSource[];targetRoute:string|null}`.
-
-- [ ] **Step 1 — Red:** Seed low stock, fast-moving items, stale overdue receivables, expiring eligible batch, and missing FIFO evidence; verify insight only when source is traceable, priority deterministic and empty/unreconciled data produces explanation instead of invented score. Verify advisor never posts or creates purchase orders.
-- [ ] **Step 2 — Verify red:** `node --import tsx --test tests/reports-advisor.integration.test.ts`; expected FAIL.
-- [ ] **Step 3 — Implement:** a small explicit rule set; bilingual clarity in UI and source links. Buying recommendation is read-only until Phase 4 planner API is accepted; no ML inference of financial values.
-- [ ] **Step 4 — Green:** Run task test and `npm run react:build`.
-- [ ] **Step 5 — Commit:** `git add server/modules/reporting/live tests react-integration && git commit -m "feat(reports): add evidence-backed business advisor"`.
-
-## Task 7 (5G) — 4–5-page A4 monthly/yearly Business Audit
-
-**Files:** Create `server/modules/reporting/live/audit.ts`, `tests/reports-audit.integration.test.ts`, `react-integration/overlay/src/integration/reporting/AuditBook.tsx`, `react-integration/overlay/src/integration/reporting/printAuditBook.ts`; extend live page and v2 audit route.
+**Files:** Create `server/modules/reporting/live/audit.ts`, `tests/reports-audit.integration.test.ts`, `react-integration/overlay/src/integration/reporting/AuditBook.tsx`, `react-integration/overlay/src/integration/reporting/printAuditBook.ts`; add Business Audit as a selectable report in the existing Report Library, extend live page and v2 audit route. Do not add a top-level Audit tab.
 
 **Interfaces:** `getAuditBook(db:SherDatabase,range:LiveReportRange): Promise<AuditBook>` and `renderAuditHtml(book:AuditBook):string`. Sections include summary/KPI, sales and products, stock and dues, finance and expenses, evidence/coverage. `AuditBook` includes `period`, `generatedAt`, `sections`, `readiness`, `sources`.
 
@@ -141,11 +130,11 @@ The directories/files listed as new are proposed creation paths; preserve existi
 - [ ] **Step 4 — Green:** Run task test and `npm run react:build`; manually review generated print in Chromium/Playwright for page clipping before acceptance.
 - [ ] **Step 5 — Commit:** `git add server/modules/reporting/live tests react-integration && git commit -m "feat(reports): add source-backed a4 audit book"`.
 
-## Task 8 (5H) — Full isolated D1, Playwright, security and release gate
+## Task 7 (5G) — Full isolated D1, Playwright, security and release gate
 
 **Files:** Create `ui-checks/reports.mjs`, `react-integration/tests/reports-source-parity.test.mjs`; modify `ui-checks/run.mjs`, `d1-checks/run.mjs`, `.github/workflows/hisabiq-react-build.yml`, `docs/superpowers/phase5-reports-release-acceptance.md`.
 
-**Interfaces:** Existing `ui-checks/run.mjs` reporter and `d1-checks/run.mjs` local Worker test harness, plus Task 1–7 public routes. No production/hosted invocation.
+**Interfaces:** Existing `ui-checks/run.mjs` reporter and `d1-checks/run.mjs` local Worker test harness, plus Task 1–6 public routes. No production/hosted invocation.
 
 - [ ] **Step 1 — Red:** Add failing tests for report-only code changes triggering CI; unauthenticated + limited RBAC requests; mocked and real-local-D1 `GET /api/reports/v2/*` parity; laptop/tablet/phone screenshots; keyboard and click-through; filtering 50/100; CSV/print; WCAG axe; no preview demo data; 4–5-page clipped-free print; zero real writes. Test `apps/hisabiq-web` pinned source remains pristine.
 - [ ] **Step 2 — Verify red:** Run `node --test react-integration/tests/reports-source-parity.test.mjs` and `node ui-checks/run.mjs` after `npm run react:build`; new assertions fail before wiring.
@@ -165,13 +154,12 @@ The directories/files listed as new are proposed creation paths; preserve existi
 
 | Spec item | Owning task |
 | --- | --- |
-| Single navigation, pinned UI, no demo financial data | 1, 8 |
-| Validated read API, privacy, entitlement, pagination, filters | 2, 8 |
+| Exactly two tabs, preserved Library, pinned UI, no demo financial data | 1, 7 |
+| Validated read API, privacy, entitlement, pagination, filters | 2, 7 |
 | Sales/returns/discount/FIFO/expenses | 3 |
 | Lot values, moving stock, dues, aging, anomalies | 4 |
 | Cash/bank/expenses/capital | 5 |
-| Evidence-backed Business Advisor | 6 |
-| A4 audit month/year, charts, print/export | 7 |
-| Local SQLite/D1, Playwright/axe/security, cross-phase release gates | 8 |
+| A4 audit month/year, charts, print/export in Library | 6 |
+| Local SQLite/D1, Playwright/axe/security, cross-phase release gates | 7 |
 
-**Approval/execution:** Scope approved 2026-10-30; this file is the implementation handoff. Do not claim Task 1–8 implemented or passing merely because this documentation exists. At each implementation slice, update the checklist and draft PR with exact commit SHA/CI links.
+**Approval/execution:** Scope approved 2026-10-30; this file is the implementation handoff. Do not claim Task 1–7 implemented or passing merely because this documentation exists. At each implementation slice, update the checklist and draft PR with exact commit SHA/CI links.
