@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
+import { patchLiveDashboard } from './preview/patch-live-dashboard.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -33,6 +34,8 @@ const sourceProductsPath=join(sourceWeb,'src/pages/Products.tsx');
 const generatedProductsPath=join(web,'src/pages/Products.tsx');
 // Pinned source never changes; the build-copy transform fails closed on unknown JSX.
 writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
+const dashboardPath=join(web,'src/pages/Dashboard.tsx');
+writeFileSync(dashboardPath,patchLiveDashboard(readFileSync(dashboardPath,'utf8')));
 
 // Phase 5: simplify generated Reports navigation without touching the pinned React source.
 const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
@@ -45,17 +48,19 @@ const appPath = join(web, 'src/App.tsx');
 let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
 const settingsRouteAnchor = '<Route path="settings/:section" element={<TenantSettingsPage />} />';
+const dashboardAnchor = '<Route path="dashboard" element={<Dashboard />} />';
 const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
 const reportsAnchor = '<Route path="reports" element={<Reports />} />';
 const purchasesAnchor = '<Route path="purchases" element={<Purchases />} />';
 const purchaseEditorAnchor = '<Route path="purchases/new" element={<PurchaseEditor />} />';
-if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, purchaseEditorAnchor, settingsRouteAnchor].every(anchor => app.includes(anchor))) {
+if (![importAnchor, dashboardAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, purchaseEditorAnchor, settingsRouteAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
   "const LiveBusinessSettingsPage = lazy(() => import('./integration/LiveBusinessSettingsPage').then(module => ({ default: module.LiveBusinessSettingsPage })));",
   "const LiveTeamSettingsPage = lazy(() => import('./integration/LiveTeamSettingsPage').then(module => ({ default: module.LiveTeamSettingsPage })));",
+  "const LiveDashboard = lazy(() => import('./integration/LiveDashboardPage').then(module => ({ default: module.LiveDashboardPage })));",
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
@@ -67,6 +72,8 @@ app = app.replace(importAnchor, [
 // Keep the pinned Settings design and submodule untouched; replace only live Business route.
 app = app.replace(settingsRouteAnchor,
   ['<Route path="settings/business" element={<LiveBusinessSettingsPage />} />', '<Route path="settings/team" element={<LiveTeamSettingsPage />} />', settingsRouteAnchor].join('\n'));
+app = app.replace(dashboardAnchor,
+  '<Route path="dashboard" element={<LiveDashboard />} />\\n          <Route path="dashboard-design-preview" element={<Dashboard />} />'.replace('\\n','\n'));
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
@@ -76,4 +83,4 @@ app = app.replace(reportsAnchor,
 app = app.replace(purchasesAnchor, '<Route path="purchases" element={<LivePurchases />} />\\n          <Route path="purchases-design-preview" element={<Purchases />} />'.replace('\\n','\n'));
 app = app.replace(purchaseEditorAnchor, '<Route path="purchases/new" element={<LivePurchaseEditor />} />\\n          <Route path="purchase-editor-design-preview" element={<PurchaseEditor />} />'.replace('\\n','\n'));
 writeFileSync(appPath, app);
-console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
+console.log('Prepared isolated React build: original Dashboard widgets with D1 source evidence, Products, POS, and two-tab Reports; unverified figures unavailable.');
