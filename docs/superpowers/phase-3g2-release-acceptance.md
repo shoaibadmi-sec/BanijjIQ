@@ -5,7 +5,7 @@
 
 ## 1. Independent read-only liability reconciliation
 
-After applying migrations 0039–0042 **only to an isolated review D1**, authenticate as an ERP administrator and call:
+After applying migrations 0039–0041 **only to an isolated review D1**, authenticate as an ERP administrator and call. The review report uses bounded independent read-only SELECTs, not a new schema migration:
 
 ```text
 GET /api/pos/store-credit/reconciliation
