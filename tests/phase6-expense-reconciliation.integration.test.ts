@@ -138,3 +138,29 @@ test('6F cash expense and bank expense never mix drawer and bank book',async()=>
   assert.equal(summary.summary.cashOut,25);
  }finally{f.db.close();}
 });
+
+test('6F role-gated expense API denies posting, correction and cancellation to a reader',async()=>{
+ const f=fixture();try{
+  const {createHash}=await import('node:crypto');
+  const {handleApiRequest}=await import('../server/core/handler.ts');
+  const token='P6F-expense-reader-token-2026';
+  f.db.native.prepare("INSERT INTO app_roles(role_name,permissions_json) VALUES ('P6F-READER',?)")
+   .run(JSON.stringify({expense:{view:true,add:false,edit:false}}));
+  f.db.native.prepare("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES ('P6F-READER','Expense Reader','01000008696','fixture','fixture','P6F-READER','Active','Fixture')").run();
+  f.db.native.prepare("INSERT INTO auth_sessions(session_id,user_id,token_hash,expires_at) VALUES ('P6F-AUTH','P6F-READER',?,datetime('now','+2 hours'))")
+   .run(createHash('sha256').update(token).digest('base64'));
+  async function req(method:string,path:string,body?:any,auth=token){
+   return handleApiRequest(new Request('https://test.invalid'+path,{
+     method,headers:{authorization:'Bearer '+auth,'content-type':'application/json'},
+     body:body?JSON.stringify(body):undefined
+   }),f.db);
+  }
+  assert.equal((await req('GET','/api/expenses')).status,200);
+  assert.equal((await req('POST','/api/expenses',payload())).status,403);
+  assert.equal((await req('PUT','/api/expenses/NOT-FOUND',payload())).status,403);
+  assert.equal((await req('POST','/api/expenses/NOT-FOUND/cancel',{reason:'Reversal after approval'})).status,403);
+  assert.equal((await req('GET','/api/bank/reconciliation')).status,403);
+  assert.equal((await req('POST','/api/expenses',payload(),'invalid-token')).status,401);
+  assert.equal(f.expenses().length,0);
+ }finally{f.db.close();}
+});
