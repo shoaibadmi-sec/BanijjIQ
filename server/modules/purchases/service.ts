@@ -298,16 +298,18 @@ export async function getPurchases(db: SherDatabase): Promise<Response> {
   const ids = rows.map((p) => p.purchaseId);
   const placeholders = ids.map(() => '?').join(',');
   const items = await db.prepare(`
-    SELECT purchase_id AS purchaseId,
-           product_id AS productId,
-           product_name AS productName,
-           quantity,
-           purchase_price AS unitPrice,
-           purchase_price AS purchasePrice,
-           line_total AS lineTotal
-    FROM purchase_items
-    WHERE purchase_id IN (${placeholders})
-    ORDER BY id ASC
+    SELECT pi.purchase_id AS purchaseId,pi.product_id AS productId,
+           pi.product_name AS productName,pi.quantity,
+           pi.purchase_price AS unitPrice,pi.purchase_price AS purchasePrice,
+           pi.line_total AS lineTotal,
+           COALESCE(u.description,'') AS unitDescription,
+           u.profile_revision AS unitProfileRevision,
+           COALESCE(u.price_unit,'') AS purchasePriceUnit,
+           u.entered_unit_price AS enteredUnitPrice
+    FROM purchase_items pi
+    LEFT JOIN purchase_unit_snapshots u ON u.purchase_id=pi.purchase_id AND u.product_id=pi.product_id
+    WHERE pi.purchase_id IN (${placeholders})
+    ORDER BY pi.id ASC
   `).bind(...ids).all();
 
   const grouped = new Map<string, unknown[]>();
@@ -334,13 +336,33 @@ export async function getPurchaseDetail(db: SherDatabase, purchaseId: string): P
   `).bind(purchaseId).first<Record<string, unknown>>();
   if (!one) return error('Purchase not found.');
   const items = await db.prepare(`
-    SELECT product_id AS productId, product_name AS productName, quantity, purchase_price AS unitPrice,
-           purchase_price AS purchasePrice, line_total AS lineTotal
-    FROM purchase_items
-    WHERE purchase_id = ?
-    ORDER BY id ASC
+    SELECT pi.product_id AS productId,pi.product_name AS productName,
+           pi.quantity,pi.purchase_price AS unitPrice,pi.purchase_price AS purchasePrice,
+           pi.line_total AS lineTotal,
+           u.description AS unitDescription,u.profile_revision AS unitProfileRevision,
+           u.profile_json AS unitProfileJson,u.quantities_json AS unitQuantitiesJson,
+           u.price_unit AS purchasePriceUnit,u.entered_unit_price AS enteredUnitPrice,
+           u.base_unit_cost AS baseUnitCost,u.lot_id AS sourceLotId
+    FROM purchase_items pi
+    LEFT JOIN purchase_unit_snapshots u ON u.purchase_id=pi.purchase_id AND u.product_id=pi.product_id
+    WHERE pi.purchase_id = ?
+    ORDER BY pi.id ASC
   `).bind(purchaseId).all();
-  return json({ ok: true, purchase: { ...one, items: items.results ?? [] } });
+  const lines=(items.results||[]).map((row:any)=>{
+    const {unitProfileJson,unitQuantitiesJson,...publicRow}=row;
+    return {...publicRow,unitSnapshot:unitProfileJson&&unitQuantitiesJson
+      ?{revision:row.unitProfileRevision,profile:JSON.parse(unitProfileJson),
+        quantities:JSON.parse(unitQuantitiesJson),priceUnit:row.purchasePriceUnit,
+        enteredUnitPrice:row.enteredUnitPrice,baseUnitCost:row.baseUnitCost,
+        lotId:row.sourceLotId,description:row.unitDescription}:null};
+  });
+  return json({ok:true,purchase:{...one,items:lines}});
+}
+
+async function hasMixedUnitPurchase(db:SherDatabase,purchaseId:string):Promise<boolean>{
+ const row=await db.prepare('SELECT 1 AS yes FROM purchase_unit_snapshots WHERE purchase_id=? LIMIT 1')
+  .bind(purchaseId).first();
+ return !!row;
 }
 
 async function hasPurchaseReturn(db: SherDatabase, purchaseId: string): Promise<boolean> {
@@ -392,6 +414,8 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (!reason) return error('Enter a reason for this update.');
   const existing = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!existing) return error('Purchase not found.');
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return error('Mixed-unit purchase edits are locked until historical cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has Purchase Return records and can no longer be updated. Use Purchase Return for further corrections.');
   const trackedPurchase = await db.prepare(`SELECT 1 AS x FROM purchase_items pi JOIN products p ON p.product_id=pi.product_id WHERE pi.purchase_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(purchaseId).first();
   if (trackedPurchase) return error('A purchase containing Serial / Expiry tracked products cannot be edited. Use Purchase Return and create a new purchase for corrections.');
@@ -485,6 +509,8 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   if (!reason) return error('Enter a reason for deleting this purchase.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return error('Mixed-unit purchase delete is locked until cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has return records and cannot be deleted.');
   const trackedPurchase = await db.prepare(`SELECT 1 AS x FROM purchase_items pi JOIN products p ON p.product_id=pi.product_id WHERE pi.purchase_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(purchaseId).first();
   if (trackedPurchase) return error('A purchase containing Serial / Expiry tracked products cannot be deleted. Use Purchase Return so tracking history remains intact.');
@@ -610,6 +636,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (returnDate < today && !cleanText(input.backdatedReason)) return error('Reason for backdating is required.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if(await hasMixedUnitPurchase(db,purchaseId))
+    return error('Mixed-unit purchase return requires original-cost allocation (Phase 4C).',409);
   const availableResp = await getPurchaseForReturn(db, purchaseId);
   const availableData = await availableResp.clone().json() as any;
   if (!availableData.ok) return availableResp;

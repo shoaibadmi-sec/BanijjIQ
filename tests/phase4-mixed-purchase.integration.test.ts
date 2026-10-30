@@ -94,6 +94,24 @@ test('4B isolated full-migration accounting and revision guard',async()=>{
   assert.equal(snapshot().payable,2830);
   const ledger=sql('SELECT debit,balance FROM supplier_ledger WHERE reference=?',posted.purchaseId);
   assert.deepEqual([ledger.debit,ledger.balance],[2830,2830]);
+  const history=await api('GET','/api/purchases/'+posted.purchaseId);
+  assert.equal(history.status,200,JSON.stringify(history));
+  assert.equal(history.purchase.items[0].unitSnapshot.description,'1 CT 2 BX 3 PCS');
+  assert.equal(history.purchase.items[0].unitSnapshot.lotId,lot.lot_id);
+  const list=await api('GET','/api/purchases');
+  assert.equal(list.status,200);
+  assert.equal(list.purchases[0].items[0].unitDescription,'1 CT 2 BX 3 PCS');
+  const blockedEdit=await api('PUT','/api/purchases/'+posted.purchaseId,{
+   ...payload,reason:'Unsafe modification'});
+  assert.equal(blockedEdit.status,409);
+  const blockedDelete=await api('DELETE','/api/purchases/'+posted.purchaseId,{reason:'Unsafe delete'});
+  assert.equal(blockedDelete.status,409);
+  const blockedReturn=await api('POST','/api/purchase-returns',{
+   purchaseId:posted.purchaseId,refundMethod:'Supplier Credit',reason:'Unsafe return',
+   items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(blockedReturn.status,409);
+  assert.deepEqual(snapshot(),{stock:283,purchases:1,lots:1,payable:2830});
   const updated=await api('PUT','/api/products/'+id+'/unit-profile',{
    expectedRevision:1,units:units.map(u=>u.unit==='Carton'?{...u,containsNext:10}:u)});
   assert.equal(updated.status,200,JSON.stringify(updated));
