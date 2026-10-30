@@ -268,6 +268,27 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         tenders.map(t=>[t.method,t.amountCents,t.bankAccountId||'']));
       assert.equal(previewResponse.preview.refundCents,
         profile==='cash-credit'?2000:3000);
+      // Full Phase 3 accounting acceptance: a preflight must NOT approve
+      // an invoice whose immutable posting proof the POST would later reject.
+      // This guards the entire UI "Confirm" workflow from misleading Cash payout.
+      const snapshot=row('SELECT discount,subtotal FROM sales WHERE invoice_id=?',saleId);
+      db.native.prepare('UPDATE sales SET discount=1 WHERE invoice_id=?').run(saleId);
+      const discounted=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+      assert.equal(discounted.preview.eligible,false,
+        'discounted/mutated source must be rejected BEFORE confirming full refund');
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      db.native.prepare('UPDATE sales SET discount=?,subtotal=? WHERE invoice_id=?')
+        .run(snapshot.discount,snapshot.subtotal,saleId);
+
+      const item=row('SELECT id,unit_price FROM sale_items WHERE invoice_id=?',saleId);
+      db.native.prepare('UPDATE sale_items SET unit_price=unit_price+1 WHERE id=?').run(item.id);
+      const alteredPrice=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+      assert.equal(alteredPrice.preview.eligible,false,
+        'original line price mismatch must fail closed before refund approval');
+      db.native.prepare('UPDATE sale_items SET unit_price=? WHERE id=?')
+        .run(item.unit_price,item.id);
+      assert.equal((await api('GET','/api/sales-management/'+saleId+'/split-reversal')).preview.eligible,true,
+        'verified original source must remain eligible after fixture restoration');
       // An inactive original bank account must block refund rather than
       // redirecting funds to a different source or rewriting history.
       if(bank){
