@@ -190,6 +190,42 @@ test('Store Credit is redeemed once as a non-cash full sale; no cash, bank or A/
   const reconciledAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
   assert.equal(reconciledAccount.blocked,false);
   assert.equal(reconciledAccount.availableCents,1000);
+  // An unjournaled historical Store Credit return must not become spendable
+  // just because this customer also has a valid newer liability balance.
+  // The read-only legacy view must expose it for explicit reconciliation,
+  // while checkout must reject it without reserving the request key.
+  // This synthetic legacy record is removed only from this in-memory fixture.
+  db.native.prepare(
+   "INSERT INTO sales_returns "+
+   "(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) "+
+   "VALUES ('LEGACY-UNJOURNALED-1','2026-10-29',?,'CR-CUSTOMER','Credit Redeemer','01000009702','Store Credit',10,'Historical credit awaiting reconciliation')"
+  ).run(sourceId);
+  assert.equal(row("SELECT COUNT(*) n FROM store_credit_legacy_unreconciled WHERE return_id='LEGACY-UNJOURNALED-1'").n,1);
+  const legacyCreditAccount=await api('GET','/api/pos/store-credit/CR-CUSTOMER');
+  assert.equal(legacyCreditAccount.ok,true,JSON.stringify(legacyCreditAccount));
+  assert.equal(legacyCreditAccount.availableCents,1000);
+  assert.equal(legacyCreditAccount.blocked,true);
+  const beforeUnreconciled={
+   sales:row('SELECT COUNT(*) n FROM sales').n,
+   stock:row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,
+   journal:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+   cash:row('SELECT COUNT(*) n FROM cash_book').n,
+   bank:row('SELECT COUNT(*) n FROM bank_book').n
+  };
+  const unreconciledAttempt=await api('POST','/api/pos/sales',{
+   ...saleInput,clientRequestId:'credit-legacy-return-denial-0001',
+   items:[{productId:id,qty:1,unitPrice:10}]
+  });
+  assert.equal(unreconciledAttempt.status,409,JSON.stringify(unreconciledAttempt));
+  assert.equal(row('SELECT COUNT(*) n FROM sales').n,beforeUnreconciled.sales);
+  assert.equal(row('SELECT current_stock FROM products WHERE product_id=?',id).current_stock,beforeUnreconciled.stock);
+  assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,beforeUnreconciled.journal);
+  assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,beforeUnreconciled.cash);
+  assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,beforeUnreconciled.bank);
+  assert.equal(row("SELECT COUNT(*) n FROM pos_sale_requests WHERE request_id='credit-legacy-return-denial-0001'").n,0);
+  db.native.prepare("DELETE FROM sales_returns WHERE return_id='LEGACY-UNJOURNALED-1'").run();
+  assert.equal((await api('GET','/api/pos/store-credit/CR-CUSTOMER')).blocked,false);
+
   // A disabled customer must not spend a valid positive liability.
   // Reuse one contender's request key to prove a failed checkout does not
   // reserve the key before the customer is reactivated.
