@@ -346,6 +346,27 @@ try{
       await ctx.close();
     });
   }
+  for(const width of [390,768,1440]){
+    await withCheck('reports search resets when selecting a different report '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
+      const search=page.getByRole('textbox',{name:'Search records'});
+      await search.fill('Investment');
+      assert.equal(await search.inputValue(),'Investment');
+      const nav=page.getByRole('navigation',{name:'Report library'});
+      await nav.getByRole('button',{name:/Expenses/i}).first().click();
+      await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
+      assert.equal(await search.inputValue(),'','switching report must not preserve a previous report-only record search');
+      const reportCalls=calls.filter(x=>x.method==='GET'&&x.path==='/api/reports/v2/rows');
+      assert.ok(reportCalls.length>0);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await ctx.close();
+    });
+  }
   for(const width of [390,768,1024,1440]){
     for(const theme of ['light','dark']){
       await withCheck('products '+width+' '+theme,async()=>{
