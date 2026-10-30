@@ -3,6 +3,7 @@ import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 import { patchSourceDaybook, patchSourceDaybookActions, patchSourceDaybookDetails } from './preview/patch-source-daybook.mjs';
+import { patchSourceFinance } from './preview/patch-source-finance.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -46,6 +47,9 @@ const daybookActionPath=join(web,'src/components/daybook/DaybookActions.tsx');
 writeFileSync(daybookActionPath,patchSourceDaybookActions(readFileSync(daybookActionPath,'utf8')));
 const daybookDetailsPath=join(web,'src/components/daybook/TransactionDetailsDialog.tsx');
 writeFileSync(daybookDetailsPath,patchSourceDaybookDetails(readFileSync(daybookDetailsPath,'utf8')));
+const financeSourcePath=join(web,'src/pages/Finance.tsx');
+writeFileSync(financeSourcePath,patchSourceFinance(readFileSync(financeSourcePath,'utf8')));
+
 
 
 
@@ -68,7 +72,6 @@ app = app.replace(importAnchor, [
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
   "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
-  "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
   "const LiveExpenses = lazy(() => import('./integration/LiveExpensesPage').then(module => ({ default: module.LiveExpensesPage })));",
   "const LivePurchases = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchasesPage })));",
   "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
@@ -80,8 +83,6 @@ app = app.replace(productsAnchor,
   '<Route path="products" element={<Products />} />\n          <Route path="products-design-preview" element={<Products />} />\n          <Route path="live-products" element={<LiveProducts />} />');
 app = app.replace(reportsAnchor,
   '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
-app = app.replace(financeAnchor,
-  '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
 app = app.replace(expensesAnchor,
   '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
 app = app.replace(purchasesAnchor,
