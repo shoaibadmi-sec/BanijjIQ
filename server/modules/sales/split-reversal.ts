@@ -166,7 +166,12 @@ export async function postSplitSaleReversalRoute(
 ):Promise<Response>{
   if(!(await hasModulePermission(db,user,'returns','add')))
     return respond({ok:false,error:'Sales Return permission required.'},403);
-  const reason=String(input?.reason||'').trim();
+  // This endpoint always refunds the ENTIRE invoice. Ignore no unknown body
+  // fields: a client requesting one item must never silently refund everything.
+  if(!input||typeof input!=='object'||Array.isArray(input)||
+    Object.keys(input).some(key=>key!=='reason'))
+    return respond({ok:false,error:'Full split refund accepts only a reason; partial refunds are not enabled.'},400);
+  const reason=String(input.reason||'').trim();
   if(reason.length<8||reason.length>500)
     return respond({ok:false,error:'Give an 8–500 character refund reason.'},400);
   const preview=await (await getSplitSaleReversalPreviewRoute(db,id)).json() as any;
