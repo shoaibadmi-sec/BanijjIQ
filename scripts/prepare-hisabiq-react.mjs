@@ -44,15 +44,17 @@ writeFileSync(reportsPagePath,patchReportsPage(readFileSync(reportsPagePath,'utf
 const appPath = join(web, 'src/App.tsx');
 let app = readFileSync(appPath, 'utf8');
 const importAnchor = "const Dashboard = lazy(() => import('./pages/Dashboard')";
+const settingsRouteAnchor = '<Route path="settings/:section" element={<TenantSettingsPage />} />';
 const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
 const reportsAnchor = '<Route path="reports" element={<Reports />} />';
 const purchasesAnchor = '<Route path="purchases" element={<Purchases />} />';
 const purchaseEditorAnchor = '<Route path="purchases/new" element={<PurchaseEditor />} />';
-if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, purchaseEditorAnchor].every(anchor => app.includes(anchor))) {
+if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, purchasesAnchor, purchaseEditorAnchor, settingsRouteAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
+  "const LiveBusinessSettingsPage = lazy(() => import('./integration/LiveBusinessSettingsPage').then(module => ({ default: module.LiveBusinessSettingsPage })));",
   "const LiveProducts = lazy(() => import('./integration/LiveProductsPage').then(module => ({ default: module.LiveProductsPage })));",
   "const LivePos = lazy(() => import('./integration/LivePosPage').then(module => ({ default: module.LivePosPage })));",
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
@@ -61,6 +63,9 @@ app = app.replace(importAnchor, [
   "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
   importAnchor
 ].join('\n'));
+// Keep the pinned Settings design and submodule untouched; replace only live Business route.
+app = app.replace(settingsRouteAnchor,
+  ['<Route path="settings/business" element={<LiveBusinessSettingsPage />} />', settingsRouteAnchor].join('\n'));
 app = app.replace(posAnchor,
   '<Route path="pos" element={<LivePos />} />\n          <Route path="live-sales-returns" element={<LiveSalesReturns />} />\n          <Route path="pos-design-preview" element={<Pos />} />');
 app = app.replace(productsAnchor,
