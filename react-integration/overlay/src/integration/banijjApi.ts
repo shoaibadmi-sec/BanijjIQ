@@ -215,7 +215,7 @@ export const getSalesReturnHistory = () =>
 
 /** Phase 5 Reports: server-only source records; no demo report stores. */
 export type LiveReportStatus = 'ready'|'needs-review'|'incomplete'|'unavailable';
-export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'payables'|'profit'|'cash'|'expenses'|'audit';
+export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'payables'|'profit'|'cash'|'bank'|'finance'|'expenses'|'audit';
 export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;group:string;status:LiveReportStatus;reason:string}
 export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;
