@@ -90,3 +90,16 @@ test('non-zero master balance without ledger proof stays unavailable; zero is no
   assert.equal(metric(result,'aging0to30').valueMinor,null);
  }finally{db.close();}
 });
+
+test('search-filtered stock rows do not report whole-business inventory as selected-product total',async()=>{
+ const db=fixture();
+ try{
+  db.native.prepare("INSERT INTO products(product_id,product_name,category,unit,current_stock) VALUES ('SF-1','One Bolt','Hardware','Pcs',1),('SF-2','Another Bolt','Hardware','Pcs',1)").run();
+  db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,original_quantity,remaining_quantity,unit_cost) VALUES ('SL-ONE','SF-1','PURCHASE',1,1,20),('SL-TWO','SF-2','PURCHASE',1,1,30)").run();
+  const filtered=await readStockDues(db,query('stock','One'));
+  assert.equal(filtered.totalRows,1);
+  assert.equal(filtered.rows[0].amountMinor,2000);
+  assert.equal(metric(filtered,'inventoryValue').valueMinor,null,'a selected product cannot show full-business stock value');
+  assert.match(metric(filtered,'inventoryValue').reason,/filter|search/i);
+ }finally{db.close();}
+});
