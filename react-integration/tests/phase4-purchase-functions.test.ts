@@ -123,3 +123,64 @@ test('4I-B mixed-unit paid purchases stay locked; due remains valid',()=>{
  assert.throws(()=>make(supplier,[mixed],{method:'Cash',amount:20,activeSession:true},
   '123e4567-e89b-42d3-a456-426614174000',''),/mixed.unit|due/i);
 });
+
+
+test('4I-C4 paid Cash refund posts immutable original price, available quantity, and unique receipt ID',()=>{
+ const make=(purchaseApi as unknown as {validatePaidPurchaseRefund:Function}).validatePaidPurchaseRefund;
+ assert.equal(typeof make,'function','C4 paid refund validator must exist');
+ const purchase={purchaseId:'PUR-PAID',supplierId:'SUP-TEST',paymentMethod:'Cash',
+  bankAccountId:'',paidAmount:100,grandTotal:100,dueAmount:0,discount:0,returnedAmount:0};
+ const lines=[{productId:'PRD-1',productName:'Bolts',boughtQty:2,unitPrice:50,
+  previouslyReturnedQty:0,availableQty:2,trackSerial:0,trackExpiry:0}];
+ const settlement={supplier:{id:'SUP-TEST',currentDue:0},ledgerDue:0,
+  needsReconciliation:false,activeSession:true,bankAccounts:[]};
+ const requestId='123e4567-e89b-42d3-a456-426614174002';
+ assert.deepEqual(make(purchase,lines,settlement,{ 'PRD-1':1},'Damaged items',requestId),{
+  purchaseId:'PUR-PAID',refundMethod:'Cash',bankAccountId:'',clientRequestId:requestId,
+  reason:'Damaged items',items:[{productId:'PRD-1',qty:1,unitPrice:50}]
+ });
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-1':3},'Damaged',requestId),/available|quantity/i);
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-1':1.00001},'Damaged',requestId),/quantity|decimals/i);
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-1':0},'Damaged',requestId),/product|quantity/i);
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-2':1},'Damaged',requestId),/product|source/i);
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-1':1},'',requestId),/reason/i);
+ assert.throws(()=>make(purchase,lines,settlement,{'PRD-1':1},'Damaged','bad-key'),/request ID/i);
+ assert.throws(()=>make({...purchase,dueAmount:60,paidAmount:40},lines,settlement,
+  {'PRD-1':1},'Damaged',requestId),/fully paid/i);
+ assert.throws(()=>make({...purchase,discount:1},lines,settlement,
+  {'PRD-1':1},'Damaged',requestId),/undiscounted/i);
+ assert.throws(()=>make(purchase,lines,{...settlement,activeSession:false},
+  {'PRD-1':1},'Damaged',requestId),/session/i);
+ assert.throws(()=>make(purchase,lines,{...settlement,needsReconciliation:true},
+  {'PRD-1':1},'Damaged',requestId),/reconcil/i);
+ assert.throws(()=>make(purchase,[{...lines[0],trackExpiry:1}],settlement,
+  {'PRD-1':1},'Damaged',requestId),/tracked|expiry/i);
+ assert.throws(()=>make(purchase,[{...lines[0],unitSnapshot:{}}],settlement,
+  {'PRD-1':1},'Damaged',requestId),/mixed.unit/i);
+});
+test('4I-C4 Bank and Mobile refund only accept matching original payment account, not arbitrary account',()=>{
+ const make=(purchaseApi as unknown as {validatePaidPurchaseRefund:Function}).validatePaidPurchaseRefund;
+ const base={purchaseId:'PUR-BANK',supplierId:'SUP-TEST',paymentMethod:'Bank',
+  bankAccountId:'BANK-ORIGINAL',paidAmount:100,grandTotal:100,dueAmount:0,discount:0,returnedAmount:40};
+ const lines=[{productId:'PRD-1',productName:'Bolts',boughtQty:2,unitPrice:50,
+  previouslyReturnedQty:0.8,availableQty:1.2,trackSerial:0,trackExpiry:0}];
+ const settlement={supplier:{id:'SUP-TEST',currentDue:0},ledgerDue:0,
+  needsReconciliation:false,activeSession:true,bankAccounts:[
+    {id:'BANK-ORIGINAL',type:'Bank',name:'Bank 1',currentBalance:100},
+    {id:'BANK-OTHER',type:'Bank',name:'Bank 2',currentBalance:100},
+    {id:'MOBILE-ORIGINAL',type:'Mobile Banking',name:'Mobile',currentBalance:100}
+  ]};
+ const requestId='123e4567-e89b-42d3-a456-426614174003';
+ const value=make(base,lines,settlement,{'PRD-1':1},'Wrong shipment',requestId);
+ assert.equal(value.refundMethod,'Bank');assert.equal(value.bankAccountId,'BANK-ORIGINAL');
+ assert.equal(value.items[0].unitPrice,50);
+ assert.equal(value.items[0].qty,1);
+ assert.throws(()=>make({...base,bankAccountId:'BANK-MISSING'},lines,settlement,
+  {'PRD-1':1},'Wrong shipment',requestId),/original.*account/i);
+ assert.throws(()=>make({...base,paymentMethod:'Mobile Banking'},lines,settlement,
+  {'PRD-1':1},'Wrong shipment',requestId),/original.*account/i);
+ assert.throws(()=>make({...base,returnedAmount:80},lines,settlement,
+  {'PRD-1':1},'Wrong shipment',requestId),/remaining.*refund/i);
+ assert.throws(()=>make(base,lines,{...settlement,bankAccounts:[]},
+  {'PRD-1':1},'Wrong shipment',requestId),/original.*account/i);
+});
