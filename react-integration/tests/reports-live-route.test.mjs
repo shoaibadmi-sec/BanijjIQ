@@ -35,3 +35,12 @@ test('current stock and dues appear inside Dashboard, not as extra main tabs',()
  assert.match(source,/metric\?\.status==='needs-review'/);
  assert.match(source,/metric\?\.valueMinor!==null/);
 });
+
+test('live stock/dues tables label current values and show row reconciliation status',()=>{
+ const source=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(source,/const currentReport=key==='stock'\|\|key==='receivables'\|\|key==='payables'/);
+ assert.match(source,/row\.status==='incomplete'/);
+ assert.match(source,/title=\{row\.reason\}/);
+ assert.match(source,/Current due/);
+ assert.match(source,/Current FIFO value/);
+});
