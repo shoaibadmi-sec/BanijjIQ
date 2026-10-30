@@ -224,7 +224,8 @@ test('real demo data seeding requires an explicit isolated-preview approval and 
   assert.ok(client.includes('https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev'));
   assert.ok(client.includes('HISABIQ_DEMO_SEED_CONFIRM'));
   assert.ok(!client.includes('shererp-new'));
-  assert.ok(plan.includes('Preview database already contains live records'));
+  assert.ok(plan.includes('Preview database already contains [DEMO] seed data'));
+  assert.ok(plan.includes("value.startsWith('[DEMO] ')"));
   assert.ok(plan.includes("await safe('POST','/api/pos/sales'"));
   assert.ok(plan.includes("await safe('POST','/api/purchases'"));
 });
