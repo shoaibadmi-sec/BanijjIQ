@@ -3,6 +3,7 @@ import type { LiveReportQuery, LiveReportPage, LiveReportRow } from './types.js'
 import { liveReportCatalog } from './catalog.js';
 import { LiveReportQueryError, parseLiveReportQuery, parseLiveReportRange } from './query.js';
 import { readSalesProfit } from './sales-profit.js';
+import { readStockDues } from './stock-dues.js';
 
 function json(data:unknown,status=200):Response {
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
@@ -53,7 +54,9 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
     if(path==='/api/reports/v2/rows') {
       const query=parseLiveReportQuery(url);
       return json(query.report==='sales'?await salesRows(db,query):
-        query.report==='profit'?await readSalesProfit(db,query):unavailable(query));
+        query.report==='profit'?await readSalesProfit(db,query):
+        (query.report==='stock'||query.report==='receivables'||query.report==='payables')?
+          await readStockDues(db,query):unavailable(query));
     }
     if(path==='/api/reports/v2/summary') {
       const query=parseLiveReportQuery(url);
