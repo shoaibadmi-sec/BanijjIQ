@@ -277,3 +277,29 @@ export const getBankReconciliation = () =>
 export const getFinanceBootstrap = () =>
   request<FinanceBootstrap>('/api/finance/bootstrap');
 
+
+export interface LiveBankAccount {
+  id:string; name:string; accountType:'Bank'|'Mobile Banking';
+  currentBalance:number; status:string;
+}
+export interface LiveBankTransfer {
+  transferId:string; date:string; fromAccountId:string; toAccountId:string;
+  fromAccountName:string; toAccountName:string; amount:number; notes:string;
+  clientRequestId:string; reversedAt:string; reversalReason:string;
+}
+export interface LiveBankTransferInput {
+  fromAccountId:string; toAccountId:string; amount:number;
+  notes:string; clientRequestId:string;
+}
+export const getBankAccounts = () =>
+  request<{ok:true;bankAccounts:LiveBankAccount[];currencySymbol:string}>('/api/bank/accounts');
+export const getBankTransfers = () =>
+  request<{ok:true;transfers:LiveBankTransfer[]}>('/api/bank/transfers');
+export const postBankTransfer = (payload:LiveBankTransferInput) =>
+  request<{ok:true;id:string;replayed:boolean}>('/api/bank/transfers',{
+    method:'POST',body:JSON.stringify(payload)
+  });
+export const reverseBankTransfer = (id:string,reason:string) =>
+  request<{ok:true;id:string;reversed:boolean}>('/api/bank/transfers/'+encodeURIComponent(id)+'/reverse',{
+    method:'POST',body:JSON.stringify({reason})
+  });
