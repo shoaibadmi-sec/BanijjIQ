@@ -494,6 +494,33 @@ try{
     await ctx.close();
   });
 
+  // Phase 5H1: the production Reports URL must preserve the pinned HisabIQ
+  // layout. All money shown here comes from the authenticated v2 API.
+  for(const width of [390,768,1440]){
+    await withCheck('original HisabIQ Reports UI with live D1 adapter '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try {
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        await page.getByText('INV-LIVE-REPORT-001').first().waitFor({timeout:10000});
+        assert.equal(await page.locator('[data-live-reports]').count(),0,
+          'production Reports must not render the custom live Reports layout');
+        assert.ok(await page.locator('[data-report-workspace] table').count()>0,
+          'native HisabIQ ReportResults table remains visible');
+        assert.ok(calls.some(call=>call.method==='GET'&&call.path==='/api/reports/v2/rows'),
+          'native report must use real backend API');
+        assert.ok(!calls.some(call=>call.method==='POST'&&call.path.startsWith('/api/reports')));
+        assert.equal(await page.getByText('Demo data',{exact:true}).count(),0,
+          'never label live source rows as demo or display preview-store totals');
+        await inspectLayout(page,'native-reports-'+width);
+        await screenshot(page,'native-reports-'+width);
+        await audit(page,'native-reports-'+width);
+      }finally{await ctx.close();}
+    });
+  }
   for(const width of [390,768,1440]){
     await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
@@ -501,7 +528,7 @@ try{
       await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.locator('[data-live-reports]').waitFor({timeout:10000});
       await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
       const nav=page.locator('[data-live-reports] [role="tab"]');
@@ -526,12 +553,12 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
       await page.getByText('STK-LIVE-001').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Current FIFO value'}).waitFor();
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await screenshot(page,'reports-stock-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
       await page.getByText('SUP-LIVE-001').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Current due'}).waitFor();
       await page.getByText('Needs checking').first().waitFor();
@@ -552,18 +579,18 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
       await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Money in'}).waitFor();
       await page.getByRole('columnheader',{name:'Money out'}).waitFor();
       await page.locator('[data-report-metric="externalNetMovement"]').getByText('৳450').waitFor();
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await screenshot(page,'reports-money-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
       await page.getByText('FIN-LIVE-001').waitFor({timeout:10000});
       await page.locator('[data-report-metric="ownerCapitalIn"]').getByText('৳300').waitFor();
       await screenshot(page,'reports-finance-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
       await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
       await page.locator('[data-report-metric="operatingExpenses"]').getByText('৳50').waitFor();
       await inspectLayout(page,'reports-expense-'+width);
@@ -583,7 +610,7 @@ try{
       }}})}));
     await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
     const page=await ctx.newPage();
-    await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+    await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
     await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
     assert.equal(await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).count(),0,
       'report-only users must not get an invoice action without POS view');
@@ -596,7 +623,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.getByRole('textbox',{name:'Search records'}).fill('CI-PAGE');
       await page.getByText('INV-CI-0001').waitFor({timeout:10000});
       assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
@@ -629,7 +656,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).click();
       const modal=page.getByRole('dialog',{name:'Recorded invoice'});
       await modal.getByText('Real API Mock Buyer').waitFor({timeout:10000});
@@ -654,7 +681,7 @@ try{
         const url=new URL(request.url());
         if(url.pathname==='/api/reports/v2/rows')queried.push(url.searchParams.get('report'));
       });
-      await page.goto(base+'/#/app/reports?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
       await page.getByText(/Product-level FIFO allocations/).waitFor({timeout:10000});
       assert.ok(queried.includes('product-profit'),'product gross profit must have its own backend report ID');
       assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
@@ -674,7 +701,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
       await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
       const search=page.getByRole('textbox',{name:'Search records'});
       await search.fill('Investment');
