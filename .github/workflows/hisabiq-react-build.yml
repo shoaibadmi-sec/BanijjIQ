@@ -81,6 +81,7 @@ jobs:
       - name: Test real Cloudflare Worker with isolated local D1
         run: |
           node d1-checks/run.mjs
+          node d1-checks/historical-credit.mjs
           node d1-checks/phase12.mjs
           node d1-checks/phase13-browser.mjs
       - name: Upload local Worker/D1 SQL reconciliation and logs
