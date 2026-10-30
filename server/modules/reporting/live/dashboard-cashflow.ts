@@ -6,8 +6,8 @@ import type { LiveReportQuery } from './types.js';
 type BookEntry={date:string;type:string;debit:number;credit:number};
 type ChartPoint={month:string;inMinor:number|null;outMinor:number|null;status:'needs-review'|'incomplete';reason:string};
 const internal=new Set(['Opening Balance','Transfer In','Transfer Out','Cash Deposit','Cash Withdrawal']);
-const minor=(value:number)=>Number.isFinite(value)&&value>=0&&Number.isSafeInteger(Math.round(value*100))
-  ?Math.round(value*100):null;
+const minor=(value:number)=>Number.isFinite(value)&&value>=0&&Number.isSafeInteger(Math.round(value*100))&&
+  Math.abs(value*100-Math.round(value*100))<0.000001?Math.round(value*100):null;
 function dhakaToday(){
  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Dhaka',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
  const get=(name:string)=>parts.find(x=>x.type===name)?.value??'';
