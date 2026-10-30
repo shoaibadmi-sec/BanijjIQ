@@ -127,3 +127,79 @@ test('RBAC: users.delete cannot delete another administrator even with two admin
     })).status, 200);
   } finally { f.db.close(); }
 });
+
+
+test('RBAC: delegated users.edit cannot promote self or another account to a stronger custom role', async () => {
+  const f=await isolatedUsersFixture();
+  try {
+    const privileged=await f.api('POST','/api/roles',{
+      name:'PrivilegedFinance',permissions:{bank:{view:true,add:true},roles:{view:true,edit:true}}
+    },f.adminToken);
+    assert.equal(privileged.status,200,JSON.stringify(privileged));
+    const rows=await f.api('GET','/api/users',undefined,f.adminToken);
+    const self=rows.users.find((u:any)=>u.mobile==='01000002502');
+    assert.ok(self);
+
+    const selfPromotion=await f.api('PUT','/api/users/'+self.id,{
+      name:self.name,mobile:self.mobile,role:'PrivilegedFinance'
+    },f.staffToken);
+    assert.equal(selfPromotion.status,403,JSON.stringify(selfPromotion));
+    const other=await f.api('POST','/api/users',{
+      name:'Existing Stock Clerk',mobile:'01000002504',role:'CashierAdminTools',
+      password:'StockClerk-Password-2026!'
+    },f.adminToken);
+    assert.equal(other.status,200,JSON.stringify(other));
+    const promotion=await f.api('PUT','/api/users/'+other.id,{
+      name:'Existing Stock Clerk',mobile:'01000002504',role:'PrivilegedFinance'
+    },f.staffToken);
+    assert.equal(promotion.status,403,JSON.stringify(promotion));
+
+    const after=await f.api('GET','/api/users',undefined,f.adminToken);
+    assert.equal(after.users.find((u:any)=>u.id===self.id).role,'CashierAdminTools');
+    assert.equal(after.users.find((u:any)=>u.id===other.id).role,'CashierAdminTools');
+    assert.equal((await f.api('GET','/api/auth/me',undefined,f.staffToken)).user.role,'CashierAdminTools');
+    assert.equal((await f.api('GET','/api/bank',undefined,f.staffToken)).status,403,
+      'rejected promotion must not grant bank permissions');
+    const adminChange=await f.api('PUT','/api/users/'+other.id,{
+      name:'Existing Stock Clerk',mobile:'01000002504',role:'PrivilegedFinance'
+    },f.adminToken);
+    assert.equal(adminChange.status,200,JSON.stringify(adminChange));
+  } finally { f.db.close(); }
+});
+
+test('RBAC: delegated users.add cannot create employees with roles beyond their own scope', async () => {
+  const f=await isolatedUsersFixture();
+  try {
+    const creator=await f.api('POST','/api/roles',{
+      name:'LimitedUserCreator',permissions:{users:{view:true,add:true},products:{view:true}}
+    },f.adminToken);
+    assert.equal(creator.status,200,JSON.stringify(creator));
+    const powerful=await f.api('POST','/api/roles',{
+      name:'HighPrivilegeManager',permissions:{settings:{view:true,edit:true},roles:{view:true,edit:true}}
+    },f.adminToken);
+    assert.equal(powerful.status,200,JSON.stringify(powerful));
+    const creatorAccount=await f.api('POST','/api/users',{
+      name:'Delegated Creator',mobile:'01000002505',role:'LimitedUserCreator',
+      password:'UserCreator-Password-2026!'
+    },f.adminToken);
+    assert.equal(creatorAccount.status,200,JSON.stringify(creatorAccount));
+    const login=await f.api('POST','/api/auth/login',{
+      phone:'01000002505',password:'UserCreator-Password-2026!'
+    });
+    assert.equal(login.status,200,JSON.stringify(login));
+    const token=login.token as string;
+    const bad=await f.api('POST','/api/users',{
+      name:'Unauthorized Manager',mobile:'01000002506',role:'HighPrivilegeManager',
+      password:'Unauthorized-Password-2026!'
+    },token);
+    assert.equal(bad.status,403,JSON.stringify(bad));
+    const allowed=await f.api('POST','/api/users',{
+      name:'Legitimate Creator',mobile:'01000002507',role:'LimitedUserCreator',
+      password:'Legitimate-Password-2026!'
+    },token);
+    assert.equal(allowed.status,200,JSON.stringify(allowed));
+    const users=await f.api('GET','/api/users',undefined,f.adminToken);
+    assert.equal(users.users.some((u:any)=>u.mobile==='01000002506'),false);
+    assert.equal(users.users.find((u:any)=>u.mobile==='01000002507')?.role,'LimitedUserCreator');
+  } finally { f.db.close(); }
+});
