@@ -202,3 +202,29 @@ test('6F accounting: expense cancellation rejects a book leg assigned to another
   assert.equal(f.balance('BK-MOBILE'),30);
  }finally{f.db.close();}
 });
+
+test('6F accounting: valid bank-to-cash-to-bank corrections reconcile before cancellation',async()=>{
+ const f=fixture();try{
+  const first=await read(await addExpenseRoute(f.db,payload(30),user));
+  assert.equal(first.status,200);
+  assert.equal(f.balance(),70);
+  const cash=await read(await updateExpenseRoute(f.db,first.id,{...payload(20.375,'Cash'),description:'Reclassified as cash expense'}));
+  assert.equal(cash.status,200,JSON.stringify(cash));
+  assert.equal(f.balance(),100);
+  let session=await read(await getCashSessionSummaryRoute(f.db));
+  assert.equal(session.summary.expectedCash,479.625);
+  const bank=await read(await updateExpenseRoute(f.db,first.id,{...payload(15.125,'Bank'),description:'Final bank classification'}));
+  assert.equal(bank.status,200,JSON.stringify(bank));
+  assert.equal(f.balance(),84.875);
+  session=await read(await getCashSessionSummaryRoute(f.db));
+  assert.equal(session.summary.expectedCash,500);
+  const cancelled=await read(await cancelExpenseRoute(f.db,first.id,'Correctly classified expense was duplicated',user));
+  assert.equal(cancelled.status,200,JSON.stringify(cancelled));
+  assert.equal(f.balance(),100);
+  assert.equal(f.expenses()[0].status,'Cancelled');
+  assert.equal(f.countAudit(),1);
+  const sum=(rows:any[])=>(Math.round(rows.filter(x=>!x.is_deleted).reduce((n,x)=>n+x.debit-x.credit,0)*10000)/10000);
+  assert.equal(sum(f.book('bank_book',first.id)),0);
+  assert.equal(sum(f.book('cash_book',first.id)),0);
+ }finally{f.db.close();}
+});
