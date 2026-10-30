@@ -3,6 +3,7 @@ import type { AuthUser } from '../auth/types.js';
 import type { PurchaseInput, PurchaseReturnInput } from './types.js';
 import type { PurchasePlanActionInput, PurchasePlanSaveInput, PurchasePlannerAnalysisInput } from './planner.types.js';
 import { searchPurchaseSuppliersRoute } from './supplier-search.js';
+import { readUnitProfile } from '../products/unitProfile.service.js';
 import {
   completePurchaseReturnRoute, createPurchase, createSupplierRoute, deletePurchaseRoute,
   deleteSupplierPaymentRoute, deleteSupplierRoute, getPurchaseDetail, getPurchaseForReturn,
@@ -62,6 +63,9 @@ export async function handlePurchasesRoute(db: SherDatabase, request: Request, p
   const plannerOrderMatch = path.match(/^\/api\/purchases\/planner\/orders\/([^/]+)$/);
   if (plannerOrderMatch && request.method === 'GET') return getPurchasePlanOrderRoute(db, decodeURIComponent(plannerOrderMatch[1]));
 
+  const profileMatch=path.match(/^\/api\/purchases\/unit-profile\/([^/]+)$/);
+  if(profileMatch&&request.method==='GET')
+    return readUnitProfile(db,decodeURIComponent(profileMatch[1]));
   if (path === '/api/purchases/supplier-search' && request.method === 'GET') {
     return searchPurchaseSuppliersRoute(db, new URL(request.url).searchParams.get('q') || '');
   }

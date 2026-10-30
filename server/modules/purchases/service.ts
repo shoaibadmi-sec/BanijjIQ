@@ -4,6 +4,7 @@ import { getLedgerPrintHeader, ledgerDateWhere, ledgerHistoryMeta, parseLedgerHi
 import type { ProductRow } from '../products/types.js';
 import type { PurchaseInput, PurchaseLineInput, PurchaseReturnInput } from './types.js';
 import { prepareNewLotTracking, trackingEnabled } from '../products/tracking.service.js';
+import { quotePurchaseUnits, type PurchaseUnitQuote } from './purchaseUnits.js';
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -114,6 +115,10 @@ export async function createSupplierRoute(db: SherDatabase, input: { name?: stri
 export async function createPurchase(db: SherDatabase, input: PurchaseInput, user: AuthUser): Promise<Response> {
   const items = Array.isArray(input.items) ? input.items : [];
   if (items.length === 0) return error('Add at least one product line.');
+  if(items.some(i=>i.unitQuantities!==undefined)&&!cleanText(input.supplierId))
+    return error('Select a saved supplier for mixed-unit purchases.');
+  const lineIds=items.map(i=>cleanText(i.productId));
+  if(new Set(lineIds).size!==lineIds.length)return error('Duplicate product lines must be merged.');
 
   const purchaseDate = cleanText(input.date || input.purchaseDate) || new Date().toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
@@ -134,23 +139,48 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     if (sourceOrder.supplierId !== supplier.supplierId) return error('Purchase supplier must match the supplier purchase order.');
   }
 
-  const normalized: Array<{ product: ProductRow; qty: number; unitPrice: number; lineTotal: number; sellingPrice: number | null; tracking: any }> = [];
+  const normalized: Array<{ product: ProductRow; qty: number; unitPrice: number; lineTotal: number; sellingPrice: number | null; tracking: any; mixed:(PurchaseUnitQuote & {profileJson:string})|null }> = [];
   const stockByProduct = new Map<string, number>();
 
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
     const productId = cleanText(item.productId);
-    const quantity = qty(item.qty ?? item.quantity);
-    const unitPrice = money(item.unitPrice ?? item.purchasePrice);
-    const sellingPrice = item.sellingPrice === undefined || item.sellingPrice === null ? null : money(item.sellingPrice);
-    if (!productId) return error(`Line ${i + 1}: product is required.`);
-    if (quantity <= 0) return error(`Line ${i + 1}: quantity must be greater than zero.`);
-    if (unitPrice < 0) return error(`Line ${i + 1}: unit price must be a valid number.`);
-    const product = await db.prepare(`SELECT * FROM products WHERE product_id = ? AND is_deleted = 0 AND status <> 'Inactive'`).bind(productId).first<ProductRow>();
-    if (!product) return error(`Line ${i + 1}: product no longer exists.`);
-    const already = stockByProduct.get(productId) ?? Number(product.current_stock || 0);
-    stockByProduct.set(productId, Math.round((already + quantity) * 10000) / 10000);
-    normalized.push({ product, qty: quantity, unitPrice, lineTotal: Math.round(quantity * unitPrice * 10000) / 10000, sellingPrice, tracking: item.tracking });
+    if(!productId)return error(`Line ${i+1}: product is required.`);
+    const product=await db.prepare(`SELECT * FROM products WHERE product_id=? AND is_deleted=0 AND status<>'Inactive'`).bind(productId).first<ProductRow>();
+    if(!product)return error(`Line ${i+1}: product no longer exists.`);
+    const mixedInput=item.unitQuantities!==undefined||item.unitProfileRevision!==undefined||item.priceUnit!==undefined;
+    let mixed:(PurchaseUnitQuote & {profileJson:string})|null=null;
+    let quantity:number,unitPrice:number,lineTotal:number;
+    if(mixedInput){
+      const saved=await db.prepare(`SELECT revision,profile_json FROM product_unit_profiles WHERE product_id=?`)
+        .bind(productId).first<{revision:number;profile_json:string}>();
+      if(!saved||saved.revision!==item.unitProfileRevision)
+        return error(`Line ${i+1}: unit profile changed. Refresh and retry.`,409);
+      try{
+        const q=quotePurchaseUnits(JSON.parse(saved.profile_json),saved.revision,
+          item.unitQuantities as Record<string,number>,cleanText(item.priceUnit),item.unitPrice as number);
+        if((item.qty!==undefined||item.quantity!==undefined)&&Number(item.qty??item.quantity)!==q.baseQuantity)
+          return error(`Line ${i+1}: base-unit quantity does not match unit entries.`,409);
+        mixed={...q,profileJson:saved.profile_json};
+        quantity=q.baseQuantity;unitPrice=q.baseUnitCost;lineTotal=q.lineTotal;
+      }catch(e){return error(`Line ${i+1}: `+(e instanceof Error?e.message:'Invalid unit quantities.'));}
+    }else{
+      const q=item.qty??item.quantity,c=item.unitPrice??item.purchasePrice;
+      if(typeof q!=='number'||typeof c!=='number'||!Number.isFinite(q)||!Number.isFinite(c)||
+         q<=0||q>1000000000||c<0||c>100000000||
+         Math.abs(q*10000-Math.round(q*10000))>0.000001||
+         Math.abs(c*10000-Math.round(c*10000))>0.000001)
+        return error(`Line ${i+1}: invalid base-unit quantity or cost.`);
+      quantity=q;unitPrice=c;lineTotal=Math.round(q*c*10000)/10000;
+    }
+    if(!Number.isFinite(lineTotal)||lineTotal>10000000000)
+      return error(`Line ${i+1}: purchase amount exceeds limit.`);
+    const sellingPrice=item.sellingPrice===undefined||item.sellingPrice===null?null:money(item.sellingPrice);
+    const already=stockByProduct.get(productId)??Number(product.current_stock||0);
+    const next=Math.round((already+quantity)*10000)/10000;
+    if(!Number.isFinite(next)||next>1000000000)return error('Resulting product stock exceeds limit.');
+    stockByProduct.set(productId,next);
+    normalized.push({product,qty:quantity,unitPrice,lineTotal,sellingPrice,tracking:item.tracking,mixed});
   }
 
   const subtotal = Math.round(normalized.reduce((sum, item) => sum + item.lineTotal, 0) * 10000) / 10000;
@@ -198,6 +228,14 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
       INSERT INTO stock_lots (lot_id, product_id, source_type, source_ref, original_quantity, remaining_quantity, unit_cost, tracking_required_quantity, tracking_status, created_at)
       VALUES (?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?, ?)
     `).bind(lotId, line.product.product_id, purchaseId, line.qty, line.qty, line.unitPrice, trackingEnabled(line.product) ? Math.max(0, line.qty - prepared.assignedQuantity) : 0, prepared.status, purchaseDate));
+    if(line.mixed)batch.push(db.prepare(`INSERT INTO purchase_unit_snapshots
+      (purchase_id,product_id,lot_id,profile_revision,profile_json,quantities_json,
+       price_unit,entered_unit_price,base_quantity,base_unit_cost,line_total,description)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
+        purchaseId,line.product.product_id,lotId,line.mixed.unitProfileRevision,
+        line.mixed.profileJson,JSON.stringify(line.mixed.unitQuantities),line.mixed.priceUnit,
+        line.mixed.enteredUnitPrice,line.mixed.baseQuantity,line.mixed.baseUnitCost,
+        line.mixed.lineTotal,line.mixed.description));
     batch.push(...prepared.statements);
     batch.push(db.prepare(`
       INSERT INTO stock_movements (movement_id, product_id, movement_type, quantity_in, quantity_out, balance_after, lot_id, note, created_at)

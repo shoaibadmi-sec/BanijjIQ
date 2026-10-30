@@ -9,6 +9,9 @@ export type PurchaseLineInput = {
   purchasePrice?: number;
   sellingPrice?: number;
   tracking?: LotTrackingInput;
+  unitQuantities?: Record<string,number>;
+  unitProfileRevision?: number;
+  priceUnit?: string;
 };
 
 export type PurchaseInput = {
