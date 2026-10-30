@@ -115,3 +115,17 @@ test('customer-filtered profit does not misallocate all business operating expen
   assert.match(result.coverage.reason,/search|expense allocation|filtered/i);
  }finally{db.close();}
 });
+
+test('unposted draft invoices never enter recorded sales or profit',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare(`INSERT INTO sales
+    (invoice_id,sale_date,customer_name,customer_phone,subtotal,discount,grand_total,payment_type,payment_status,status)
+    VALUES ('SALE-DRAFT-001','2026-10-16','Unposted Draft Buyer','01000000128',
+    900,0,900,'Cash','Unpaid','Draft')`).run();
+  const report=await readSalesProfit(db,query('profit'));
+  assert.equal(report.totalRows,1);
+  assert.equal(metric(report,'grossSales').valueMinor,22000);
+  assert.ok(!report.rows.some(x=>x.sourceId==='SALE-DRAFT-001'));
+ }finally{db.close();}
+});
