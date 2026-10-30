@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "backend:dev": "tsx watch server/index.ts",
     "backend:build": "tsc -p tsconfig.server.json",
+    "test:phase6": "node --import tsx --test tests/phase6-*.integration.test.ts && node --test react-integration/tests/phase6-*.test.mjs",
     "backend:start": "node dist-server/index.js",
     "backend:migrate": "tsx server/db/migrate-cli.ts",
     "cloudflare:dev": "wrangler dev",
