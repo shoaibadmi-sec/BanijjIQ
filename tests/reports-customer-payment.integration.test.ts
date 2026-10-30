@@ -89,20 +89,37 @@ test('cash customer payment cannot exceed outstanding due or post partial journa
  });
 });
 test('bank customer receipt posts the bank master, money book and due ledger atomically',async()=>{
- await fixture(async({api,one,count})=>{
+ await fixture(async({api,one,count,db})=>{
   await createDue(api,50,1);
   const id=one('SELECT customer_id id FROM customers WHERE phone=?','01000009152').id;
   const bank='BANK-5G12';
-  const dbInsert='INSERT INTO bank_accounts (bank_account_id,account_name,bank_name,account_type,opening_balance,current_balance,status) VALUES (?,?,?,?,?,?,?)';
-  const db=(await Promise.resolve(one));
-  // Bank opening balance is a fixture, not a fabricated transaction.
-  // The in-memory account has no money-book entries at this point.
-  const created=await api('POST','/api/sales-management/customer-payment',
-   {customerId:id,amount:30,method:'Bank',bankAccountId:bank,reference:'bank transfer'});
-  // A nonexistent bank account is not allowed, even if a customer has enough due.
-  assert.notEqual(created.status,200);
-  assert.equal(count('bank_book'),0);
-  assert.equal(one('SELECT current_due n FROM customers WHERE customer_id=?',id).n,50);
+  db.native.prepare("INSERT INTO bank_accounts (bank_account_id,account_name,bank_name,account_type,opening_balance,current_balance,status) VALUES (?,'Customer Receipt Bank','Local Bank','Bank',100,100,'Active')").run(bank);
+  const pay=(amount:number,account=bank)=>api('POST','/api/sales-management/customer-payment',
+    {customerId:id,amount,method:'Bank',bankAccountId:account,reference:'bank transfer'});
+  const unknown=await pay(30,'MISSING-BANK');assert.notEqual(unknown.status,200);
+  const state=()=>({
+   due:one('SELECT current_due n FROM customers WHERE customer_id=?',id).n,
+   ledger:one('SELECT COALESCE(SUM(debit-credit),0) n FROM customer_ledger WHERE customer_id=?',id).n,
+   balance:one('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank).n,
+   bankEntries:count('bank_book')
+  });
+  const before=state();assert.deepEqual(before,{due:50,ledger:50,balance:100,bankEntries:0});
+  db.native.exec("CREATE TRIGGER fail_customer_bank_receipt BEFORE INSERT ON bank_book WHEN NEW.type='Customer Payment' BEGIN SELECT RAISE(ABORT,'receipt-bank-atomicity-test'); END;");
+  const abort=await pay(15);
+  assert.notEqual(abort.status,200,'bank-book failure must abort customer due and bank master changes');
+  assert.deepEqual(state(),before);
+  db.native.exec('DROP TRIGGER fail_customer_bank_receipt');
+  const paid=await pay(30);ok(paid);
+  assert.equal(paid.newDue,20);
+  assert.deepEqual(state(),{due:20,ledger:20,balance:130,bankEntries:1});
+  assert.equal(one("SELECT COALESCE(SUM(credit),0) n FROM bank_book WHERE bank_account_id=? AND type='Customer Payment'",bank).n,30);
+  const result=await api('GET','/api/reports/v2/rows?report=bank&from=2026-01-01&to=2026-12-31');ok(result);
+  assert.equal(metric(result,'bankCurrentBalance'),13000,'opening 100 plus customer receipt 30');
+  assert.equal(metric(result,'bankReceipts'),3000);
+  const dues=await api('GET','/api/reports/v2/rows'+period);ok(dues);
+  assert.equal(metric(dues,'receivablesBalance'),2000);
+  const profit=await api('GET','/api/reports/v2/rows?report=profit&from=2026-01-01&to=2026-12-31');ok(profit);
+  assert.equal(metric(profit,'netProfit'),3000,'receiving an old receivable is not new revenue');
  });
 });
 test('two simultaneous independent receipts cannot collect the same customer due twice',async()=>{
