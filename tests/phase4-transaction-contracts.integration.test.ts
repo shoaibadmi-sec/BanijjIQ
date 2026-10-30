@@ -63,6 +63,14 @@ test('4F planner: draft edit, inactive supplier approval hold, approve/reject/de
   assert.equal((await api('GET','/api/purchases/planner/plans/UNKNOWN')).status,404);
   assert.equal((await api('GET','/api/purchases/planner/orders/UNKNOWN')).status,404);
   assert.equal((await api('GET','/api/purchases/planner/orders/UNKNOWN/convert-data')).status,404);
+  const budget=await api('GET',
+   '/api/purchases/planner/analyze?budgetAmount=60&salesWindowDays=30&targetCoverDays=30');
+  safe(budget);
+  const funded=budget.rows.filter((r:any)=>r.included&&r.plannedQty>0);
+  assert.ok(funded.length>0,'The budget planner should propose available low-stock products');
+  assert.ok(funded.reduce((sum:number,r:any)=>sum+r.plannedInvestment,0)<=60.0001,
+   'The priority allocator must never exceed the fixed purchase budget');
+  assert.ok(funded.every((r:any)=>Number.isInteger(r.plannedQty)&&r.plannedQty>=0));
   const saved=await api('POST','/api/purchases/planner/plans',{
    items:planItems(p1,p2,supplier,supplier),notes:'Original'});
   safe(saved);
