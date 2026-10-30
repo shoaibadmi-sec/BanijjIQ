@@ -99,7 +99,7 @@ test('Phase 5 report rows retain real source IDs and summary cannot invent FIFO 
       {fullName:'Reports Sources Admin',phone:'01000009874',password:'Phase5LocalTest2026'});
     assert.equal(setup.status,200);
     const token=String(setup.token);
-    db.native.prepare("INSERT INTO sales(invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES ('P5-SALE','2026-10-15','Customer P5','01000009875',110,'Cash','Paid')").run();
+    db.native.prepare("INSERT INTO sales(invoice_id,sale_date,customer_name,customer_phone,subtotal,discount,grand_total,payment_type,payment_status) VALUES ('P5-SALE','2026-10-15','Customer P5','01000009875',110,0,110,'Cash','Paid')").run();
     db.native.prepare("INSERT INTO products(product_id,product_name,category,unit,current_stock) VALUES ('P5-SKU','Wire','Electrical','Pcs',2)").run();
     db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,original_quantity,remaining_quantity,unit_cost) VALUES ('P5-LOT','P5-SKU','PURCHASE',2,2,25)").run();
     db.native.prepare("INSERT INTO customers(customer_id,customer_name,phone,current_due) VALUES ('P5-CUST','Customer P5','01000009875',40)").run();
