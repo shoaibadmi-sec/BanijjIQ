@@ -4,6 +4,8 @@ import { hashPassword } from '../auth/service.js';
 import {
   DELETE_WINDOW_OPTIONS,
   PERMISSION_MODULES,
+  mayGrantRolePermissions,
+  mayAssignCustomRole,
   requireManagementDelete,
   requireModulePermission,
   sanitizePermissions
@@ -63,6 +65,7 @@ export async function createManagedUserRoute(db:SherDatabase,input:any,actor:Aut
   if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(password.length<6)return error('Password must be at least 6 characters.');
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  if(!(await mayAssignCustomRole(db,actor,role)))return error('You cannot assign a role beyond your own permissions.',403);
   const metadata=readEmployeeMetadata(input);if(metadata instanceof Response)return metadata;
   if(metadata.email && await db.prepare(`SELECT 1 ok FROM app_users WHERE email=? COLLATE NOCASE LIMIT 1`).bind(metadata.email).first<any>())
     return error('A user with this email already exists.');
@@ -81,6 +84,7 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
   if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
   if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  if(!(await mayAssignCustomRole(db,actor,role)))return error('You cannot assign a role beyond your own permissions.',403);
   const metadata=readEmployeeMetadata(input,{email:existing.email??null,joinedDate:existing.joined_date??null});
   if(metadata instanceof Response)return metadata;
   if(metadata.email && await db.prepare(`SELECT 1 ok FROM app_users WHERE email=? COLLATE NOCASE AND user_id<>? LIMIT 1`).bind(metadata.email,id).first<any>())
@@ -134,7 +138,9 @@ export async function createManagedRoleRoute(db:SherDatabase,input:any,user:Auth
   const denied=await requireModulePermission(db,user,'roles','add');if(denied)return denied;
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be created here.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) LIMIT 1`).bind(name).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
+  const permissions=sanitizePermissions(input.permissions);
+  if(!(await mayGrantRolePermissions(db,user,permissions)))return error('You cannot grant permissions beyond your own role.',403);
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
   await db.prepare(`INSERT INTO app_roles(role_id,role_name,allowed_modules,permissions_json,status,created_at,updated_at) VALUES (?,?,?,?,'Active',datetime('now'),datetime('now'))`).bind(id,name,allowed.join(','),JSON.stringify(permissions)).run();
   return json({ok:true,id});
 }
@@ -143,7 +149,9 @@ export async function updateManagedRoleRoute(db:SherDatabase,id:string,input:any
   const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be renamed to that.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) AND role_id<>? LIMIT 1`).bind(name,id).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
+  const permissions=sanitizePermissions(input.permissions);
+  if(!(await mayGrantRolePermissions(db,user,permissions)))return error('You cannot grant permissions beyond your own role.',403);
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
   await db.batch([
     db.prepare(`UPDATE app_roles SET role_name=?,allowed_modules=?,permissions_json=?,updated_at=datetime('now') WHERE role_id=?`).bind(name,allowed.join(','),JSON.stringify(permissions),id),
     db.prepare(`UPDATE app_users SET role=?,updated_at=datetime('now') WHERE role=?`).bind(name,oldName),
