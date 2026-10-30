@@ -34,7 +34,7 @@ export async function finalizeBundleInvoiceReversal(db:SherDatabase,invoiceId:st
    return error('Invoice was already finalized or the request key was reused.',409);
   const invoice=await db.prepare('SELECT status FROM sales WHERE invoice_id=?').bind(invoiceId).first<{status:string}>();
   return invoice?.status==='Reversed'?
-   Response.json({ok:true,replayed:true,invoiceId,status:'Reversed'}):
+   Response.json({ok:true,replayed:true,invoiceId,invoiceStatus:'Reversed'}):
    error('Invoice finalization marker does not match the finalized invoice status.',409);
  }
  const invoice=await db.prepare('SELECT status FROM sales WHERE invoice_id=?').bind(invoiceId)
@@ -54,9 +54,9 @@ export async function finalizeBundleInvoiceReversal(db:SherDatabase,invoiceId:st
    .bind(invoiceId,requestId).first<Marker>();
   if(saved&&saved.invoice_id===invoiceId&&saved.request_id===requestId&&saved.payload_sha256===fp){
    const current=await db.prepare('SELECT status FROM sales WHERE invoice_id=?').bind(invoiceId).first<{status:string}>();
-   if(current?.status==='Reversed')return Response.json({ok:true,replayed:true,invoiceId,status:'Reversed'});
+   if(current?.status==='Reversed')return Response.json({ok:true,replayed:true,invoiceId,invoiceStatus:'Reversed'});
   }
   return error('Invoice reversal requires complete original cash and FIFO returns; no status or journal was changed.',409);
  }
- return Response.json({ok:true,replayed:false,invoiceId,status:'Reversed'});
+ return Response.json({ok:true,replayed:false,invoiceId,invoiceStatus:'Reversed'});
 }
