@@ -39,6 +39,7 @@ jobs:
           node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
+          node --test react-integration/tests/original-pos-api-preview.contract.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
           node --test react-integration/tests/phase4-purchase-route.test.mjs
@@ -51,6 +52,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test react-integration/tests/original-pos-api-catalog.integration.test.ts
           node --import tsx --test tests/preview-demo-seed.integration.test.ts
           node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security
@@ -88,7 +90,9 @@ jobs:
           cd .generated/hisabiq-web
           npx playwright install --with-deps chromium
       - name: Run mocked-API Playwright UI checks
-        run: node ui-checks/run.mjs
+        run: |
+          node ui-checks/run.mjs
+          node ui-checks/original-pos-api-preview.mjs
       - name: Test real Cloudflare Worker with isolated local D1
         run: |
           node d1-checks/run.mjs
