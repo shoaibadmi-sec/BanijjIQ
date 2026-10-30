@@ -24,7 +24,8 @@
     "react:dev": "npm run react:prepare && npm run dev --prefix .generated/hisabiq-web",
     "preview:pr-build": "node scripts/preview/pr-preview-build.mjs",
     "preview:pr-deploy": "wrangler preview --config wrangler.hisabiq-pr.generated.jsonc",
-    "preview:pr-no-production": "node scripts/preview/no-production-deploy.mjs"
+    "preview:pr-no-production": "node scripts/preview/no-production-deploy.mjs",
+    "test:phase7f": "node --import tsx --test tests/phase7f-stock-alerts*.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
