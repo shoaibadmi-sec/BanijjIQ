@@ -71,6 +71,39 @@ export const logout = () =>
 export const getBootstrap = () =>
   request<{ ok: true; products: BackendProduct[] }>('/api/bootstrap');
 
+export type StockAlertKind = 'out-of-stock' | 'low-stock' | 'expired' | 'expiring' | 'needs-review';
+export type StockAlert = {
+  kind: StockAlertKind;
+  productId: string;
+  productName: string;
+  currentStock: number;
+  minimumStock: number;
+  sourceStatus: 'ready' | 'needs-review';
+  reason?: string;
+  shortfallToMinimum?: number;
+  expiryDate?: string;
+  expiryBatchId?: string;
+  lotId?: string;
+  quantity?: number;
+};
+export type StockAlertsResponse = {
+  ok: true;
+  asOf: string;
+  horizonDays: number;
+  page: number;
+  pageSize: number;
+  totalAlerts: number;
+  counts: {outOfStock:number; lowStock:number; expired:number; expiring:number; needsReview:number};
+  coverage: {status:'ready'|'needs-review';reason:string};
+  alerts: StockAlert[];
+};
+export type StockAlertsQuery = {asOf:string;days:number;page:number;pageSize:50|100};
+export const getStockAlerts = (params:StockAlertsQuery) =>
+  request<StockAlertsResponse>('/api/products/stock-alerts?'+new URLSearchParams({
+    asOf:params.asOf,days:String(params.days),page:String(params.page),pageSize:String(params.pageSize)
+  }).toString());
+
+
 export interface PosUnitEntry { unit:string; symbol:string; factor:number; containsNext:number|null; sellingPrice:number }
 export interface ProductUnitProfile {baseUnit:string;units:PosUnitEntry[]}
 export interface UnitProfileDraft {expectedRevision:number;units:Array<{
@@ -221,7 +254,8 @@ export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'pay
 export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;group:string;status:LiveReportStatus;reason:string}
 export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;
-  amountMinor:number|null;status:LiveReportStatus;reason:string;
+  amountMinor:number|null;paidMinor?:number|null;dueMinor?:number|null;
+  status:LiveReportStatus;reason:string;
 }
 export interface LiveReportMetric {
   key:string; valueMinor:number|null; status:LiveReportStatus; reason:string; asOf:string;
