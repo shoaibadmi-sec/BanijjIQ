@@ -77,3 +77,16 @@ test('G2-J successive partial FIFO returns cannot exceed original sold quantity'
     assert.equal((f.q.prepare('SELECT SUM(quantity) n FROM sales_return_item_lots WHERE invoice_id=?').get('FIFO-A') as any).n,5);
   }finally{f.db.close();}
 });
+
+test('G2-J rejects tracked or oversold lots without writing FIFO evidence',()=>{
+  const f=fixture();
+  try{
+    f.startReturn('FIFO-R1');
+    f.q.prepare("UPDATE products SET track_serial=1 WHERE product_id='FIFO-PA'").run();
+    assert.throws(()=>f.evidence('FIFO-R1'),/SPLIT_PARTIAL_FIFO_PROVENANCE_CONFLICT/);
+    f.q.prepare("UPDATE products SET track_serial=0 WHERE product_id='FIFO-PA'").run();
+    f.q.prepare("UPDATE stock_lots SET source_type='OVERSOLD' WHERE lot_id='FIFO-LA'").run();
+    assert.throws(()=>f.evidence('FIFO-R1'),/SPLIT_PARTIAL_FIFO_PROVENANCE_CONFLICT/);
+    assert.equal(f.n(),0);
+  }finally{f.db.close();}
+});
