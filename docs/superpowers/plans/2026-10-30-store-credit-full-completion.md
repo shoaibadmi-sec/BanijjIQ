@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - GitHub-only: separate draft feature branches/PRs with reviewable commits; Phase 4 Purchase and Phase 5 workflows must not share or overwrite Phase 3 feature branches.
-- Never change migration files already applied. Confirm the current highest migration before selecting future names; reserve a fresh number instead of assuming `0042`.
+- Never change migration files already applied. Proposed new migration filenames are `0043_store_credit_cases.sql`, `0044_sale_tender_allocations.sql`, `0045_store_credit_reissue_guard.sql` (all absent on the reviewed phase branch); check the complete repo migration inventory at execution and allocate new numbers instead if any conflicting migration appears. Do not reuse the deleted experimental `0042` migration.
 - No production Cloudflare Worker or remote D1 migration; use isolated test D1, explicit hosted-preview environment authorization and human release signoff.
 - Store Credit liability is **not customer receivable**, cash, or bank deposits. Monetary accounting in integer poisha with no rounding drift.
 - Preserve existing HisabIQ compact React POS, combined Party Ledger patterns, bilingual Bangla helper, responsive 390/768/1440 layout, keyboard navigation and a11y. No Vue conversion or wholesale redesign.
@@ -33,7 +33,7 @@
 - `server/modules/sales/sale-tenders.ts` (new, G2-G) — validation, amounts in minor units, account compatibility and allocation reconciliation.
 - `server/modules/sales/store-credit-reversals.ts` (new, G2-H) — immutable compensating events and return eligibility.
 - `migrations/0039_store_credit_liability.sql`, `0040_store_credit_issue_guard.sql`, `0041_store_credit_redemption.sql` — read only, never modify.
-- `migrations/<next>_store_credit_cases.sql`, `<next>_sale_tender_allocations.sql`, `<next>_credit_reissue_guard.sql` — create after verifying actual inventory.
+- `migrations/0043_store_credit_cases.sql`, `<next>_sale_tender_allocations.sql`, `<next>_credit_reissue_guard.sql` — create after verifying actual inventory.
 - `react-integration/overlay/src/integration/banijjApi.ts` — typed API requests/responses.
 - `react-integration/overlay/src/integration/LivePosPage.tsx` and `LiveCheckoutPanel.tsx` — add compact tender controls without restyling the existing cart/customer picker.
 - `react-integration/overlay/src/integration/LiveSalesReturnsPage.tsx` — return/tender provenance and credit restoration.
@@ -73,7 +73,7 @@ These are the five most likely edge cases not sufficiently covered by the origin
 
 ### Task 2: Auditable case discovery and evidence preview
 
-**Files:** Create `server/modules/sales/store-credit-cases.ts`, `tests/store-credit-cases.integration.test.ts`, next unapplied `migrations/<next>_store_credit_cases.sql`; modify `server/modules/sales/routes.ts` and `.github/workflows/hisabiq-react-build.yml`.
+**Files:** Create `server/modules/sales/store-credit-cases.ts`, `tests/store-credit-cases.integration.test.ts`, next unapplied `migrations/0043_store_credit_cases.sql`; modify `server/modules/sales/routes.ts` and `.github/workflows/hisabiq-react-build.yml`.
 
 **Interfaces:** `GET /api/pos/store-credit/reconciliation/cases` (admin only); `GET /api/pos/store-credit/reconciliation/cases/:caseId` returns immutable original source links, anomaly codes, proposed adjustment and `unverified` state. Case writes require a subsequent task.
 
@@ -99,7 +99,7 @@ These are the five most likely edge cases not sufficiently covered by the origin
 
 ### Task 4: Integer-poisha per-sale tender allocation contract
 
-**Files:** Create `server/modules/sales/sale-tenders.ts`, `tests/split-sale-tenders.integration.test.ts`, next unapplied `migrations/<next>_sale_tender_allocations.sql`; modify `server/modules/sales/types.ts`.
+**Files:** Create `server/modules/sales/sale-tenders.ts`, `tests/split-sale-tenders.integration.test.ts`, next unapplied `migrations/0044_sale_tender_allocations.sql`; modify `server/modules/sales/types.ts`.
 
 **Interfaces:** Add optional `PosSaleInput.tenders?: Array<{method:'Cash'|'Bank'|'Mobile Banking'|'Store Credit';amountCents:number;bankAccountId?:string}>`. Existing `paymentMethod` and `paidAmount` remain accepted for one-tender clients. Provide `validateTenderAllocation(input,grandTotalCents,customerId,accounts)` returning an immutable normalized allocation and due amount.
 
