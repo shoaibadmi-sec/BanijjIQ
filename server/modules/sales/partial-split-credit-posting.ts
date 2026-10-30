@@ -1,4 +1,4 @@
-import type {SherDatabase,SqlPreparedStatement} from '../../db/types.js';
+import type {SherDatabase,SqlPreparedStatement,SqlValue} from '../../db/types.js';
 import {quotePartialSplitRefundFromD1} from './partial-refund-d1.js';
 import type {RefundSource} from './partial-split-refunds.js';
 
@@ -32,7 +32,7 @@ export async function postCashCreditPartialSplitReturn(
     input.reason.length<8||input.reason.length>500)
     return reject('Invalid invoice, product, quantity, idempotency ID or reason.');
   const returnId='SRT-'+input.requestId;
-  const fetchRows=async(query:string,...args:unknown[]):Promise<any[]> =>
+  const fetchRows=async(query:string,...args:SqlValue[]):Promise<any[]> =>
     (await db.prepare(query).bind(...args).all<any>()).results||[];
 
   const replay=async():Promise<Result|null>=>{
