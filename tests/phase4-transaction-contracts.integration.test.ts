@@ -432,6 +432,52 @@ test('4I Bank: insufficient funds and journal failure leave zero partial records
  });
 });
 
+test('4I business: reject a due purchase when supplier master and ledger disagree',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  const first=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});
+  safe(first);
+  db.native.prepare('UPDATE suppliers SET current_due=? WHERE supplier_id=?').run(95,supplier.id);
+  const snapshot=()=>({
+   master:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   invoices:count('purchases'),lines:count('purchase_items'),lots:count('stock_lots'),
+   movements:count('stock_movements'),audit:count('audit_logs')
+  });
+  const before=snapshot();
+  assert.equal(before.master,95);assert.equal(before.ledger,100);
+  const invalid=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(invalid.status,409,'Unreconciled supplier cannot receive another purchase invoice');
+  assert.deepEqual(snapshot(),before,'Rejected purchase must not change any journal or stock');
+ });
+});
+
+test('4I functions: invalid discounts must not silently change purchase invoice totals',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:count('supplier_ledger'),
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   purchases:count('purchases'),lots:count('stock_lots'),audit:count('audit_logs')
+  });
+  const before=snapshot();
+  const base={supplierId:supplier.id,paidAmount:0,items:[{productId:p1.productId,qty:2,unitPrice:50}]};
+  for(const discount of [-1,0.00001,101,'10',null]){
+   const result=await api('POST','/api/purchases',{...base,discount});
+   assert.equal(result.status,400,'Invalid discount '+String(discount)+' cannot post');
+   assert.deepEqual(snapshot(),before,'Invalid discount cannot alter inventory or money');
+  }
+  const valid=await api('POST','/api/purchases',{...base,discount:10});
+  safe(valid);
+  assert.equal(valid.grandTotal,90);
+  assert.equal(valid.dueAmount,90);
+  assert.equal(one('SELECT discount AS n FROM purchases WHERE purchase_id=?',valid.purchaseId).n,10);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,90);
+ });
+});
+
 test('4F historical paid purchase cannot be deleted without reversing its posted supplier payment',async()=>{
  await fixture(async({api,one,count,db,supplier,p1})=>{
   const p=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,discount:0,
