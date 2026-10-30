@@ -203,3 +203,28 @@ assert.equal(loginPosts,1);
     assert.match(proc.stdout,/Preview verified at/);
   }
 });
+
+test('real demo data seeding requires an explicit isolated-preview approval and no production remote writes',()=>{
+  const workflow=read('.github/workflows/hisabiq-preview-demo-seed.yml');
+  const client=read('scripts/preview/demo-seed-remote.mjs');
+  const plan=read('scripts/preview/demo-seed-plan.mjs');
+  for(const marker of [
+    'workflow_dispatch:',
+    "github.ref == 'refs/heads/main'",
+    "inputs.confirm_demo_seeding == 'SEED-ISOLATED-DEMO-ONLY'",
+    'name: hisabiq-react-preview',
+    'node scripts/preview/preflight-remote-db.mjs',
+    'node --import tsx scripts/preview/demo-seed-remote.mjs --apply',
+    'Recheck exact current main immediately before preview writes'
+  ])assert.ok(workflow.includes(marker),marker);
+  assert.ok(!workflow.includes('\\n  push:'));
+  assert.ok(!workflow.includes('\\n  pull_request:'));
+  assert.ok(!workflow.includes('wrangler d1 migrations apply DB --remote'));
+  assert.ok(!workflow.includes('wrangler deploy'));
+  assert.ok(client.includes('https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev'));
+  assert.ok(client.includes('HISABIQ_DEMO_SEED_CONFIRM'));
+  assert.ok(!client.includes('shererp-new'));
+  assert.ok(plan.includes('Preview database already contains live records'));
+  assert.ok(plan.includes("await safe('POST','/api/pos/sales'"));
+  assert.ok(plan.includes("await safe('POST','/api/purchases'"));
+});
