@@ -82,8 +82,8 @@ export async function runPaidRefundChecks({browser,base,withCheck,results,startM
    const page=await ctx.newPage();
    await page.goto(base+'/#/app/purchases?tab=return&purchaseId=PUR-BANK-UI');
    await page.locator('[data-live-standard-purchase-returns]').waitFor({timeout:12000});
-   await page.getByRole('spinbutton',{name:'Return quantity for Copper Cable 2.5mm'}).fill('1');
-   await page.getByRole('textbox',{name:'Return reason'}).fill('Damaged goods');
+   assert.equal(await page.getByRole('spinbutton',{name:'Return quantity for Copper Cable 2.5mm'}).isDisabled(),true);
+   assert.equal(await page.getByRole('textbox',{name:'Return reason'}).isDisabled(),true);
    assert.equal(await page.getByRole('button',{name:/Confirm verified refund/}).isDisabled(),true,
      'Partial-paid refunds require explicit allocation, cannot trigger money receipt');
    assert.equal(posts,0);
