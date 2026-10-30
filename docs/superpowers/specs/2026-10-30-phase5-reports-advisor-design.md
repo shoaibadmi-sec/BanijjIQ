@@ -1,21 +1,21 @@
-# HisabIQ Phase 5 — Reports, Business Advisor & Audit Reporting (Approved Design)
+# HisabIQ Phase 5 — Reports Dashboard & Report Library (Revised Approved Design)
 
 **Date:** 2026-10-30  
-**Status:** Phase scope approved; design specification for implementation; not implemented/released.  
+**Status:** Revised approved UI: exactly two tabs. Generated presentation transform prepared on draft PR #22; live-D1 reports and audit are not yet released.  
 **Repository:** shoaibadmi-sec/BanijjIQ  
 **Isolated branch:** feat/hisabiq-phase5-reports-advisor  
 **Integration policy:** Phase 3 (draft PRs #18–#20) and Phase 4 (draft PR #21) develop independently. This branch starts at `main` and must not cherry-pick incomplete accounting or purchasing changes.
 
 ## Intent
 
-Deliver a verified, compact, low-literacy-friendly reporting surface for Bangladesh hardware/electrical retailers, using the approved HisabIQ React design with real Hono/Cloudflare D1 data. Simplify overlapping Report Library navigation, surface evidence-backed decisions, and print an accurate 4–5-page A4 internal business audit.
+Deliver a verified, compact, low-literacy-friendly reporting surface for Bangladesh hardware/electrical retailers, using the approved HisabIQ React design with real Hono/Cloudflare D1 data. Show exactly **Dashboard** and **Report Library** as the only main Reports tabs, retain detailed ordinary reports within the Library, and print a verified 4–5-page A4 internal business audit as a library report.
 
 ## Goals
 
 1. Preserve the original pinned HisabIQ React report styling, charts, bilingual copy, compact tables, blue-brand look, responsive controls, keyboard use and source-row click-through. Use a generated integration overlay; never edit the pinned upstream submodule to retrofit live data.
 2. Use existing `/api/reports/*`, `/api/daybook`, finance and expense read logic as vetted foundations; add narrowly scoped read-only report endpoints where gaps exist. Audit existing aggregates before relying on them.
-3. Consolidate duplicate outside/inside report destinations: one Report Library; main sections as sidebar destinations; section-level underline tabs; preserve filters and per-report column visibility.
-4. Provide 5C sales/profit, 5D stock/dues, 5E cash/bank/expenses, 5F Business Advisor, and 5G A4 business audit, with real sources and clear completeness indicators.
+3. **Exactly two top-level Reports tabs: Dashboard (ড্যাশবোর্ড) and Report Library (রিপোর্ট লাইব্রেরি).** Remove all other main report tabs: Advisor, Profit Insights, Smart Buying, Cash Forecast, Customers, Overview, Sales & Profit, Sales Experiment, Stock, Dues, Cash & Expenses. Retain ordinary reports, report groups, search, filters, sources, charts, and column control **inside Report Library**. Dashboard retains its overview KPIs/trends.
+4. Provide 5C sales/profit, 5D stock/dues, 5E cash/bank/expenses, and 5F A4 business audit **inside Report Library**, with real sources and explicit completeness indicators. No standalone Advisor or Advisor-type report is commissioned for Phase 5.
 5. Support dates, server-side filter/search/sort/pagination (50/100 rows), totals independent of page, export/print of server-verified data, and link to underlying invoices/transactions.
 6. Enforce authentication, reports.view RBAC, and subscribed feature entitlements server-side (reuse existing plan/tenant policy, or show gated/unavailable where missing).
 7. Accept each slice only after test-driven local SQLite/full-migration, isolated Wrangler D1, mocked/browser Playwright and accounting reconciliation evidence.
@@ -27,7 +27,7 @@ Deliver a verified, compact, low-literacy-friendly reporting surface for Banglad
 - NO demo-store data on live report routes, no invented figures, no silent substitute for missing FIFO or ledger data.
 - NO rebuilding the Magic Patterns presentation, wholesale React or Vue redesign, or migration away from pinned HisabIQ React.
 - NO conflating bank transfers/supplier debt settlement/store-credit redemption with sales revenue.
-- NO duplicate navigational destinations for Sales & Profit or other report categories.
+- NO duplicate navigational destinations for Sales & Profit or other categories; no standalone Advisor, forecast, premium insight or experimental top-level reports.
 - NO auto-enabling features that depend on unmerged Phase 3/4 contracts.
 
 ## Repository facts checked on 2026-10-30
@@ -35,6 +35,7 @@ Deliver a verified, compact, low-literacy-friendly reporting surface for Banglad
 - Existing backend: `server/core/handler.ts` delegates reporting to `server/modules/reporting/routes.ts` and `service.ts`. Existing GET routes include `/api/reports/bootstrap`, `/sales`, `/purchase`, `/stock`, `/cash-bank`, `/profit`, `/balance-sheet`, plus `/api/dashboard`, `/api/daybook`.
 - `server/modules/auth/permissions.ts` maps `/api/reports/*` to reports module permission; `/api/dashboard` uses dashboard permission. New routes MUST remain under `/api/reports/*` and use GET only, with explicit deny tests.
 - Existing `getStockReportRoute` has a `lotMismatch` flag; `computeReportsProfit` exposes missing-FIFO-lot coverage. These indicate gaps; they are not evidence that every historical report reconciles.
+- The pinned upstream `ReportsNav` uses numerous `reportScreens` while `Reports.tsx` already provides a complete Library workspace. The generated build must expose only Dashboard + Library and normalize legacy screen navigation into appropriate library reports.
 - React is pinned from `shuvodelux-commits/hisabiq_ui` via `apps/hisabiq-web` and built using `scripts/prepare-hisabiq-react.mjs` plus `react-integration/overlay`. Source `src/pages/Reports.tsx` currently uses `useReportData` and client-side preview models. There are reusable `ReportsNav`, `ReportResults`, `ReportEvidencePanel`, `BusinessReview`, and report chart components. Live view MUST not consume the preview data hook.
 - `.github/workflows/hisabiq-react-build.yml` runs backend build, isolated accounting tests, React build, Playwright/axe and Wrangler local D1; its paths filter currently lacks `server/modules/reporting/**` and `server/modules/finance/**`, so Phase 5 must add reporting paths and new tests.
 - The PRs for Phase 3 and Phase 4 are draft/unmerged. Current `main` is not equivalent to their accounting changes.
@@ -47,7 +48,7 @@ Deliver a verified, compact, low-literacy-friendly reporting surface for Banglad
 
 ## Architecture and contracts
 
-- Keep current backend legacy endpoints for compatibility; add `/api/reports/v2/catalog`, `/api/reports/v2/rows`, `/api/reports/v2/summary`, `/api/reports/v2/advisor`, and `/api/reports/v2/audit` as GET-only endpoints. Contract version `v2` prevents untested changes to current consumers.
+- Keep current backend legacy endpoints for compatibility; add `/api/reports/v2/catalog`, `/api/reports/v2/rows`, `/api/reports/v2/summary`, and `/api/reports/v2/audit` as GET-only endpoints. Contract version `v2` prevents untested changes to current consumers.
 - A shared `LiveReportRange` (`from`, `to`) and `LiveReportQuery` (`report`, `page`, `pageSize`, `search`, `sort`, `direction`) are validated by an allowlist; invalid dates, excessive ranges, unsupported sort keys and invalid pagination return 400. PageSize allowed values are 50 and 100; cap data size and queries. Determine a reasonable bounded maximum period from performance tests and document it explicitly.
 - Every monetary metric uses exact integer minor units internally where derived from transactions. Format BDT at the UI edge; do not aggregate rounded UI strings. Existing money storage may be decimal: use a tested, centralized conversion to integer cents and fail closed on non-finite/unsafe values.
 - Every metric carries `status: 'ready'|'needs-review'|'incomplete'|'unavailable'`, `reason`, `asOf`, and `sources` (module, immutable source ID, optional date). `value` is nullable and stays null when unverified. Use source documents as canonical records, not arbitrary client calculations.
@@ -58,9 +59,9 @@ Deliver a verified, compact, low-literacy-friendly reporting surface for Banglad
 
 ## Feature slices and acceptance
 
-### 5A — Report Library & navigation
+### 5A — Two-tab navigation & Report Library
 
-Reuse layout and charts from the approved source; sidebar for primary report categories, underline tabs within category, one library, compact table, mobile/tablet touch targets, bilingual helper. Live route replaces `#/app/reports` in generated copy; keep explicit `reports-design-preview` for visual parity. First release may show gated empty states for non-live datasets.
+Dashboard and Report Library are the **only two visible main tabs**. Reuse the existing Overview charts/KPIs as Dashboard, retain existing detailed ordinary reports and report group controls within Library, and redirect legacy screen links and Dashboard drill-downs into the relevant Library report. Patch the generated React build, never the pinned source. Live financial data must replace demo models in later API-integration tasks; preserve a clearly marked design-only preview route. Business Audit belongs in the Library when 5F is implemented.
 
 ### 5B — Read-only reporting API and source records
 
@@ -70,7 +71,7 @@ GET-only v2 catalog/rows/summary contracts, auth/RBAC + plan enforcement, valida
 
 Sales minus valid returns and discounts; FIFO COGS from actual allocation records (including return/reversal allocation where verified); expenses separately; show `grossProfit` and `netProfit` only if enough cost coverage exists. Reconciliation and as-of evidence. Incomplete on missing lot allocations, unresolved historical reversal or unreleased Store Credit integration.
 
-### 5D — Stock, due and buying insight inputs
+### 5D — Stock, dues and aging
 
 Lot valuation, low/out stock, slow/fast-moving with defensible date windows, expiry when verified, current receivable/payable and aging from reconciled source ledgers. If product stock differs from remaining lots, show mismatch and withhold trustworthy stock valuation. Avoid customer/party identity aggregation by display name alone.
 
@@ -78,15 +79,11 @@ Lot valuation, low/out stock, slow/fast-moving with defensible date windows, exp
 
 Cash opening/closing and inflows/outflows; bank accounts with transfer-neutral treatment; expense-category summaries; finance loans/capital excluded from operating revenue. Store credit handled as liability after verified dependency. Red-flag ledger drifts; never guess adjusted balance.
 
-### 5F — Business Advisor
-
-Explain `why`, `what to do`, `evidence` per suggestion. Start with deterministic rules, no speculative AI figures: reorder, due follow-up, low stock, expiry and missing cost records. Only propose a purchase plan action if Phase 4 planner API is accepted and feature-authorized; otherwise show read-only recommendation.
-
-### 5G — Business Audit Report
+### 5F — Business Audit Report (inside Report Library)
 
 Print-friendly A4 4–5 pages, selectable monthly/yearly period, top-selling products, best customers and suppliers, stock, dues/payables, expenses, finance movements and verified profit; readable charts and evidence/coverage annex. Mark **Internal / Not certified**. Missing values render as `—` with reason, never zero. Desktop/tablet/phone previews all point to same server-sourced snapshots.
 
-### 5H — Acceptance and integration
+### 5G — Acceptance and integration
 
 Backend integration tests on disposable full-schema SQLite, isolated real Worker/D1 (never remote), API permission gates, Playwright desktop/tablet/phone keyboard flows, screenshots, axe, source parity, CSV/print tests, accounting invariants, independent review, and controlled draft-only PR handoff.
 
@@ -99,4 +96,4 @@ Backend integration tests on disposable full-schema SQLite, isolated real Worker
 
 ## User acceptance criteria
 
-The user can log in to HisabIQ and open the same approved compact Reports experience; see only real figures with source links; filter/print a safe business audit; receive actionable, evidence-based advisor suggestions; and trust that missing or unreconciled data is disclosed instead of invented. All changes remain isolated from other parallel phases and unreleased until release acceptance.
+The user can log in to HisabIQ and see only Dashboard and Report Library, open detailed reports in Library with source links, filter and print internal Business Audit from Library, and trust that missing or unreconciled data is disclosed instead of invented. All changes remain isolated from other parallel phases and unreleased until release acceptance.
