@@ -221,9 +221,13 @@ export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;
   amountMinor:number|null;status:LiveReportStatus;reason:string;
 }
+export interface LiveReportMetric {
+  key:string; valueMinor:number|null; status:LiveReportStatus; reason:string; asOf:string;
+  sources:Array<{module:string;sourceId:string;date:string|null}>;
+}
 export interface LiveReportPageResponse {
   ok:true;report:LiveReportBackendKey;range:{from:string;to:string};page:number;pageSize:50|100;
-  totalRows:number;rows:LiveReportRecord[];metrics:unknown[];
+  totalRows:number;rows:LiveReportRecord[];metrics:LiveReportMetric[];
   coverage:{status:LiveReportStatus;reason:string};
 }
 export interface LiveReportRequest {
@@ -242,6 +246,6 @@ export const getLiveReportRows=(query:LiveReportRequest)=>{
 };
 export const getLiveReportSummary=(from:string,to:string)=>{
   const params=new URLSearchParams({from,to,report:'sales'});
-  return request<{ok:true;range:{from:string;to:string};metrics:unknown[];
+  return request<{ok:true;range:{from:string;to:string};metrics:LiveReportMetric[];
     coverage:{status:LiveReportStatus;reason:string}}>('/api/reports/v2/summary?'+params.toString());
 };
