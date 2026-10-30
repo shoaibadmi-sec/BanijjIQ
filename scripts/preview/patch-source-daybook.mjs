@@ -13,6 +13,8 @@ export function patchSourceDaybook(source) {
  edit("from: '2026-10-07',","from: businessToday(),");
  edit("to: '2026-10-07',","to: businessToday(),");
  edit("  const [transactions] = useState<UnifiedTransaction[]>(daybookTransactions);","");
+ edit('    <div className="mx-auto max-w-[1440px] space-y-4">',
+   '    <div className="mx-auto max-w-[1440px] space-y-4" data-live-daybook="">');
  edit("  const [filters, setFilters] = useState<DaybookFilterState>(() => filtersFromParams(searchParams));",
    "  const [filters, setFilters] = useState<DaybookFilterState>(() => filtersFromParams(searchParams));\n  const {transactions,permitted,loading,error,page,pageSize,setPage,setPageSize,totalPages,totalRows}=usePhase6Daybook(filters,entryDateView);");
  edit("const exportDaybook=()=>downloadReport('hisabiq-daybook.csv',reportHeaders,filtered.map(reportRow));",

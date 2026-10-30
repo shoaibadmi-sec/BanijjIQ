@@ -100,7 +100,7 @@ function startMocking(context,calls){
       return respond({ok:true,page,pageSize,totalRows:1,totalPages:1,dateFrom:url.searchParams.get('dateFrom'),
         dateTo:url.searchParams.get('dateTo'),sortBy:url.searchParams.get('sortBy'),isAdmin:true,count:1,
         totals:{cashIn:0,cashOut:0,bankIn:0,bankOut:0,netCash:0,netBank:0},
-        rows:[{ts:'2026-10-30T11:00:00',date:'2026-10-30',time:'11:00:00',
+        rows:[{ts:new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Dhaka'}).format(new Date())+'T11:00:00',date:new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Dhaka'}).format(new Date()),time:'11:00:00',
           referenceNo:'BTR-UI-6E-001',module:'Bank Transfer',transactionType:'Bank Transfer',
           party:'Shop Bank → Wallet',description:'Internal transfer between accounts',
           paymentMethod:'Bank',cashIn:0,cashOut:0,bankIn:0,bankOut:0,amount:0,
@@ -767,12 +767,12 @@ try{
       const daybook=page.locator('[data-live-daybook]');
       await daybook.waitFor({timeout:12000});
       await daybook.getByText('BTR-UI-6E-001').waitFor({timeout:12000});
-      assert.equal(await daybook.getByRole('link',{name:'Open module'}).count(),1);
-      assert.equal((await daybook.getByRole('link',{name:'Open module'}).getAttribute('href')),
-        '#/app/finance?sourceId=BTR-UI-6E-001');
+      await daybook.getByRole('button',{name:'Actions for BTR-UI-6E-001'}).click();
+      assert.equal(await daybook.getByRole('button',{name:'Go to source'}).count(),1);
+      assert.equal(await daybook.getByRole('button',{name:'Review reversal'}).count(),0,'Daybook must not expose unsupported posting reversals');
       await daybook.getByRole('combobox',{name:'Daybook page size'}).selectOption('100');
-      await daybook.getByRole('combobox',{name:'Daybook sort order'}).selectOption('createdAt');
-      await page.waitForFunction(()=>document.querySelector('[data-live-daybook]')?.textContent?.includes('1 transactions'),null,{timeout:12000});
+      await daybook.getByRole('button',{name:/Created Date/}).click();
+      await page.waitForFunction(()=>document.querySelector('[data-live-daybook]')?.textContent?.includes('1 of 1 records'),null,{timeout:12000});
       assert.ok(calls.some(x=>x.method==='ASSERT'&&x.path==='/api/daybook'&&x.pageSize===100&&x.sortBy==='createdAt'));
       assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/daybook')));
       await screenshot(page,'phase6e-daybook-'+width);

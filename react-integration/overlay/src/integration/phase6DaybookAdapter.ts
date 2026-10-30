@@ -19,6 +19,7 @@ const sourceRoutes:Record<TransactionSource,string>={
  'stock-adjustment':'products'
 };
 const postedStatus=(status:string):TransactionStatus=>
+ status==='Active'||status==='Completed'?'Posted':
  status==='Posted'||status==='Deleted'||status==='Reversed'||status==='Draft'
   ? status : 'Draft';
 
@@ -35,7 +36,7 @@ export function toUnifiedDaybookRow(row:LiveDaybookEntry):UnifiedTransaction {
   id:row.sourceModule+':'+row.sourceId+':'+row.ts,
   source,sourceId:row.sourceId,reference,
   type:row.transactionType||row.module||row.sourceModule,
-  party:row.party||undefined,details:row.description,
+  party:row.party||undefined,details:row.status==='Needs review'?'Needs review · '+row.description:row.description,
   amount:row.amount,moneyIn:incoming,moneyOut:outgoing,
   accounts:row.paymentMethod?[row.paymentMethod]:[],
   transactionDate,createdAt,postedBy:row.createdBy||'—',
