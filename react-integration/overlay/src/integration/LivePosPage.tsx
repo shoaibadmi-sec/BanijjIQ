@@ -9,7 +9,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ReceiptPreview } from '../components/brand/ReceiptPreview';
 import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
 import { LiveStockShortageDialog, type ShortageSelection } from './LiveStockShortageDialog';
-import { LiveCheckoutPanel } from './LiveCheckoutPanel';
+import { LiveCheckoutPanel, type SplitTenderRow } from './LiveCheckoutPanel';
 import { LiveMultiUnitQuantity } from './LiveMultiUnitQuantity';
 import { quoteLiveUnits } from './posUnitMath';
 import { Link } from 'react-router-dom';
@@ -33,6 +33,11 @@ const lineTotal=(line:Line)=>line.unitQuantities ? (mixedQuote(line)?.total ?? 0
 const noSerials: string[] = [];
 const taka = (n: number) => '৳' + Number(n || 0).toLocaleString('en-BD', { maximumFractionDigits: 2 });
 const supported = (p: PosProduct) => p.stock > 0 || (!p.trackSerial && !p.trackExpiry);
+const splitCents=(text:string):number|null=>{
+  if(!/^\d+(?:\.\d{1,2})?$/.test(text.trim()))return null;
+  const cents=Math.round(Number(text)*100);
+  return Number.isSafeInteger(cents)&&cents>0?cents:null;
+};
 
 export function LivePosPage() {
   const user = useBackendSession();
@@ -58,6 +63,8 @@ export function LivePosPage() {
   const [paid, setPaid] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PosSalePayload['paymentMethod']>('Cash');
   const [bankAccountId, setBankAccountId] = useState('');
+  const [splitEnabled,setSplitEnabled]=useState(false);
+  const [splitRows,setSplitRows]=useState<SplitTenderRow[]>([]);
   const [openingCash, setOpeningCash] = useState('0');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [finished, setFinished] = useState<PosInvoice | null>(null);
@@ -109,12 +116,13 @@ export function LivePosPage() {
   const rawDiscount = discount.trim() ? Number(discount) : 0;
   const discountAmount = discountMode === 'percent' ? Math.round(subtotal * rawDiscount) / 100 : rawDiscount;
   const total = Number.isFinite(discountAmount) ? Math.max(0, subtotal - discountAmount) : 0;
-  const paidAmount = paymentMethod==='Store Credit'?total:(paid.trim()?Number(paid):0);
+  const splitPaidCents=useMemo(()=>splitRows.reduce((sum,row)=>sum+(splitCents(row.amount)||0),0),[splitRows]);
+  const paidAmount=splitEnabled?splitPaidCents/100:paymentMethod==='Store Credit'?total:(paid.trim()?Number(paid):0);
   const due = Math.max(0, total - paidAmount);
   const selectedCustomer = bootstrap?.customers.find(p => p.phone === customerPhone.trim());
   const matchingAccounts = (bootstrap?.bankAccounts || []).filter(a =>
     (a.accountType || 'Bank') === (paymentMethod === 'Mobile Banking' ? 'Mobile Banking' : 'Bank'));
-  const requiresAccount = paidAmount > 0 && (paymentMethod === 'Bank' || paymentMethod === 'Mobile Banking');
+  const requiresAccount = !splitEnabled && paidAmount > 0 && (paymentMethod === 'Bank' || paymentMethod === 'Mobile Banking');
   const errors = useMemo(() => {
     const found: string[] = [];
     if (!canPost) found.push('Your account cannot post POS sales.');
@@ -125,12 +133,37 @@ export function LivePosPage() {
     if (!Number.isFinite(discountAmount) || discountAmount < 0 || discountAmount > subtotal) found.push('Enter a valid discount.');
     if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > total) found.push('Received amount cannot exceed the payable total.');
     if (requiresAccount && !matchingAccounts.some(a => a.id === bankAccountId)) found.push('Select an active payment account.');
-    if(paymentMethod==='Store Credit'){
+    if(!splitEnabled&&paymentMethod==='Store Credit'){
       if(!selectedCustomer)found.push('Select a saved customer with Store Credit · ক্রেতা নির্বাচন করুন।');
       else if(selectedCustomer.storeCreditBlocked)found.push('Historical Store Credit needs reconciliation · পুরোনো হিসাব যাচাই দরকার।');
       else if(Math.round(total*100)>selectedCustomer.storeCreditCents)
         found.push('Not enough Store Credit · জমা ক্রেডিট যথেষ্ট নয়।');
       if(total<=0)found.push('Store Credit requires a positive payable total.');
+    }
+    if(splitEnabled){
+      const cents=Math.round(total*100);
+      if(!Number.isSafeInteger(cents)||Math.abs(total*100-cents)>0.00001||cents<=0)
+        found.push('Split payment requires a valid positive total · সঠিক মোট টাকা দিন।');
+      if(splitRows.length<2||splitRows.length>8)
+        found.push('Use 2–8 payment methods · দুই বা বেশি মাধ্যম দিন।');
+      const sources=new Set<string>();
+      splitRows.forEach((row,index)=>{
+        const amount=splitCents(row.amount);
+        if(amount===null)found.push('Payment '+(index+1)+': enter a positive amount with at most two decimals.');
+        const needsAccount=row.method==='Bank'||row.method==='Mobile Banking';
+        const source=row.method+(needsAccount?':'+row.bankAccountId:'');
+        if(sources.has(source))found.push('Each payment source can be used only once · একই মাধ্যম দুবার নয়।');
+        sources.add(source);
+        if(needsAccount&&!bootstrap?.bankAccounts.some(a=>a.id===row.bankAccountId&&a.accountType===row.method))
+          found.push('Choose the correct bank/mobile account · সঠিক হিসাব বাছুন।');
+        if(row.method==='Store Credit'){
+          if(!selectedCustomer)found.push('Choose a saved customer for Store Credit · ক্রেতা নির্বাচন করুন।');
+          else if(selectedCustomer.storeCreditBlocked)found.push('Old Store Credit needs review · পুরোনো ক্রেডিট যাচাই দরকার।');
+          else if((amount||0)>selectedCustomer.storeCreditCents)
+            found.push('Insufficient customer Store Credit · ক্রেডিট যথেষ্ট নয়।');
+        }
+      });
+      if(splitPaidCents!==cents)found.push('Payments must equal total exactly · জমা মোট টাকার সমান হতে হবে।');
     }
     for (const line of lines) {
       if (!Number.isSafeInteger(line.qty) || line.qty <= 0) found.push(line.product.name + ': enter a whole-number quantity.');
@@ -159,7 +192,7 @@ export function LivePosPage() {
     return found;
   }, [canPost, bootstrap, lines, customerName, customerPhone, discountAmount, subtotal,
       paidAmount, total, requiresAccount, matchingAccounts, bankAccountId, outcomeUnknown,
-      paymentMethod, selectedCustomer]);
+      paymentMethod, selectedCustomer, splitEnabled, splitRows, splitPaidCents]);
   const addProduct = (p: Product) => {
     const record = bootstrap?.products.find(item => item.id === p.id);
     if (!record || !supported(record)) {
@@ -230,10 +263,21 @@ export function LivePosPage() {
     setCustomerName(customer.name); setCustomerPhone(customer.phone);
     setFatherName(customer.fatherName || ''); setAddress(customer.address || '');
   };
+  const toggleSplit=()=>{
+    setSplitEnabled(current=>{
+      if(!current)setSplitRows([
+        {id:crypto.randomUUID(),method:'Cash',amount:'',bankAccountId:''},
+        {id:crypto.randomUUID(),method:'Store Credit',amount:'',bankAccountId:''}
+      ]);
+      else setSplitRows([]);
+      return !current;
+    });
+  };
   const resetSaleState=()=>{
     setSaleResetVersion(v=>v+1);
     setLines([]);setCustomerName('');setCustomerPhone('');setFatherName('');setAddress('');
     setPaid('');setDiscount('');setDiscountMode('amount');setPaymentMethod('Cash');setBankAccountId('');
+    setSplitEnabled(false);setSplitRows([]);
     setFinished(null);setReceipt(null);setReceiptOpen(false);setFeedback('');setError('');
     setShortageId(null);setSerialId(null);setAvailableSerials([]);
     saleRequestId.current=crypto.randomUUID();
@@ -266,7 +310,7 @@ export function LivePosPage() {
     if (postingRef.current || saving || errors.length) { setError(errors[0] || 'Sale cannot be posted.'); return; }
     postingRef.current = true;
     const method = paymentMethod;
-    const paymentType: PosSalePayload['paymentType'] = paidAmount === 0 ? 'Due' : paidAmount >= total ? 'Cash' : 'Partial';
+    const paymentType: PosSalePayload['paymentType'] = splitEnabled?'Cash':paidAmount === 0 ? 'Due' : paidAmount >= total ? 'Cash' : 'Partial';
     const payload: PosSalePayload = {
       clientRequestId: saleRequestId.current,
       customerId: selectedCustomer?.id,
@@ -274,7 +318,11 @@ export function LivePosPage() {
       customerAddress: address.trim(), customerFatherName: fatherName.trim(),
       discount: discountAmount, paymentType,
       paidAmount: paymentType === 'Partial' ? paidAmount : 0,
-      paymentMethod: method, bankAccountId: requiresAccount ? bankAccountId : '',
+      paymentMethod: splitEnabled?'Cash':method, bankAccountId: requiresAccount ? bankAccountId : '',
+      ...(splitEnabled?{tenders:splitRows.map(row=>({
+        method:row.method,amountCents:splitCents(row.amount)!,
+        ...(row.method==='Bank'||row.method==='Mobile Banking'?{bankAccountId:row.bankAccountId}:{})
+      }))}:{}),
       items: lines.map(l => ({
         productId: l.product.id, name: l.product.name, qty: l.qty,
         unitPrice: l.price, fulfillmentMode: l.source.mode,
@@ -501,6 +549,13 @@ export function LivePosPage() {
           total={total} paid={paid} paidAmount={paidAmount} due={due}
           paymentMethod={paymentMethod} bankAccountId={bankAccountId}
           matchingAccounts={matchingAccounts} requiresAccount={requiresAccount}
+          splitEnabled={splitEnabled} splitRows={splitRows} splitPaidCents={splitPaidCents}
+          onToggleSplit={toggleSplit}
+          onSplitAdd={()=>setSplitRows(rows=>rows.length>=8?rows:[...rows,{
+            id:crypto.randomUUID(),method:'Cash',amount:'',bankAccountId:''
+          }])}
+          onSplitRemove={id=>setSplitRows(rows=>rows.length<=2?rows:rows.filter(row=>row.id!==id))}
+          onSplitUpdate={(id,patch)=>setSplitRows(rows=>rows.map(row=>row.id===id?{...row,...patch}:row))}
           onPaid={setPaid}
           onPaymentMethod={method => { setPaymentMethod(method); setBankAccountId(''); setPaid(method==='Store Credit'?String(total):''); }}
           onBankAccountId={setBankAccountId} paidRef={paidRef}
@@ -534,8 +589,14 @@ export function LivePosPage() {
           <p className="flex justify-between"><span>Customer</span><strong>{customerName}</strong></p>
           <p className="flex justify-between"><span>Products</span><strong>{lines.length}</strong></p>
           <p className="flex justify-between"><span>Grand total</span><strong>{taka(total)}</strong></p>
-          <p className="flex justify-between"><span>{paymentMethod==='Store Credit'?'Credit used · ক্রেডিট খরচ':'Paid'}</span><strong>{taka(paidAmount)}</strong></p>
-          {paymentMethod==='Store Credit'&&<p data-credit-review-notice className="text-xs text-teal-700">
+          <p className="flex justify-between"><span>{!splitEnabled&&paymentMethod==='Store Credit'?'Credit used · ক্রেডিট খরচ':'Paid'}</span><strong>{taka(paidAmount)}</strong></p>
+          {splitEnabled&&<div data-split-review className="space-y-1 border-y border-border py-2">
+            {splitRows.map((row,index)=><p key={row.id} className="flex justify-between gap-2 text-xs">
+              <span>{index+1}. {row.method}</span><strong>{taka((splitCents(row.amount)||0)/100)}</strong>
+            </p>)}
+            <p className="text-xs text-ink-500">Each source is saved separately · প্রতিটি মাধ্যম আলাদা জমা হয়</p>
+          </div>}
+          {!splitEnabled&&paymentMethod==='Store Credit'&&<p data-credit-review-notice className="text-xs text-teal-700">
             No cash/bank receipt · নগদ বা ব্যাংকে টাকা যোগ হবে না
           </p>}
           <p className="flex justify-between"><span>Due</span><strong>{taka(due)}</strong></p>
@@ -557,6 +618,12 @@ export function LivePosPage() {
           <p>Customer <strong>{finished?.customerName}</strong></p>
           <p>Total <strong>{taka(finished?.grandTotal || 0)}</strong></p>
           <p>Due <strong>{taka(finished?.dueAmount || 0)}</strong></p>
+          {!!finished?.paymentAllocations?.length&&<div data-split-posted-provenance className="space-y-1 border-t border-border pt-2">
+            <p className="text-xs font-semibold text-ink">Saved payment sources · জমার মাধ্যম</p>
+            {finished.paymentAllocations.map((source,index)=><p key={index} className="flex justify-between gap-2 text-xs">
+              <span>{source.method}</span><strong>{taka(source.amountCents/100)}</strong>
+            </p>)}
+          </div>}
         </div>
         <p className="text-xs text-ink-500">Receipts are fetched from the saved invoice. A4 invoice layout and editing remain in the Vue ERP.</p>
         <DialogFooter><Button variant="outline" disabled={receiptBusy || saving} onClick={()=>void openReceipt()}>
@@ -592,6 +659,12 @@ export function LivePosPage() {
               footer:bootstrap?.invoiceDesign?.settings?.['Invoice Footer']||''
             }}
           />
+          {!!receipt.paymentAllocations?.length&&<div data-split-receipt-provenance className="space-y-1 border-t border-border bg-card px-3 py-2 text-xs text-ink">
+            <p className="font-semibold">Payment breakdown · জমার বিবরণ</p>
+            {receipt.paymentAllocations.map((source,index)=><div key={index} className="flex justify-between gap-2">
+              <span>{source.method}</span><strong>{taka(source.amountCents/100)}</strong>
+            </div>)}
+          </div>}
         </div>}
         <DialogFooter><Button variant="outline" onClick={()=>setReceiptOpen(false)}>Close</Button>
           <Button disabled={!receipt} onClick={()=>window.print()}>Print receipt · প্রিন্ট</Button>

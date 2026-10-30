@@ -112,17 +112,24 @@ export interface PosSaleLine {
   vendorId?: string;
   vendorUnitCost?: number;
 }
+export interface PosTenderAllocation {
+  method:'Cash'|'Bank'|'Mobile Banking'|'Store Credit';
+  amountCents:number;
+  bankAccountId?:string;
+  sourceKey?:string;
+}
 export interface PosSalePayload {
   clientRequestId: string;
   customerId?: string; customerName: string; customerPhone: string; customerAddress?: string;
   customerFatherName?: string; discount: number; paymentType: 'Cash' | 'Due' | 'Partial';
-  paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking' | 'Store Credit'; bankAccountId?: string;
+  paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking' | 'Store Credit'; bankAccountId?: string; tenders?: PosTenderAllocation[];
   items: PosSaleLine[];
 }
 export interface PosInvoice {
   invoiceId: string; date: string; customerName: string; customerPhone: string;
   customerFatherName?: string; customerAddress?: string; subtotal: number; discount: number;
   paymentMethod: string;
+  paymentAllocations?: PosTenderAllocation[];
   items: Array<{productId:string;productName:string;quantity:number;unit:string;unitPrice:number;lineTotal:number;
     unitDescription?:string;unitSnapshot?:{revision:number;profile:PosUnitProfile;quantities:Record<string,number>}}>;
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;

@@ -75,6 +75,7 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls,creditFixture=false){
+  let lastPostedInvoice=null;
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -84,7 +85,10 @@ function startMocking(context,calls,creditFixture=false){
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
-      ok:true,products:[...posProducts,posMixedProduct],customers:creditFixture?[{id:'CUS-CREDIT-E2E',name:'Credit UI Buyer',phone:'01000009801',fatherName:'',address:'',currentDue:50,storeCreditCents:15000,storeCreditBlocked:false}]:[],bankAccounts:[],
+      ok:true,products:[...posProducts,posMixedProduct],customers:creditFixture?[{id:'CUS-CREDIT-E2E',name:'Credit UI Buyer',phone:'01000009801',fatherName:'',address:'',currentDue:50,storeCreditCents:15000,storeCreditBlocked:false}]:[],bankAccounts:creditFixture?[
+        {id:'UI-BANK-1',name:'UI Bank',accountType:'Bank'},
+        {id:'UI-MOBILE-1',name:'UI Mobile',accountType:'Mobile Banking'}
+      ]:[],
       vendors:[{id:'VEN-UI-1',name:'UI Test Vendor',phone:'01000000111',currentDue:0,status:'Active'}],
       activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
       invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop','Shop Name Bangla':'টেস্ট দোকান',
@@ -121,10 +125,14 @@ function startMocking(context,calls,creditFixture=false){
       if(posted.items[0]?.productId==='PRD-000003')
         assert.deepEqual(posted.items[0].serialNumbers,['SN-UI-001']);
       calls.push({method:'ASSERT',path:'/api/pos/sales',payload:posted});
-      return respond({ok:true,invoice});
+      lastPostedInvoice=posted.tenders?.length?{
+        ...invoice,paymentMethod:'Split',
+        paymentAllocations:posted.tenders,paidAmount:invoice.grandTotal,dueAmount:0
+      }:invoice;
+      return respond({ok:true,invoice:lastPostedInvoice});
     }
     if(path==='/api/pos/invoices/UI-E2E-INV-001'&&request.method()==='GET')
-      return respond({ok:true,invoice});
+      return respond({ok:true,invoice:lastPostedInvoice||invoice});
     if(path.startsWith('/api/pos/products/')&&path.endsWith('/tracking-options')&&request.method()==='GET')
       return respond({ok:true,serials:[{serialNumber:'SN-UI-001'}]});
     if(path==='/api/pos/vendors'&&request.method()==='POST')
@@ -625,6 +633,119 @@ try{
     assert.equal(payload?.bankAccountId,'');
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
     results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('G2-G split payment POS stays compact, source-exact and single-post across sizes',async()=>{
+    for(const width of [390,768,1440]){
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const api=[];await startMocking(ctx,api,true);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+      try{
+        await page.goto(base+'/#/app/pos');
+        await page.locator('[data-live-pos]').waitFor();
+        await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+        const name=page.getByRole('combobox',{name:'Customer name'});
+        await name.fill('Credit UI Buyer');await name.press('Tab');
+        await page.locator('[data-pos-store-credit-balance]').waitFor();
+        await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+        const rows=page.locator('[data-split-tender-row]');
+        assert.equal(await rows.count(),2,'Default Cash + Store Credit, without redesigning the checkout');
+        await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('50');
+        await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('71');
+        assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isDisabled(),true,
+          'Overpaid split may not post');
+        await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('70');
+        assert.match(await page.locator('[data-split-payment-total]').innerText(),/120/);
+        assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isEnabled(),true);
+        await screenshot(page,'phase3g2-split-pos-'+width);
+        await page.getByRole('button',{name:'Review and post real sale'}).click();
+        await page.locator('[data-split-review]').waitFor();
+        await page.getByRole('button',{name:'Confirm and post'}).click();
+        await page.locator('[data-split-posted-provenance]').waitFor({timeout:12000});
+        assert.match(await page.locator('[data-split-posted-provenance]').innerText(),/Store Credit/);
+        await page.getByRole('button',{name:'View / Print receipt'}).click();
+        await page.locator('[data-split-receipt-provenance]').waitFor({timeout:12000});
+        assert.match(await page.locator('[data-split-receipt-provenance]').innerText(),/Cash/);
+        const posted=api.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales');
+        assert.equal(posted.length,1);
+        assert.deepEqual(posted[0].payload.tenders,[
+          {method:'Cash',amountCents:5000},
+          {method:'Store Credit',amountCents:7000}
+        ]);
+        assert.equal(posted[0].payload.customerId,'CUS-CREDIT-E2E');
+        assert.equal(posted[0].payload.paymentType,'Cash');
+        assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
+        results.apiCalls.push(...api);
+      }finally{await ctx.close();}
+    }
+  });
+  await withCheck('G2-G split payment rejects missing bank account and permits row removal',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    try{
+      await page.goto(base+'/#/app/pos');
+      await page.locator('[data-live-pos]').waitFor();
+      await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+      await page.getByRole('combobox',{name:'Customer name'}).fill('Credit UI Buyer');
+      await page.getByRole('combobox',{name:'Customer name'}).press('Tab');
+      await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('40');
+      await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('60');
+      await page.getByRole('button',{name:'Add payment · আরও মাধ্যম'}).click();
+      assert.equal(await page.locator('[data-split-tender-row]').count(),3);
+      await page.getByRole('combobox',{name:'Split method 3'}).selectOption('Bank');
+      await page.getByRole('spinbutton',{name:'Split amount 3'}).fill('20');
+      assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isDisabled(),true);
+      await page.getByRole('button',{name:'Remove split payment 3'}).click();
+      assert.equal(await page.locator('[data-split-tender-row]').count(),2);
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('60');
+      await page.getByRole('button',{name:'Review and post real sale'}).click();
+      await page.locator('[data-split-review]').waitFor();
+      assert.match(await page.locator('[data-split-review]').innerText(),/Store Credit/);
+      assert.equal(api.filter(x=>x.path==='/api/pos/sales').length,0);
+      await page.getByRole('button',{name:'Cancel'}).click();
+      results.apiCalls.push(...api);
+    }finally{await ctx.close();}
+  });
+  await withCheck('G2-G bank+mobile+Store Credit selects exact active accounts before one post',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api,true);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    try{
+      await page.goto(base+'/#/app/pos');
+      await page.locator('[data-live-pos]').waitFor();
+      await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+      const name=page.getByRole('combobox',{name:'Customer name'});
+      await name.fill('Credit UI Buyer');await name.press('Tab');
+      await page.locator('[data-pos-store-credit-balance]').waitFor();
+      await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
+      await page.getByRole('combobox',{name:'Split method 1'}).selectOption('Bank');
+      await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('20');
+      await page.getByRole('combobox',{name:'Split account 1'}).selectOption('UI-BANK-1');
+      await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('60');
+      await page.getByRole('button',{name:'Add payment · আরও মাধ্যম'}).click();
+      await page.getByRole('combobox',{name:'Split method 3'}).selectOption('Mobile Banking');
+      await page.getByRole('spinbutton',{name:'Split amount 3'}).fill('40');
+      await page.getByRole('combobox',{name:'Split account 3'}).selectOption('UI-MOBILE-1');
+      assert.equal(await page.getByRole('button',{name:'Review and post real sale'}).isEnabled(),true);
+      await screenshot(page,'phase3g2-split-bank-mobile-credit-768');
+      await page.getByRole('button',{name:'Review and post real sale'}).click();
+      await page.locator('[data-split-review]').waitFor();
+      await page.getByRole('button',{name:'Confirm and post'}).click();
+      const posts=api.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/sales');
+      assert.equal(posts.length,1);
+      assert.deepEqual(posts[0].payload.tenders,[
+        {method:'Bank',amountCents:2000,bankAccountId:'UI-BANK-1'},
+        {method:'Store Credit',amountCents:6000},
+        {method:'Mobile Banking',amountCents:4000,bankAccountId:'UI-MOBILE-1'}
+      ]);
+      assert.equal(posts[0].payload.customerId,'CUS-CREDIT-E2E');
+      assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,1);
+      results.apiCalls.push(...api);
+    }finally{await ctx.close();}
   });
   await withCheck('G2-D Store Credit return shows liability history and no cash payout',async()=>{
     const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});

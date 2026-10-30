@@ -58,7 +58,14 @@ try{
     "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('RC-SALE','P','Switch',5,10,50)",
     "INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('RC-RETURN','2026-10-30','RC-SALE','RC-CUS','Reclass Customer','01000008919','Store Credit',10,'Old credit used as due')",
     "INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('RC-RETURN','RC-SALE','P','Switch',1,10,10)",
-    "INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES ('RC-LEDGER','2026-10-30','RC-CUS','Reclass Customer','Sales Return Credit','RC-RETURN',0,10,-10,'Historical due offset')"
+    "INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES ('RC-LEDGER','2026-10-30','RC-CUS','Reclass Customer','Sales Return Credit','RC-RETURN',0,10,-10,'Historical due offset')",
+    "INSERT INTO customers(customer_id,customer_name,phone,current_due,status,is_deleted) VALUES ('D1-SPLIT-CUS','Split Buyer','01000008111',0,'Active',0)",
+    "INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method) VALUES ('D1-SPLIT-ORIGINAL','2026-10-30','D1-SPLIT-CUS','Split Buyer','01000008111',40,40,0,'Cash','Paid','Cash')",
+    "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('D1-SPLIT-CASH','2026-10-30','Sale','D1-SPLIT-ORIGINAL','Original paid cash',0,40,'Cash',0)",
+    "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('D1-SPLIT-ORIGINAL','WIRE-1','Wire',4,10,40)",
+    "INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('D1-SPLIT-RETURN','2026-10-30','D1-SPLIT-ORIGINAL','D1-SPLIT-CUS','Split Buyer','01000008111','Store Credit',30,'Verified split balance')",
+    "INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('D1-SPLIT-RETURN','D1-SPLIT-ORIGINAL','WIRE-1','Wire',3,10,30)",
+    "INSERT INTO customer_store_credit_entries(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_by) VALUES ('D1-SPLIT-ISSUE','D1-SPLIT-CUS','ISSUE','Sales Return','D1-SPLIT-RETURN',3000,3000,'tester')"
   ];
   for(const stmt of fixtureSql)sql(stmt);
   worker=spawn(process.execPath,[wrangler,'dev','--config',cfg,'--local','--persist-to',state,
@@ -96,14 +103,47 @@ try{
   const account=await api('GET','/api/pos/store-credit/RC-CUS',undefined,token);
   assert.equal(account.availableCents,1000,JSON.stringify(account));
   assert.equal(account.due,0);
+  const session=await api('POST','/api/pos/cash-session/start',{openingCash:0},token);
+  assert.equal(session.ok,true,JSON.stringify(session));
+  const wire=await api('POST','/api/products',{
+    productName:'Split D1 Cable',category:'Electrical',unit:'Pcs',
+    purchasePrice:5,sellingPrice:10,currentStock:8,minimumStock:0,status:'Active'
+  },token);
+  assert.equal(wire.ok,true,JSON.stringify(wire));
+  const splitInput={
+    clientRequestId:'d1-split-credit-source-0001',
+    customerId:'D1-SPLIT-CUS',customerName:'Split Buyer',customerPhone:'01000008111',
+    paymentType:'Cash',paymentMethod:'Cash',
+    tenders:[{method:'Cash',amountCents:2000},{method:'Store Credit',amountCents:3000}],
+    items:[{productId:wire.productId,qty:5,unitPrice:10}]
+  };
+  const mixed=await api('POST','/api/pos/sales',splitInput,token);
+  assert.equal(mixed.ok,true,JSON.stringify(mixed));
+  assert.equal(mixed.invoice.paymentMethod,'Split');
+  assert.equal(mixed.invoice.dueAmount,0);
+  assert.equal(mixed.invoice.paymentAllocations.length,2);
+  const replay=await api('POST','/api/pos/sales',splitInput,token);
+  assert.equal(replay.invoice.invoiceId,mixed.invoice.invoiceId);
+  assert.equal((await api('POST','/api/pos/sales',{
+    ...splitInput,tenders:[{method:'Cash',amountCents:2001},{method:'Store Credit',amountCents:2999}]
+  },token)).status,409);
+  const remaining=await api('GET','/api/pos/store-credit/D1-SPLIT-CUS',undefined,token);
+  assert.equal(remaining.availableCents,0,JSON.stringify(remaining));
   await stop();
+  const sid=mixed.invoice.invoiceId.replace(/'/g,'');
+  assert.equal(sql("SELECT COUNT(*) n FROM sale_tender_allocations WHERE invoice_id='"+sid+"'")[0].n,2);
+  assert.equal(sql("SELECT SUM(amount_cents) n FROM sale_tender_allocations WHERE invoice_id='"+sid+"'")[0].n,5000);
+  assert.equal(sql("SELECT SUM(credit) n FROM cash_book WHERE reference='"+sid+"'")[0].n,20);
+  assert.equal(sql("SELECT SUM(delta_cents) n FROM customer_store_credit_entries WHERE customer_id='D1-SPLIT-CUS'")[0].n,0);
+  assert.equal(sql("SELECT current_stock n FROM products WHERE product_id='"+wire.productId+"'")[0].n,3);
+  assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='CREATE_SALE' AND entity_id='"+sid+"'")[0].n,1);
   assert.equal(sql("SELECT current_due due FROM customers WHERE customer_id='RC-CUS'")[0].due,0);
   assert.equal(sql('SELECT COUNT(*) n FROM store_credit_historical_adjustments')[0].n,1);
   assert.equal(sql("SELECT COUNT(*) n FROM customer_ledger WHERE type='Store Credit Reclassification'")[0].n,1);
   assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='RECONCILE_STORE_CREDIT'")[0].n,1);
-  assert.equal(sql('SELECT COUNT(*) n FROM cash_book')[0].n,1);
+  assert.equal(sql("SELECT COUNT(*) n FROM cash_book WHERE reference IN ('RC-SALE','D1-SPLIT-ORIGINAL','"+sid+"')")[0].n,3);
   assert.equal(sql('SELECT COUNT(*) n FROM bank_book')[0].n,0);
-  process.stdout.write('PASS historical credit atomic reclassification on isolated Worker/D1\n');
+  process.stdout.write('PASS historical credit plus split cash-credit posting on isolated Worker/D1\n');
 }catch(err){
   process.stderr.write('FAIL isolated Worker/D1 historical credit reclassification: '+String(err)+'\n'+logs.slice(-2200)+'\n');
   process.exitCode=1;
