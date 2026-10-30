@@ -298,6 +298,23 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id=?").run(bank.id);
       }
       assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      // TDD: a caller requesting only part of the invoice must NEVER trigger
+      // the existing whole-invoice refund by slipping extra JSON fields through.
+      const partialUrl='/api/sales-management/'+saleId+'/split-reversal';
+      for(const change of [
+        {requestedRefundCents:1000},
+        {items:[{productId:product.productId,qty:1,unitPrice:10}]},
+        {allocations:[{method:'Cash',amountCents:400}]}
+      ]){
+        const denied=await api('POST',partialUrl,{
+          reason:'Return only one item, not the entire invoice',...change
+        });
+        assert.equal(denied.status,400,
+          'partial-refund payload must be rejected, not reverse the full sale');
+        assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+        assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+        assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      }
       // G2-H Task 2: a final audit fault must roll back FIFO restore,
       // all money-source refunds, credit reissue, and reversal idempotency.
       const before={
