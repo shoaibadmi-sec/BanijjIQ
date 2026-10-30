@@ -903,14 +903,14 @@ try{
           await audit(page,'original-product-settings-390');
           await page.getByPlaceholder('Enter name').fill('New Category');
           await page.getByRole('button',{name:'Add',exact:true}).click();
-          await page.getByText('New Category').waitFor();
+          await page.locator('[data-live-products] tbody').getByText('New Category',{exact:true}).waitFor();
           assert.ok(api.some(x=>x.path==='/api/products/settings/lookups'&&x.method==='POST'));
           await page.getByRole('button',{name:'Actions for New Category'}).click();
           await page.getByRole('button',{name:'Deactivate',exact:true}).click();
           assert.ok(api.some(x=>x.method==='PUT'&&x.path.endsWith('/status')));
           await page.getByRole('button',{name:'Actions for New Category'}).click();
           await page.getByRole('button',{name:'Delete',exact:true}).click();
-          await page.getByText('New Category').waitFor({state:'detached'});
+          await page.locator('[data-live-products] tbody').getByText('New Category',{exact:true}).waitFor({state:'detached'});
           assert.ok(api.some(x=>x.method==='DELETE'&&x.path.includes('/settings/lookups/category/')));
           await page.getByRole('tab',{name:'Units',exact:true}).click();
           await page.getByText('PCS').first().waitFor();
