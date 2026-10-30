@@ -22,6 +22,7 @@ export function patchReportsNav(source) {
   next = replaceOnce(next, 'reportScreens[index-1]', 'primaryScreens[index-1]');
   next = replaceOnce(next, 'reportScreens.length - 1', 'primaryScreens.length - 1');
   next = replaceOnce(next, 'reportScreens.length) %', 'primaryScreens.length) %');
+  next = replaceOnce(next, 'reportScreens.length;', 'primaryScreens.length;');
   next = replaceOnce(next, 'onChange(reportScreens[next].id)', 'onChange(primaryScreens[next].id)');
   next = replaceOnce(next, '"reports-screen-" + reportScreens[next].id', '"reports-screen-" + primaryScreens[next].id');
   next = replaceOnce(next,
