@@ -160,3 +160,102 @@ test('G2-G rejects unimplemented split checkout before invoice, receipt or FIFO 
     assert.equal(row('SELECT COUNT(*) n FROM pos_sale_requests').n,0);
   }finally{db.close();}
 });
+
+
+for(const profile of ['cash-credit','bank-mobile-credit'] as const){
+  test('G2-G atomic '+profile+' sale: exact independent books, rollback and replay',async()=>{
+    const db=new SqliteDatabase(':memory:');
+    try{
+      runMigrations(db.native,resolve('migrations'));
+      let token='';
+      const api=async(method:string,path:string,body?:unknown)=>{
+        const res=await handleApiRequest(new Request('http://split-atomic.test'+path,{
+          method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},
+          body:body===undefined?undefined:JSON.stringify(body)
+        }),db);
+        return {status:res.status,...await res.json() as any};
+      };
+      const admin=await api('POST','/api/setup/admin',{
+        fullName:'Split Atomic Tester',phone:profile==='cash-credit'?'01000007111':'01000007112',
+        password:'SplitAtomicTest2026Strong!'
+      });
+      assert.equal(admin.ok,true,JSON.stringify(admin));token=admin.token;
+      assert.equal((await api('POST','/api/pos/cash-session/start',{openingCash:0})).ok,true);
+      const customerId='SPLIT-CUS';
+      db.native.prepare("INSERT INTO customers(customer_id,customer_name,phone,current_due,status,is_deleted) VALUES ('SPLIT-CUS','Split Buyer','01000007113',0,'Active',0)").run();
+      // Verified old cash-funded return is the only source of the liability.
+      db.native.prepare("INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method) VALUES ('SPLIT-ORIG','2026-10-30','SPLIT-CUS','Split Buyer','01000007113',40,40,0,'Cash','Paid','Cash')").run();
+      db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('SPLIT-ORIG-CASH','2026-10-30','Sale','SPLIT-ORIG','Original cash payment',0,40,'Cash',0)").run();
+      db.native.prepare("INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('SPLIT-ORIG','SPLIT-PROD','Wire',4,10,40)").run();
+      db.native.prepare("INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('SPLIT-RETURN','2026-10-30','SPLIT-ORIG','SPLIT-CUS','Split Buyer','01000007113','Store Credit',30,'Store Credit liability source')").run();
+      db.native.prepare("INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES ('SPLIT-RETURN','SPLIT-ORIG','SPLIT-PROD','Wire',3,10,30)").run();
+      db.native.prepare("INSERT INTO customer_store_credit_entries(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_by) VALUES ('SPLIT-ISSUE','SPLIT-CUS','ISSUE','Sales Return','SPLIT-RETURN',3000,3000,'tester')").run();
+      const product=await api('POST','/api/products',{
+        productName:'Split Cable',category:'Electrical',unit:'Pcs',purchasePrice:5,
+        sellingPrice:10,currentStock:20,minimumStock:0,status:'Active'
+      });
+      assert.equal(product.ok,true,JSON.stringify(product));
+      const bank=profile==='bank-mobile-credit'
+        ?await api('POST','/api/bank/accounts',{name:'Split Bank',accountType:'Bank',openingBalance:100})
+        :null;
+      const mobile=profile==='bank-mobile-credit'
+        ?await api('POST','/api/bank/accounts',{name:'Split Mobile',accountType:'Mobile Banking',openingBalance:100})
+        :null;
+      if(bank)assert.equal(bank.ok,true,JSON.stringify(bank));
+      if(mobile)assert.equal(mobile.ok,true,JSON.stringify(mobile));
+      const tenders=profile==='cash-credit'
+        ?[{method:'Cash',amountCents:2000},{method:'Store Credit',amountCents:3000}]
+        :[{method:'Bank',bankAccountId:bank.id,amountCents:1000},
+          {method:'Mobile Banking',bankAccountId:mobile.id,amountCents:2000},
+          {method:'Store Credit',amountCents:2000}];
+      const sale={
+        clientRequestId:'split-atomic-'+profile+'-2026',
+        customerId,customerName:'Split Buyer',customerPhone:'01000007113',
+        paymentType:'Cash',paymentMethod:'Cash',discount:0,tenders,
+        items:[{productId:product.productId,qty:5,unitPrice:10}]
+      };
+      const row=(sql:string,...args:unknown[])=>db.native.prepare(sql).get(...args) as any;
+      const baseline={
+        invoices:row('SELECT COUNT(*) n FROM sales').n,
+        credit:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+        cash:row('SELECT COUNT(*) n FROM cash_book').n,
+        bank:row('SELECT COUNT(*) n FROM bank_book').n
+      };
+      db.native.exec("CREATE TRIGGER split_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='CREATE_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_AUDIT_FAULT'); END");
+      const fault=await api('POST','/api/pos/sales',sale);
+      assert.equal(fault.ok,false,JSON.stringify(fault));
+      assert.equal(row('SELECT COUNT(*) n FROM sales').n,baseline.invoices);
+      assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,baseline.credit);
+      assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,baseline.cash);
+      assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,baseline.bank);
+      assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,0);
+      assert.equal(row('SELECT COUNT(*) n FROM pos_sale_requests').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,20);
+      db.native.exec('DROP TRIGGER split_audit_fault');
+      const good=await api('POST','/api/pos/sales',sale);
+      assert.equal(good.ok,true,JSON.stringify(good));
+      assert.equal(good.invoice.paidAmount,50);
+      assert.equal(good.invoice.dueAmount,0);
+      const saleId=good.invoice.invoiceId;
+      const allocations=db.native.prepare('SELECT method,amount_cents,bank_account_id FROM sale_tender_allocations WHERE invoice_id=? ORDER BY line_number').all(saleId) as any[];
+      assert.deepEqual(allocations.map(x=>x.amount_cents),tenders.map(x=>x.amountCents));
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      assert.equal(row("SELECT SUM(delta_cents) n FROM customer_store_credit_entries WHERE customer_id='SPLIT-CUS'").n,
+        profile==='cash-credit'?0:1000);
+      assert.equal(row("SELECT COALESCE(SUM(credit),0) n FROM cash_book WHERE reference=?",saleId).n,
+        profile==='cash-credit'?20:0);
+      assert.equal(row("SELECT COALESCE(SUM(credit),0) n FROM bank_book WHERE reference=?",saleId).n,
+        profile==='cash-credit'?0:30);
+      if(bank){
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank.id).n,110);
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',mobile.id).n,120);
+      }
+      const retry=await api('POST','/api/pos/sales',sale);
+      assert.equal(retry.ok,true,JSON.stringify(retry));
+      assert.equal(retry.invoice.invoiceId,saleId);
+      assert.equal((await api('POST','/api/pos/sales',{...sale,tenders:tenders.map((x,i)=>i?x:{...x,amountCents:x.amountCents-1})})).status,409);
+      assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,tenders.length);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+    }finally{db.close();}
+  });
+}
