@@ -676,6 +676,10 @@ try{
         await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
         const name=page.getByRole('combobox',{name:'Customer name'});
         await name.fill('Credit UI Buyer');await name.press('Tab');
+        // Customer auto-selection runs on blur; wait for its real account state
+        // before asserting the dependent Store Credit balance.
+        await page.locator('[data-pos-previous-balance-inline]').waitFor({timeout:12000});
+        assert.equal(await page.getByRole('combobox',{name:'Customer phone'}).inputValue(),'01000009801');
         await page.locator('[data-pos-store-credit-balance]').waitFor();
         await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
         const rows=page.locator('[data-split-tender-row]');
@@ -750,6 +754,8 @@ try{
       await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
       const name=page.getByRole('combobox',{name:'Customer name'});
       await name.fill('Credit UI Buyer');await name.press('Tab');
+      await page.locator('[data-pos-previous-balance-inline]').waitFor({timeout:12000});
+      assert.equal(await page.getByRole('combobox',{name:'Customer phone'}).inputValue(),'01000009801');
       await page.locator('[data-pos-store-credit-balance]').waitFor();
       await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
       await page.getByRole('combobox',{name:'Split method 1'}).selectOption('Bank');
