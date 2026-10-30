@@ -618,11 +618,11 @@ try{
       const page=await ctx.newPage();
       await page.goto(base+'/#/app/reports?screen=library&report=customer-sales&search=CI-CUSTOMERS&from=2026-10-01&to=2026-10-30');
       const rows=page.locator('[data-report-row]');
-      await page.waitForFunction(()=>document.querySelectorAll('[data-report-row]').length===3,{timeout:10000});
+      await page.waitForFunction(()=>document.querySelectorAll('[data-report-row]').length===3,null,{timeout:10000});
       assert.equal(await rows.count(),3,'same name with different phone or missing identity cannot be one buyer');
       const contents=await rows.allInnerTexts();
       assert.equal(contents.filter(x=>x.includes('Same Name')).length,3);
-      assert.ok(contents.some(x=>/৳\\s*150(?:\\D|$)/.test(x)&&/৳\\s*50(?:\\D|$)/.test(x)&&/৳\\s*100(?:\\D|$)/.test(x)),
+      assert.ok(contents.some(x=>/৳\s*150(?:\D|$)/.test(x)&&/৳\s*50(?:\D|$)/.test(x)&&/৳\s*100(?:\D|$)/.test(x)),
         'same phone customer must combine exactly two invoice totals and paid/due amounts');
       assert.ok(calls.some(x=>x.path==='/api/reports/v2/rows'&&x.method==='GET'));
       await audit(page,'customer-distinct-identities');
