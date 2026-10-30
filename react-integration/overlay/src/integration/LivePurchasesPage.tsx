@@ -6,11 +6,12 @@ import {Input} from '../components/Input';
 import {PageHeader} from '../components/PageHeader';
 import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from '../components/Table';
 import {canUseModule,useBackendSession} from './BackendGate';
-import {BackendRequestError,type BackendProduct} from './banijjApi';
-import {createDuePurchase,getPurchaseProducts,getRealPurchases,searchPurchaseSuppliers,validateDuePurchase,
+import {BackendRequestError,type BackendProduct,type PosProfilePreview} from './banijjApi';
+import {LiveMultiUnitQuantity} from './LiveMultiUnitQuantity';
+import {createDuePurchase,getPurchaseProducts,getRealPurchases,getPurchaseUnitProfile,quotePurchaseLine,searchPurchaseSuppliers,validateDuePurchase,
  type DuePurchaseLine,type PurchaseSupplier,type PurchaseRecord} from './purchaseApi';
 
-type Line=DuePurchaseLine&{key:string};
+type Line=DuePurchaseLine&{key:string;profile?:PosProfilePreview|null;profileBusy?:boolean;profileError?:string};
 const money=(value:number)=>'৳'+Number(value||0).toLocaleString('en-BD',{maximumFractionDigits:2});
 const positive=(value:string)=>value!==''&&Number.isFinite(Number(value))&&Number(value)>=0;
 const newLine=():Line=>({key:crypto.randomUUID(),productId:'',qty:1,unitPrice:0});
@@ -108,9 +109,42 @@ export function LivePurchaseEditorPage(){
   },[permitted,open,search]);
   const choose=(s:PurchaseSupplier)=>{setChosen(s);setSearch(s.name);setOpen(false);setError('');};
   const edit=(key:string,patch:Partial<Line>)=>setLines(before=>before.map(l=>l.key===key?{...l,...patch}:l));
-  const total=useMemo(()=>lines.reduce((sum,l)=>sum+Number(l.qty||0)*Number(l.unitPrice||0),0),[lines]);
-  const canPost=permitted&&!!chosen&&!chosen.needsReconciliation&&!loading&&!saving&&!outcomeUnknown;
+  const quote=(l:Line)=>{
+    if(!l.unitQuantities||!l.profile||!l.priceUnit)return Number(l.qty||0)*Number(l.unitPrice||0);
+    try{return quotePurchaseLine(l.profile,l.unitQuantities,l.priceUnit,l.unitPrice).total;}catch{return NaN;}
+  };
+  const total=lines.reduce((sum,l)=>sum+quote(l),0);
+  const canPost=permitted&&!!chosen&&!chosen.needsReconciliation&&!loading&&!saving&&!outcomeUnknown&&lines.every(l=>!l.profileBusy&&!l.profileError&&Number.isFinite(quote(l)));
   const productById=useMemo(()=>new Map(products.map(p=>[p.productId,p])),[products]);
+  async function selectProduct(key:string,id:string){
+    const p=productById.get(id);
+    edit(key,{productId:id,qty:1,unitPrice:Number(p?.purchasePrice||0),
+      unitQuantities:undefined,unitProfileRevision:undefined,priceUnit:undefined,
+      profile:null,profileBusy:!!id,profileError:undefined});
+    if(!id)return;
+    try{
+      const data=await getPurchaseUnitProfile(id);
+      setLines(previous=>previous.map(l=>{
+        if(l.key!==key||l.productId!==id)return l;
+        if(!data.profile)return {...l,profile:null,profileBusy:false};
+        const profile={...data.profile,revision:data.revision,postingEnabled:data.postingEnabled};
+        return {...l,profile,profileBusy:false,qty:1,
+          unitProfileRevision:data.revision,unitQuantities:{[data.profile.baseUnit]:1},
+          priceUnit:data.profile.baseUnit,unitPrice:Number(p?.purchasePrice||0)};
+      }));
+    }catch(e){
+      setLines(previous=>previous.map(l=>l.key===key&&l.productId===id
+        ?{...l,profileBusy:false,profileError:e instanceof Error?e.message:'Unit profile unavailable'}:l));
+    }
+  }
+  function changeMixedQty(l:Line,unit:string,value:number){
+    if(!l.profile||!l.unitQuantities)return;
+    const entries={...l.unitQuantities,[unit]:value};
+    let qty=0;
+    try{qty=quotePurchaseLine(l.profile,entries,l.priceUnit||l.profile.baseUnit,l.unitPrice).qty;}
+    catch{qty=l.profile.units.reduce((sum,u)=>sum+(entries[u.unit]||0)*u.factor,0);}
+    edit(l.key,{unitQuantities:entries,qty});
+  }
   async function submit(){
     if(posting.current||!canPost)return;
     setError('');
@@ -133,7 +167,7 @@ export function LivePurchaseEditorPage(){
   if(!permitted)return <p role="alert" className="text-danger">Purchases add permission required · ক্রয় এন্ট্রির অনুমতি নেই</p>;
   return <section className="mx-auto max-w-[1200px] space-y-4" data-live-purchase-editor>
     <PageHeader title="New Purchase" titleBn="নতুন ক্রয়" compact
-      description="Phase 4A: saved supplier and base-unit due purchase only."
+      description="Live supplier, joined 2–4-unit quantities and cost-per-unit purchasing."
       actions={<Button variant="outline" size="sm" onClick={()=>navigate('/app/purchases')}><ArrowLeft className="size-4"/> Purchase list</Button>}/>
     {error&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {outcomeUnknown&&<div role="alert" className="rounded-lg border border-warning bg-warning-bg p-3 text-sm text-warning">
@@ -183,24 +217,47 @@ export function LivePurchaseEditorPage(){
       <div className="overflow-x-auto">
         <Table scrollRegionLabel="Purchase entry lines" className="min-w-[620px]">
           <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Stock unit</TableHead>
-            <TableHead>Quantity</TableHead><TableHead>Unit cost ৳</TableHead>
+            <TableHead>Quantity</TableHead><TableHead>Price in</TableHead><TableHead>Unit cost ৳</TableHead>
             <TableHead className="text-right">Total</TableHead><TableHead className="w-9"> </TableHead>
           </TableRow></TableHeader>
           <TableBody>{lines.map(l=><TableRow key={l.key}>
             <TableCell><select aria-label="Product" value={l.productId}
-              onChange={e=>{const p=productById.get(e.target.value);edit(l.key,{productId:e.target.value,unitPrice:Number(p?.purchasePrice||0)});}}
+              onChange={e=>void selectProduct(l.key,e.target.value)}
               className="h-9 w-full min-w-[190px] rounded-md border border-border bg-card px-2 text-sm text-ink">
                 <option value="">Choose product…</option>
                 {products.map(p=><option key={p.productId} value={p.productId}>{p.displayName||p.productName}</option>)}
               </select></TableCell>
             <TableCell className="text-xs">{productById.get(l.productId)?.unit||'—'}</TableCell>
-            <TableCell><Input aria-label="Purchase quantity" type="number" min="0.0001" step="0.0001"
-              value={l.qty} onChange={e=>edit(l.key,{qty:e.target.value===''?0:Number(e.target.value)})}
-              className="w-24"/></TableCell>
+            <TableCell>{l.profile&&l.unitQuantities
+              ?<div className="w-[164px]"><LiveMultiUnitQuantity
+                profile={l.profile} quantities={l.unitQuantities}
+                productName={productById.get(l.productId)?.productName||'Product'}
+                onChange={(unit,value)=>changeMixedQty(l,unit,value)}
+                onLastEnter={()=>{}} disabled={saving||outcomeUnknown}/></div>
+              :<Input aria-label="Purchase quantity" type="number" min="0.0001" step="0.0001"
+                disabled={!!l.profileBusy||!!l.profileError}
+                value={l.qty} onChange={e=>edit(l.key,{qty:e.target.value===''?0:Number(e.target.value)})}
+                className="w-24"/>}
+              {l.profileBusy&&<span className="text-xs text-ink-500">Loading units…</span>}
+              {l.profileError&&<span role="alert" className="text-xs text-danger">{l.profileError}</span>}
+              </TableCell>
+            <TableCell>{l.profile&&l.unitQuantities
+             ?<select aria-label="Purchase price unit" value={l.priceUnit||l.profile.baseUnit}
+               onChange={e=>{
+                 const chosen=l.profile!.units.find(u=>u.unit===e.target.value);
+                 const prior=l.profile!.units.find(u=>u.unit===l.priceUnit);
+                 const equivalent=prior&&chosen
+                   ?Math.round(l.unitPrice*chosen.factor/prior.factor*10000)/10000:l.unitPrice;
+                 edit(l.key,{priceUnit:e.target.value,unitPrice:equivalent});
+               }}
+               className="h-9 w-[77px] rounded-md border border-border bg-card px-1 text-xs text-ink">
+                {l.profile.units.map(u=><option key={u.unit} value={u.unit}>{u.symbol}</option>)}
+               </select>:<span className="text-xs text-ink-600">{productById.get(l.productId)?.unit||'—'}</span>}
+             </TableCell>
             <TableCell><Input aria-label="Purchase unit cost" type="number" min="0" step="0.0001"
               value={l.unitPrice} onChange={e=>edit(l.key,{unitPrice:e.target.value===''?0:Number(e.target.value)})}
               className="w-28"/></TableCell>
-            <TableCell className="text-right text-sm">{positive(String(l.qty))&&positive(String(l.unitPrice))?money(l.qty*l.unitPrice):'—'}</TableCell>
+            <TableCell className="text-right text-sm">{Number.isFinite(quote(l))&&positive(String(l.unitPrice))?money(quote(l)):'—'}</TableCell>
             <TableCell><Button size="icon" variant="ghost" title="Remove line" aria-label="Remove purchase line"
               onClick={()=>setLines(before=>before.filter(x=>x.key!==l.key))} disabled={saving||outcomeUnknown}>
               <Trash2 className="size-4"/></Button></TableCell>
@@ -208,7 +265,7 @@ export function LivePurchaseEditorPage(){
         </Table>
       </div>}
       <div className="mt-3 flex flex-wrap items-end justify-between gap-3 border-t border-border pt-3">
-        <div className="text-xs text-ink-500">Base stock units only. Multi-unit buying and paid tender are locked until Phases 4B/4D.</div>
+        <div className="text-xs text-ink-500">Mixed quantities remain a single field. Costs are entered per selected price unit; stock posts in base units. Paid tender remains locked until 4D.</div>
         <div className="text-right"><p className="text-xs text-ink-600">Supplier payable for this purchase</p>
           <p className="text-xl font-semibold text-ink">{Number.isFinite(total)?money(total):'—'}</p>
           <Button className="mt-2" disabled={!canPost||!lines.length||!products.length}
