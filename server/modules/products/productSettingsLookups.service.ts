@@ -16,8 +16,8 @@ function parseProfile(row:ProfileRow,baseUnit:string):string[] {
     return [];
   const names=profile.units.map((u:unknown)=>u&&typeof u==='object'&&'unit' in u?(u as {unit:unknown}).unit:null);
   if(names.some((name:unknown)=>typeof name!=='string'||!name.trim())||
-      new Set(names.map((name:string)=>key(name))).size!==names.length||
-      !names.some((name:string)=>key(name)===key(baseUnit))||
+      new Set(names.map((name)=>key(String(name)))).size!==names.length||
+      !names.some((name)=>key(String(name))===key(baseUnit))||
       !('baseUnit' in profile)||typeof profile.baseUnit!=='string'||key(profile.baseUnit)!==key(baseUnit))
     return [];
   return names as string[];
