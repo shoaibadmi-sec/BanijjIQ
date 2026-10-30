@@ -289,6 +289,25 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         .run(item.unit_price,item.id);
       assert.equal((await api('GET','/api/sales-management/'+saleId+'/split-reversal')).preview.eligible,true,
         'verified original source must remain eligible after fixture restoration');
+      // TDD: full refund preflight must reject an already-filled FIFO lot
+      // before allowing an operator to approve any original-source payout.
+      const originalLot=(db.native.prepare(
+        'SELECT lot.lot_id,lot.remaining_quantity,lot.original_quantity '+
+        'FROM stock_lots lot JOIN sale_item_lots used ON used.lot_id=lot.lot_id '+
+        'WHERE used.invoice_id=? ORDER BY used.id LIMIT 1'
+      ).get(saleId) as any);
+      assert.ok(originalLot,'full split sale must retain original FIFO lot evidence');
+      assert.ok(originalLot.remaining_quantity<originalLot.original_quantity);
+      db.native.prepare('UPDATE stock_lots SET remaining_quantity=? WHERE lot_id=?')
+        .run(originalLot.original_quantity,originalLot.lot_id);
+      const capacityBlocked=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+      assert.equal(capacityBlocked.preview.eligible,false,
+        'FIFO lot with no restoration capacity must be rejected at PREVIEW, not just POST');
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
+      db.native.prepare('UPDATE stock_lots SET remaining_quantity=? WHERE lot_id=?')
+        .run(originalLot.remaining_quantity,originalLot.lot_id);
+      assert.equal((await api('GET','/api/sales-management/'+saleId+'/split-reversal')).preview.eligible,true);
+
       // An inactive original bank account must block refund rather than
       // redirecting funds to a different source or rewriting history.
       if(bank){
@@ -323,6 +342,31 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
         bank:row('SELECT COUNT(*) n FROM bank_book').n,
         credit:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n
       };
+      // Real transaction failure injection: the refund must never leave
+      // cash/bank debited or FIFO stock restored when credit issuance fails.
+      db.native.exec("CREATE TRIGGER split_credit_issue_fault BEFORE INSERT ON customer_store_credit_entries WHEN NEW.entry_type='ISSUE' AND NEW.source_type='Sales Return' BEGIN SELECT RAISE(ABORT,'CREDIT_ISSUE_FAILURE'); END");
+      const creditFault=await api('POST',url,reversalBody);
+      assert.equal(creditFault.ok,false,JSON.stringify(creditFault));
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+      assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
+      assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+      assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+      assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+      assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+      db.native.exec('DROP TRIGGER split_credit_issue_fault');
+      if(bank){
+        db.native.exec("CREATE TRIGGER split_bank_refund_fault BEFORE INSERT ON bank_book WHEN NEW.type='Sales Return' BEGIN SELECT RAISE(ABORT,'BANK_REFUND_FAILURE'); END");
+        const bankFault=await api('POST',url,reversalBody);
+        assert.equal(bankFault.ok,false,JSON.stringify(bankFault));
+        assert.equal(row('SELECT COUNT(*) n FROM sales_returns').n,before.returns);
+        assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,before.bank);
+        assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.credit);
+        assert.equal(row('SELECT COUNT(*) n FROM sales_return_refund_allocations').n,0);
+        assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
+        assert.equal(row('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank.id).n,110);
+        db.native.exec('DROP TRIGGER split_bank_refund_fault');
+      }
+
       db.native.exec("CREATE TRIGGER split_refund_audit_fault BEFORE INSERT ON audit_logs WHEN NEW.action='REVERSE_SPLIT_SALE' BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_AUDIT_FAULT'); END");
       const url='/api/sales-management/'+saleId+'/split-reversal';
       const reversalBody={reason:'Refund exactly to verified original payment sources'};
