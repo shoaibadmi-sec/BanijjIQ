@@ -169,6 +169,7 @@ export async function postSplitSaleReversalRoute(
   const total=Number(preview.preview.totalCents);
   if(!items.length||cents(original.grand_total)!==total||
     cents(original.discount)!==0||cents(original.subtotal)!==total||
+    new Set(items.map(i=>String(i.product_id))).size!==items.length||
     items.some(i=>!Number.isSafeInteger(Number(i.quantity))||Number(i.quantity)<=0||
       cents(i.line_total)!==cents(Number(i.quantity)*Number(i.unit_price)))||
     items.reduce((sum,i)=>sum+(cents(i.line_total)||0),0)!==total)
@@ -232,6 +233,10 @@ export async function postSplitSaleReversalRoute(
       i.product_id,n,Number(stock.current_stock)+n,returnId));
   }
   for(const [lotId,lot] of restored){
+    stmts.push(db.prepare(
+      'INSERT INTO split_refund_lot_restorations '+
+      '(return_id,invoice_id,lot_id,product_id,quantity,prior_remaining) VALUES (?,?,?,?,?,?)'
+    ).bind(returnId,id,lotId,lot.productId,lot.qty,lot.balance));
     stmts.push(db.prepare(
       "UPDATE stock_lots SET remaining_quantity=remaining_quantity+?,status='Active',updated_at=datetime('now') "+
       "WHERE lot_id=? AND source_type<>'OVERSOLD' AND remaining_quantity+?<=original_quantity"
