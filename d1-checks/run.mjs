@@ -3,7 +3,6 @@
  * Worker + D1 fixture. The config cannot address production D1.
  */
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -173,12 +172,24 @@ try{
     for(const path of ['/api/reports/v2/catalog','/api/reports/v2/summary',
       '/api/reports/v2/rows?report=sales','/api/reports/v2/audit'])
       assert.equal((await request('GET',path)).status,401,'reports require authentication: '+path);
-    const limitedToken='LOCAL-D1-REPORTS-NO-VIEW';
-    const limitedHash=createHash('sha256').update(limitedToken).digest('base64');
-    query("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) "+
-      "VALUES ('d1-report-denied','Restricted Reporter','01000000987','test-only','test-only','restricted-reports','Active','D1 CI')");
-    query("INSERT INTO auth_sessions(session_id,user_id,token_hash,expires_at) VALUES "+
-      "('d1-reports-denied-session','d1-report-denied','"+limitedHash+"',datetime('now','+2 hours'))");
+    // Exercise real user/role/session endpoints instead of running a second
+    // Wrangler D1 CLI writer against the live local Worker process. This
+    // tests authenticated RBAC and avoids concurrent SQLite file mutation.
+    const limitedRole=await request('POST','/api/roles',{
+      name:'D1 Restricted Reports Viewer',permissions:{products:{view:true}}
+    },{token});
+    assert.equal(limitedRole.status,200,JSON.stringify(limitedRole));
+    const limitedUser=await request('POST','/api/users',{
+      name:'Restricted Reporter',mobile:'01000000987',
+      role:'D1 Restricted Reports Viewer',password:'D1-Reports-Test-Only-2026!'
+    },{token});
+    assert.equal(limitedUser.status,200,JSON.stringify(limitedUser));
+    const limitedLogin=await request('POST','/api/auth/login',{
+      phone:'01000000987',password:'D1-Reports-Test-Only-2026!'
+    });
+    assert.equal(limitedLogin.status,200,JSON.stringify(limitedLogin));
+    const limitedToken=limitedLogin.token;
+    assert.ok(limitedToken,'restricted session must be issued by the real Worker');
     for(const path of ['/api/reports/v2/catalog','/api/reports/v2/summary',
       '/api/reports/v2/rows?report=stock','/api/reports/v2/audit'])
       assert.equal((await request('GET',path,undefined,{token:limitedToken})).status,403,
