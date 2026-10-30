@@ -95,6 +95,44 @@ export async function createDuePurchase(supplier:PurchaseSupplier|null,lines:Due
   return request<PurchaseCreated>('/api/purchases',{method:'POST',body:JSON.stringify(payload)});
 }
 
+export type PurchaseTender='Due'|'Cash'|'Bank'|'Mobile Banking';
+export type PurchasePayment={
+ method:PurchaseTender;amount:number;bankAccountId?:string;activeSession?:boolean;
+ bankAccounts?:SettlementDetails['bankAccounts'];
+};
+/** Validates the browser estimate; Worker/D1 rechecks the supplier, session and account atomically. */
+export function validatePurchasePayment(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[],
+ payment:PurchasePayment,requestId='',purchasePlanOrderId=''){
+ const due=validateDuePurchase(supplier,lines,purchasePlanOrderId);
+ if(payment.method==='Due'){
+  if(payment.amount!==0)throw Error('Due purchase cannot include a payment amount.');
+  return due;
+ }
+ if(!['Cash','Bank','Mobile Banking'].includes(payment.method))
+  throw Error('Choose a valid payment method.');
+ if(lines.some(x=>x.unitQuantities!==undefined))
+  throw Error('Paid mixed-unit purchases are not enabled. Save as Due and pay via Supplier Payments.');
+ const total=Math.round(lines.reduce((sum,l)=>sum+l.qty*l.unitPrice,0)*10000)/10000;
+ const amount=exact4(payment.amount,'Payment amount',true);
+ if(!Number.isFinite(total)||amount>total)throw Error('Payment amount exceeds this invoice.');
+ if(!payment.activeSession)throw Error('Open a cash session before paying.');
+ if(!/^[0-9a-f-]{32,36}$/i.test(requestId))throw Error('A valid payment request ID is required.');
+ let bankAccountId='';
+ if(payment.method!=='Cash'){
+  bankAccountId=payment.bankAccountId||'';
+  const account=payment.bankAccounts?.find(a=>a.id===bankAccountId&&a.type===payment.method);
+  if(!account||!Number.isFinite(account.currentBalance)||account.currentBalance<amount)
+   throw Error('Choose an active account with sufficient balance.');
+ }
+ return {...due,paidAmount:amount,paymentMethod:payment.method,
+  ...(bankAccountId?{bankAccountId}:{}),clientRequestId:requestId};
+}
+export async function createPurchaseWithPayment(supplier:PurchaseSupplier|null,lines:DuePurchaseLine[],
+ payment:PurchasePayment,requestId:string,purchasePlanOrderId=''){
+ const payload=validatePurchasePayment(supplier,lines,payment,requestId,purchasePlanOrderId);
+ return request<PurchaseCreated>('/api/purchases',{method:'POST',body:JSON.stringify(payload)});
+}
+
 export interface MixedReturnLine {
  productId:string;productName:string;boughtQty:number;unitPrice:number;
  previouslyReturnedQty:number;availableQty:number;unitDescription:string;
