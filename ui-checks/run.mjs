@@ -99,11 +99,31 @@ function startMocking(context,calls){
         receivables:{sourceId:'CUS-LIVE-001',sourceModule:'customers',date:'2026-10-30',
           label:'Current Buyer Due',amountMinor:4000,status:'needs-review',reason:'Current dues, ageing unavailable.'},
         payables:{sourceId:'SUP-LIVE-001',sourceModule:'suppliers',date:'2026-10-30',
-          label:'Current Supplier Due',amountMinor:null,status:'incomplete',reason:'Supplier ledger mismatch.'}
+          label:'Current Supplier Due',amountMinor:null,status:'incomplete',reason:'Supplier ledger mismatch.'},
+        cash:{sourceId:'CB-CAP-LIVE',sourceModule:'cash_book',date:'2026-10-17',
+          label:'Owner Investment · Capital funding',amountMinor:30000,status:'needs-review',
+          reason:'Financing is not sale revenue.'},
+        bank:{sourceId:'BB-OUT-LIVE',sourceModule:'bank_book',date:'2026-10-17',
+          label:'Transfer Out · Internal',amountMinor:-10000,status:'needs-review',
+          reason:'Internal bank transfer not income.'},
+        expenses:{sourceId:'EXP-LIVE-001',sourceModule:'expenses',date:'2026-10-17',
+          label:'Utilities',amountMinor:5000,status:'needs-review',
+          reason:'Recorded operating expense matched to cash book.'},
+        finance:{sourceId:'FIN-LIVE-001',sourceModule:'finance_transactions',date:'2026-10-17',
+          label:'Owner Investment · Owner',amountMinor:30000,status:'needs-review',
+          reason:'Capital is not sales or profit.'}
       };
       const record=fixtures[kind]||null;
+      const amounts=kind==='cash'?{cashReceipts:50000,cashPayments:5000,
+        externalNetMovement:45000,bankCurrentBalance:35000}:
+        kind==='bank'?{bankReceipts:10000,bankPayments:10000,bankCurrentBalance:35000}:
+        kind==='expenses'?{operatingExpenses:5000}:
+        kind==='finance'?{ownerCapitalIn:30000}:{};
+      const metrics=Object.entries(amounts).map(([key,valueMinor])=>({
+        key,valueMinor,status:'needs-review',reason:'Source-backed test fixture',
+        asOf:'2026-10-30',sources:[]}));
       return respond({ok:true,report:kind,range:{from:'2026-10-01',to:'2026-10-30'},page:1,pageSize:50,
-        totalRows:record?1:0,metrics:[],rows:record?[record]:[],coverage:{
+        totalRows:record?1:0,metrics,rows:record?[record]:[],coverage:{
           status:record?.status||'unavailable',reason:record?.reason||'Report unavailable.'}});
     }
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
@@ -295,6 +315,34 @@ try{
       await inspectLayout(page,'reports-current-balances-'+width);
       await audit(page,'reports-current-balances-'+width);
       assert.ok(calls.every(x=>x.method!=='POST'||!x.path.startsWith('/api/reports')));
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 5E money ledger UI '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Money in'}).waitFor();
+      await page.getByRole('columnheader',{name:'Money out'}).waitFor();
+      await page.locator('[data-report-metric="externalNetMovement"]').getByText('৳450').waitFor();
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await screenshot(page,'reports-money-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
+      await page.getByText('FIN-LIVE-001').waitFor({timeout:10000});
+      await page.locator('[data-report-metric="ownerCapitalIn"]').getByText('৳300').waitFor();
+      await screenshot(page,'reports-finance-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
+      await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
+      await page.locator('[data-report-metric="operatingExpenses"]').getByText('৳50').waitFor();
+      await inspectLayout(page,'reports-expense-'+width);
+      await screenshot(page,'reports-expense-'+width);
+      await audit(page,'reports-expense-'+width);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
       await ctx.close();
     });
   }
