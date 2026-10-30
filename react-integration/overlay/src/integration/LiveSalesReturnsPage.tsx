@@ -11,7 +11,8 @@ import {
   BackendRequestError, searchReturnInvoices, getReturnableInvoice, postSalesReturn,
   getSalesReturnHistory, type ReturnInvoiceMatch, type ReturnableInvoice, type SalesReturnPayload,
   getMixedReversalPreview,postMixedReversal,type MixedReversalPreview,
-  type ReturnMixedUnit
+  type ReturnMixedUnit, getStoreCreditAccount, type StoreCreditAccount,
+  getSplitReversalPreview, postSplitReversal, type SplitReversalPreview
 } from './banijjApi';
 import type { Product } from '../types/erp';
 
@@ -31,10 +32,11 @@ export function LiveSalesReturnsPage(){
   const [items,setItems]=useState<Item[]>([]);
   const [picker,setPicker]=useState<string|null>(null);
   const [refundMethod,setRefundMethod]=useState<'Cash'|'Store Credit'>('Cash');
+  const [creditAccount,setCreditAccount]=useState<StoreCreditAccount|null>(null);
   const [reason,setReason]=useState('');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
-  const [success,setSuccess]=useState<{id:string;amount:number}|null>(null);
+  const [success,setSuccess]=useState<{id:string;amount:number;method:string}|null>(null);
   const [unknown,setUnknown]=useState(false);
   const [history,setHistory]=useState<Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>>([]);
   const [historyChecked,setHistoryChecked]=useState(false);
@@ -44,6 +46,10 @@ export function LiveSalesReturnsPage(){
   const [reversalLoading,setReversalLoading]=useState(false);
   const [reversalPosted,setReversalPosted]=useState<{id:string;amount:number;method:string;account:string}|null>(null);
   const [posting,setPosting]=useState(false);
+  const [splitPreview,setSplitPreview]=useState<SplitReversalPreview|null>(null);
+  const [splitReason,setSplitReason]=useState('');
+  const [splitLoading,setSplitLoading]=useState(false);
+  const [splitSuccess,setSplitSuccess]=useState<{id:string;refundCents:number;creditReissueCents:number}|null>(null);
   const activeLine=sale?.items.find(x=>x.productId===picker);
   const activeItem=items.find(x=>x.productId===picker);
   const selected=items.filter(x=>x.qty>0);
@@ -56,7 +62,15 @@ export function LiveSalesReturnsPage(){
   if(!reason.trim())problems.push('Enter the reason for returning.');
   if(total<=0)problems.push('Return amount must be greater than zero.');
   if(sale&&total>sale.netSale+0.00001)problems.push('Return amount exceeds the unreturned invoice balance.');
-  if(refundMethod==='Store Credit')problems.push('Store Credit refunds are not yet enabled in React; use the established ERP workflow.');
+  if(sale?.paymentMethod==='Store Credit')problems.push('Store Credit-paid sale needs a dedicated credit reissue. Cash refunds are blocked.');
+  if(sale?.paymentMethod==='Split')problems.push('Split payments require original-source full reversal; partial Cash refund is disabled.');
+  if(refundMethod==='Store Credit'){
+    if(!sale?.customerId||sale.paymentMethod!=='Cash'||sale.dueAmount!==0||
+       Math.round(sale.paidAmount*100)!==Math.round(sale.grandTotal*100))
+      problems.push('Store Credit requires a linked customer and original fully paid cash sale.');
+    if(!creditAccount||creditAccount.blocked)
+      problems.push('Customer Store Credit is unavailable or needs reconciliation.');
+  }
   if(refundMethod==='Cash'&&total>remainingPaid+0.00001)
     problems.push('Cash refund exceeds paid funds remaining. Customer Store Credit returns are not enabled on this React screen yet.');
   if(sale?.items.some(line=>{
@@ -76,19 +90,23 @@ export function LiveSalesReturnsPage(){
 
   const find=async()=>{
     if(!search.trim())return;
-    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setMatches([]);setReversalPreview(null);setReversalPosted(null);
+    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setCreditAccount(null);setMatches([]);setReversalPreview(null);setReversalPosted(null);setSplitPreview(null);setSplitReason('');setSplitSuccess(null);
     try{const result=await searchReturnInvoices(search.trim());setMatches(result.matches);}
     catch(e){setError(e instanceof Error?e.message:'Could not search invoices.');}
     finally{setBusy(false);}
   };
   const choose=async(id:string)=>{
-    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setReversalPreview(null);setReversalPosted(null);
+    setBusy(true);setError('');setSale(null);setItems([]);setSuccess(null);setCreditAccount(null);setReversalPreview(null);setReversalPosted(null);setSplitPreview(null);setSplitReason('');setSplitSuccess(null);
     try{
       const result=await getReturnableInvoice(id);
       setSale(result.sale);
       setItems(result.sale.items.map(x=>({productId:x.productId,qty:0,unitPrice:x.unitPrice,serialNumbers:[],
         ...(x.mixedUnit?{unitQuantities:{},lineTotal:0}:{})})));
       setRefundMethod('Cash');
+      if(result.sale.customerId){
+        try{setCreditAccount(await getStoreCreditAccount(result.sale.customerId));}
+        catch{setCreditAccount(null);}
+      }
       setMatches([]);
     }catch(e){setError(e instanceof Error?e.message:'Could not read invoice.');}
     finally{setBusy(false);}
@@ -115,7 +133,9 @@ export function LiveSalesReturnsPage(){
   };
   const post=async()=>{
     if(posting||problems.length){setError(problems[0]||'Cannot return this sale.');return;}
-    if(!window.confirm('Post a REAL sales return for '+money(total)+'? This changes stock and cash/customer ledger.'))return;
+    if(!window.confirm('Post a REAL sales return for '+money(total)+'? '+
+      (refundMethod==='Store Credit'?'Issue non-cash credit to this customer? No cash or bank payout.':'Pay a real cash refund?')
+      ))return;
     setPosting(true);setError('');setReview(false);
     const payload:SalesReturnPayload={
       invoiceId:sale!.invoiceId,refundMethod,reason:reason.trim(),
@@ -125,7 +145,7 @@ export function LiveSalesReturnsPage(){
     };
     try{
       const r=await postSalesReturn(payload);
-      setSuccess({id:r.returnId,amount:r.totalReturnAmount});
+      setSuccess({id:r.returnId,amount:r.totalReturnAmount,method:refundMethod});
       setSale(null);setItems([]);setReason('');
     }catch(e){
       const uncertain=!(e instanceof BackendRequestError)||e.status===null||e.status>=500;
@@ -160,6 +180,31 @@ export function LiveSalesReturnsPage(){
       }else setError(e instanceof Error?e.message:'Full reversal was rejected.');
     }finally{setPosting(false);}
   };
+  const previewSplit=async()=>{
+    if(!canPost||!sale||sale.paymentMethod!=='Split'||posting||splitLoading||unknown)return;
+    setSplitLoading(true);setError('');setSplitPreview(null);setSplitReason('');
+    try{setSplitPreview((await getSplitReversalPreview(sale.invoiceId)).preview);}
+    catch(e){setError(e instanceof Error?e.message:'Original sources could not be verified.');}
+    finally{setSplitLoading(false);}
+  };
+  const submitSplit=async()=>{
+    if(!canPost||!sale||sale.paymentMethod!=='Split'||!splitPreview?.eligible||
+      splitPreview.invoiceId!==sale.invoiceId||splitReason.trim().length<8||posting||unknown)return;
+    if(!window.confirm('Reverse the ENTIRE invoice '+sale.invoiceId+'? Refund '+money(splitPreview.refundCents/100)+
+      ' ONLY to original Cash/Bank/Mobile sources and reissue '+money(splitPreview.creditReissueCents/100)+
+      ' as Store Credit (not Cash)?'))return;
+    setPosting(true);setError('');
+    try{
+      const saved=await postSplitReversal(sale.invoiceId,splitReason.trim());
+      setSplitSuccess({id:saved.returnId,refundCents:saved.refundCents,
+        creditReissueCents:saved.creditReissueCents});
+      setSplitPreview(null);setSplitReason('');setSale(null);setItems([]);setReason('');
+    }catch(e){
+      const uncertain=!(e instanceof BackendRequestError)||e.status===null||e.status>=500;
+      if(uncertain){setUnknown(true);setError('Refund outcome unknown. Verify Return History and source ledgers before retrying.');}
+      else{setSplitPreview(null);setError(e instanceof Error?e.message:'Source-specific refund rejected.');}
+    }finally{setPosting(false);}
+  };
   const checkHistory=async()=>{
     setBusy(true);setError('');setHistoryChecked(false);
     try{setHistory((await getSalesReturnHistory()).returns.slice(0,30));setHistoryChecked(true);}
@@ -177,7 +222,7 @@ export function LiveSalesReturnsPage(){
       </Link>}/>
     <p className="rounded-lg border border-warning/25 bg-warning-bg px-3 py-2 text-xs text-warning">
       Mixed-unit returns use original saved unit quantities and their historical discounted net prices. Tracked mixed-unit returns and vendor-sourced quantities remain unavailable here.
-      Store Credit, batch multi-invoice returns and refund-price adjustments above historic net price remain unavailable here.
+      Store Credit issuance is available for linked, fully paid, reconciled cash-sale customers. Verified full split refunds use the separate source-specific review; partial split returns, batch returns and higher-price adjustments remain unavailable.
     </p>
     {error&&<p role="alert" className="rounded-lg bg-danger-bg p-3 text-sm text-danger">{error}</p>}
     {unknown&&<div role="alert" className="space-y-2 rounded-xl border border-danger bg-danger-bg p-3">
@@ -190,6 +235,12 @@ export function LiveSalesReturnsPage(){
         setUnknown(false);setSale(null);setItems([]);setHistory([]);setHistoryChecked(false);setError('');
       }}>I verified the invoice and return ledger — start a fresh search</Button>}
     </div>}
+    {splitSuccess&&<div role="status" data-split-refund-success className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
+      <CheckCircle2 className="mr-2 inline size-4 text-success"/>
+      Refund posted <strong>{splitSuccess.id}</strong> · Cash/Bank/Mobile <strong>{money(splitSuccess.refundCents/100)}</strong> ·
+      Store Credit reissued <strong>{money(splitSuccess.creditReissueCents/100)}</strong> (no cash conversion).
+      Original invoice remains for audit.
+    </div>}
     {reversalPosted&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
       <CheckCircle2 className="mr-2 inline size-4 text-success"/>
       Full invoice reversed: <strong>{reversalPosted.id}</strong> · {reversalPosted.method==='Due Adjustment'?'Customer due cancelled':reversalPosted.method+' refund'} {money(reversalPosted.amount)}
@@ -199,6 +250,7 @@ export function LiveSalesReturnsPage(){
     {success&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
       <CheckCircle2 className="mr-2 inline size-4 text-success"/>
       Return posted: <strong>{success.id}</strong> · {money(success.amount)}
+      {success.method==='Store Credit'&&<span className="ml-2">Customer credit issued · ক্রেডিট জমা (নগদ ফেরত নয়)</span>}
     </div>}
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <label className="mb-1 block text-xs font-medium text-ink-700">Invoice / customer / phone · চালান খুঁজুন</label>
@@ -224,7 +276,47 @@ export function LiveSalesReturnsPage(){
         <span><strong>{sale.invoiceId}</strong> · {sale.customerName}</span>
         <strong>Remaining {money(sale.netSale)}</strong>
       </div>
-      {canReverse&&sale.items.some(line=>Boolean(line.mixedUnit))&&
+      {creditAccount&&<div data-return-store-credit-summary className="rounded-lg border border-teal-200 bg-teal-50/40 p-2.5 text-xs text-ink-700">
+        <div className="flex justify-between gap-2"><span>Customer due · ক্রেতার বাকি</span><strong>{money(creditAccount.due)}</strong></div>
+        <div className="mt-1 flex justify-between gap-2"><span>Store Credit · জমা ক্রেডিট</span><strong>{money(creditAccount.availableCents/100)}</strong></div>
+        {creditAccount.blocked&&<p role="alert" className="mt-1 text-warning">Old Store Credit needs verification · পুরোনো ক্রেডিট যাচাই দরকার</p>}
+        {creditAccount.history.length>0&&<details className="mt-2"><summary className="cursor-pointer">Credit history · ক্রেডিট হিসাব</summary>
+          <div className="mt-1 space-y-1">{creditAccount.history.slice(0,5).map(e=><div key={e.entryId} className="flex justify-between gap-2">
+            <span>{e.type==='ISSUE'?'Issued · জমা':'Used · খরচ'} · {e.sourceId}</span><strong>{money(e.deltaCents/100)}</strong>
+          </div>)}</div>
+        </details>}
+      </div>}
+      {sale.paymentMethod==='Split'&&<div data-split-refund-review className="space-y-3 rounded-lg border border-primary/30 bg-ink-50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><p className="text-sm font-semibold">Full split refund · মূল মাধ্যমেই ফেরত</p>
+            <p className="mt-1 text-xs text-ink-600">Entire invoice only. No partial refund or Store Credit cash conversion.</p></div>
+          <Button type="button" size="sm" variant="outline" disabled={!canPost||busy||posting||splitLoading||unknown}
+            onClick={()=>void previewSplit()}>{splitLoading?'Verifying…':'Verify original payment sources'}</Button>
+        </div>
+        {splitPreview&&!splitPreview.eligible&&<p role="alert" className="rounded-md bg-warning-bg p-2 text-xs text-warning">{splitPreview.reason}</p>}
+        {splitPreview?.eligible&&splitPreview.invoiceId===sale.invoiceId&&<>
+          <p className="text-xs font-medium">Verified original allocations · মূল পরিশোধ</p>
+          <div className="rounded-lg border border-border bg-card p-2 text-xs">
+            {splitPreview.allocations.map((a,i)=><div key={a.sourceKey+':'+i}
+              className="flex items-center justify-between gap-2 border-b border-border py-1.5">
+              <span>{a.method==='Store Credit'?'Store Credit · নগদ নয়':a.method}
+                {a.bankAccountId?' · '+a.bankAccountId:''}</span>
+              <strong>{money(a.amountCents/100)}</strong>
+            </div>)}
+          </div>
+          <p className="text-xs">Cash / Bank / Mobile returned to original accounts · <strong>{money(splitPreview.refundCents/100)}</strong></p>
+          <p className="text-xs">Store Credit liability reissued · ক্রেডিট জমা · <strong>{money(splitPreview.creditReissueCents/100)}</strong></p>
+          <label className="block text-xs">Reason · কারণ (at least 8 characters)
+            <Input className="mt-1 h-9" maxLength={500} aria-label="Split refund reason"
+              value={splitReason} onChange={e=>setSplitReason(e.target.value)}
+              placeholder="Why reverse this entire split invoice?"/>
+          </label>
+          <Button type="button" className="h-12 w-full"
+            disabled={posting||unknown||splitReason.trim().length<8}
+            onClick={()=>void submitSplit()}>{posting?'Posting…':'Confirm full original-source refund'}</Button>
+        </>}
+      </div>}
+      {canReverse&&sale.paymentMethod!=='Split'&&sale.items.some(line=>Boolean(line.mixedUnit))&&
         <div data-mixed-full-reversal className="space-y-2 rounded-lg border border-border bg-ink-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-medium text-ink-700">Full invoice reversal · সম্পূর্ণ চালান বাতিল</span>
@@ -253,6 +345,7 @@ export function LiveSalesReturnsPage(){
             </Button>
           </>}
         </div>}
+      {sale.paymentMethod!=='Split'&&<>
       <p className="text-xs text-ink-500">Only original eligible items can be returned. Qty 0 skips a line.</p>
       {sale.items.map(line=>{
         const item=items.find(x=>x.productId===line.productId);
@@ -298,7 +391,7 @@ export function LiveSalesReturnsPage(){
         <label className="text-xs text-ink-600">Refund method
           <select value={refundMethod} onChange={e=>setRefundMethod(e.target.value as typeof refundMethod)}
             className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm text-ink">
-            <option value="Cash">Cash · নগদ</option><option value="Store Credit" disabled>Store Credit · পরে যুক্ত হবে</option>
+            <option value="Cash">Cash · নগদ</option><option value="Store Credit">Store Credit · জমা ক্রেডিট</option>
           </select>
         </label>
         <label className="text-xs text-ink-600">Reason * · কারণ
@@ -306,6 +399,9 @@ export function LiveSalesReturnsPage(){
             placeholder="Why was this returned?"/>
         </label>
       </div>
+      {refundMethod==='Store Credit'&&<p data-return-credit-no-cash className="text-xs text-teal-700">
+        This adds credit for future purchases. No cash or bank refund · ভবিষ্যৎ কেনাকাটার ক্রেডিট, নগদ নয়।
+      </p>}
       <div className="flex items-center justify-between rounded-xl border border-teal-200 bg-teal-50 p-3">
         <span className="text-sm">Total refund · ফেরতের টাকা</span>
         <strong className="text-xl">{money(total)}</strong>
@@ -315,6 +411,7 @@ export function LiveSalesReturnsPage(){
       </p>}
       <Button className="h-12 w-full" disabled={posting||busy||problems.length>0}
         onClick={()=>setReview(true)}>Review real return</Button>
+      </>}
     </div>}
     {sale&&activeLine&&<SerialPickerDialog
       product={{id:activeLine.productId,name:activeLine.name} as Product}
@@ -326,7 +423,9 @@ export function LiveSalesReturnsPage(){
     <Dialog open={review} onOpenChange={v=>!posting&&setReview(v)}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader><DialogTitle>Confirm Sales Return · ফেরত নিশ্চিত করুন</DialogTitle>
-          <DialogDescription>This is a real transaction affecting inventory and the cash/customer ledger.</DialogDescription>
+          <DialogDescription>{refundMethod==='Store Credit'?
+            'Returns stock and issues customer credit liability. No cash/bank movement · নগদ নয়।':
+            'Returns stock and pays a real cash refund.'}</DialogDescription>
         </DialogHeader>
         <div className="space-y-2 rounded-lg bg-ink-50 p-3 text-sm">
           <p>Invoice <strong>{sale?.invoiceId}</strong></p>
@@ -335,7 +434,7 @@ export function LiveSalesReturnsPage(){
         </div>
         <DialogFooter><Button variant="outline" onClick={()=>setReview(false)}>Cancel</Button>
           <Button disabled={posting||problems.length>0} onClick={()=>void post()}>
-            {posting?'Posting…':'Confirm & refund'}
+            {posting?'Posting…':refundMethod==='Store Credit'?'Confirm & issue credit':'Confirm & refund'}
           </Button>
         </DialogFooter>
       </DialogContent>
