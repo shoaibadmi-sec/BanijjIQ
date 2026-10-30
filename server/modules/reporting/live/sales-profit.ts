@@ -87,6 +87,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const returnedQty=new Map<string,number>(),restoredQty=new Map<string,number>();
   const returnedByDocument=new Map<string,number>(),restoredByDocument=new Map<string,number>();
   const actualRefunds=new Map<string,number>(),lineRefunds=new Map<string,number>();
+  const returnInvoices=new Map(returns.map(x=>[x.return_id,x.invoice_id]));
 
   for(const inv of invoices){
     const invAmount=minor(Number(inv.grand_total)),sub=minor(Number(inv.subtotal)),
@@ -142,6 +143,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('A linked return was posted outside the selected period; period profit cannot be certified.');
   }
   for(const item of returnedLines){
+    if(returnInvoices.get(item.return_id)!==item.invoice_id)
+      reasons.add('Return item invoice does not match its refund header invoice.');
     const k=key(item.invoice_id,item.product_id),value=minor(Number(item.line_total));
     if(value===null||value<0||Number(item.return_quantity)<=0)
       reasons.add('Invalid refund line or returned quantity.');
@@ -155,6 +158,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('Return header does not match actual refund lines.');
   }
   for(const item of returnedLots){
+    if(returnInvoices.get(item.return_id)!==item.invoice_id)
+      reasons.add('Return lot invoice does not match its refund header invoice.');
     const lk=lotKey(item.invoice_id,item.product_id,item.lot_id),
       k=key(item.invoice_id,item.product_id),qty=Number(item.quantity);
     const price=lotCosts.get(lk);
