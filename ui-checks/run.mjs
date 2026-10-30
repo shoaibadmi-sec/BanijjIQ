@@ -146,6 +146,12 @@ function startMocking(context,calls){
       calls.push({method:'ASSERT',path:'/api/pos/sales',payload:posted});
       return respond({ok:true,invoice});
     }
+    if(path==='/api/pos/invoices/INV-LIVE-REPORT-001'&&request.method()==='GET')
+      return respond({ok:true,invoice:{invoiceId:'INV-LIVE-REPORT-001',date:'2026-10-15',
+        customerName:'Real API Mock Buyer',customerPhone:'01000000199',subtotal:120,
+        discount:0,grandTotal:120,paidAmount:120,dueAmount:0,paymentMethod:'Cash',paymentStatus:'Paid',
+        items:[{productId:'PRD-000001',productName:'Copper Cable 2.5mm',
+          quantity:1,unit:'Pcs',unitPrice:120,lineTotal:120}]}});
     if(path==='/api/pos/invoices/UI-E2E-INV-001'&&request.method()==='GET')
       return respond({ok:true,invoice});
     if(path.startsWith('/api/pos/products/')&&path.endsWith('/tracking-options')&&request.method()==='GET')
@@ -343,6 +349,48 @@ try{
       await audit(page,'reports-expense-'+width);
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Sales Register reads original invoice without writes '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).click();
+      const modal=page.getByRole('dialog',{name:'Recorded invoice'});
+      await modal.getByText('Real API Mock Buyer').waitFor({timeout:10000});
+      await modal.getByText('Copper Cable 2.5mm').waitFor();
+      await modal.getByText('৳120').first().waitFor();
+      assert.equal(calls.filter(x=>x.path==='/api/pos/invoices/INV-LIVE-REPORT-001'&&x.method==='GET').length,1);
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/')),
+        'opening a report source must be read-only');
+      await screenshot(page,'reports-invoice-source-'+width);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.getByRole('dialog',{name:'Recorded invoice'}).count(),0);
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('reports search resets when selecting a different report '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
+      const search=page.getByRole('textbox',{name:'Search records'});
+      await search.fill('Investment');
+      assert.equal(await search.inputValue(),'Investment');
+      const nav=page.getByRole('navigation',{name:'Report library'});
+      await nav.getByRole('button',{name:'Expense register'}).click();
+      await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
+      assert.equal(await search.inputValue(),'','switching report must not preserve a previous report-only record search');
+      const reportCalls=calls.filter(x=>x.method==='GET'&&x.path==='/api/reports/v2/rows');
+      assert.ok(reportCalls.length>0);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await ctx.close();
     });
   }
