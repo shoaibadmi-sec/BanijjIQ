@@ -74,7 +74,9 @@ export function LiveFinancePage() {
             {text('Some balances need review. Only matching book balances are displayed.',
               'কিছু জের যাচাই করতে হবে। শুধু মিলে যাওয়া বইয়ের জের দেখানো হচ্ছে।')}
           </p>}
-        <div className="overflow-x-auto"><table className="w-full min-w-[420px] text-left text-sm">
+        <div className="overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" role="region" tabIndex={0}
+          aria-label={text('Bank account balances table','ব্যাংক হিসাবের জেরের তালিকা')}>
+          <table className="w-full min-w-[420px] text-left text-sm">
           <thead className="bg-ink-50 text-xs text-ink-500"><tr>
             <th className="p-3 font-medium">{text('Account','হিসাব')}</th>
             <th className="p-3 font-medium">{text('Type','ধরন')}</th>
