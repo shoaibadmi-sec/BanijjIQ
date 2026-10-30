@@ -85,6 +85,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const soldQty=new Map<string,number>(),soldLineAmounts=new Map<string,number>();
   const lotQty=new Map<string,number>(),lotCosts=new Map<string,number>();
   const returnedQty=new Map<string,number>(),restoredQty=new Map<string,number>();
+  const restoredPerLot=new Map<string,number>();
   const returnedByDocument=new Map<string,number>(),restoredByDocument=new Map<string,number>();
   const actualRefunds=new Map<string,number>(),lineRefunds=new Map<string,number>();
   const returnInvoices=new Map(returns.map(x=>[x.return_id,x.invoice_id]));
@@ -165,6 +166,10 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     const lk=lotKey(item.invoice_id,item.product_id,item.lot_id),
       k=key(item.invoice_id,item.product_id),qty=Number(item.quantity);
     const price=lotCosts.get(lk);
+    const cumulative=(restoredPerLot.get(lk)||0)+qty;
+    restoredPerLot.set(lk,cumulative);
+    if(cumulative>Number(soldLotKeys.get(lk)?.quantity??0))
+      reasons.add('Returned FIFO lot quantity exceeds original sold lot allocation.');
     if(price===undefined||!Number.isFinite(qty)||qty<=0)
       reasons.add('Return lot allocation lacks the original sold FIFO lot.');
     else {
