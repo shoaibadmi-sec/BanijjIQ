@@ -289,7 +289,7 @@ try{
       await page.getByText('Needs checking').first().waitFor();
       await screenshot(page,'reports-supplier-dues-'+width);
       await page.getByRole('tab',{name:'Dashboard'}).click();
-      await page.locator('[data-current-balance="inventoryValue"]').waitFor();
+      await page.locator('[data-current-balance="inventoryValue"]').getByText('৳50').waitFor({timeout:10000});
       assert.match(await page.locator('[data-current-balance="inventoryValue"]').innerText(),/50/);
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await inspectLayout(page,'reports-current-balances-'+width);
