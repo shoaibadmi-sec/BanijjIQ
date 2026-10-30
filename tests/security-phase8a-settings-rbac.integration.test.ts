@@ -194,3 +194,40 @@ test('Phase 8A: delegated user managers cannot reset, deactivate, or delete high
     assert.equal(listed.users.find((user: any) => user.id === privilegedUser.id)?.status, 'Active');
   } finally { f.db.close(); }
 });
+
+test('Phase 8A: harmless view-only role remains delegable despite restrictive backdate setting', async () => {
+  const f=await fixture();
+  try{
+    const restricted=await f.api('POST','/api/roles',{
+      name:'ViewOnlyDelegator',
+      permissions:{
+        roles:{view:true,add:true},
+        settings:{view:true,backdate:'disabled'}
+      }
+    },f.admin);
+    assert.equal(restricted.status,200,JSON.stringify(restricted));
+    const employee=await f.api('POST','/api/users',{
+      name:'Viewer Role Manager',mobile:'01000002606',role:'ViewOnlyDelegator',
+      password:'Viewer-Manager-Test-2026!'
+    },f.admin);
+    assert.equal(employee.status,200,JSON.stringify(employee));
+    const logged=await f.api('POST','/api/auth/login',{
+      phone:'01000002606',password:'Viewer-Manager-Test-2026!'
+    });
+    assert.equal(logged.status,200,JSON.stringify(logged));
+
+    const allowed=await f.api('POST','/api/roles',{
+      name:'SettingsReadOnly',
+      permissions:{settings:{view:true}}
+    },logged.token as string);
+    assert.equal(allowed.status,200,JSON.stringify(allowed));
+
+    const prohibited=await f.api('POST','/api/roles',{
+      name:'SettingsEditorEscalation',
+      permissions:{settings:{view:true,edit:true}}
+    },logged.token as string);
+    assert.equal(prohibited.status,403,JSON.stringify(prohibited));
+    const roles=await f.api('GET','/api/roles',undefined,f.admin);
+    assert.ok(!roles.roles.some((role:any)=>role.name==='SettingsEditorEscalation'));
+  }finally{f.db.close();}
+});
