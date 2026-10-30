@@ -137,9 +137,30 @@ function startMocking(context,calls){
         {id:'BK-DISPUTED',name:'Disputed Bank',accountType:'Mobile Banking',openingBalance:0,
           recordedBalance:999,bookBalance:null,status:'needs-review',reason:'Bank-book mismatch.'}
       ]});
+    if(path==='/api/finance/persons/PERSON-1/ledger'&&request.method()==='GET')return respond({
+      ok:true,person:{id:'PERSON-1',name:'Finance Test Owner',type:'Owner',status:'Active'},
+      balance:120,openingBalance:0,closingBalance:120,page:Number(url.searchParams.get('page')||1),
+      pageSize:Number(url.searchParams.get('pageSize')||50),
+      totalRows:1,totalPages:1,dateFrom:url.searchParams.get('dateFrom')||'',dateTo:url.searchParams.get('dateTo')||'',
+      coverage:{status:'ready',reason:'Every finance entry has one matching source.'},
+      rows:[{financeId:'FIN-UI-6D-001',personId:'PERSON-1',date:'2026-10-29',
+        transactionType:'Owner Investment',paymentMethod:'Cash',amount:120,debit:0,credit:120,
+        balance:120,sourceStatus:'matched',referenceNo:'',notes:'',
+        createdBy:'Test Finance',createdAt:'2026-10-29 12:00:00',isBackdated:false,backdatedReason:''}]
+    });
+    if(path==='/api/finance/transactions'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.equal(payload.personId,'PERSON-1');
+      assert.equal(payload.transactionType,'Owner Investment');
+      assert.equal(payload.paymentMethod,'Cash');
+      assert.equal(payload.amount,12.5);
+      assert.ok(typeof payload.clientRequestId==='string'&&payload.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'FIN-UI-6D-POSTED',replayed:false});
+    }
     if(path==='/api/finance/bootstrap'&&request.method()==='GET')return respond({
       ok:true,personsAll:[{id:'PERSON-1',name:'Finance Test Owner',type:'Owner',status:'Active',phone:''}],
-      currencySymbol:'৳',activeCashSession:false
+      currencySymbol:'৳',activeCashSession:true
     });
     if(path==='/api/reports/v2/catalog'&&request.method()==='GET')return respond({ok:true,
       mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
@@ -406,6 +427,32 @@ try{
       await screenshot(page,'phase6c-cash-count-'+width);
       await inspectLayout(page,'phase6c-cash-count-'+width);
       await audit(page,'phase6c-cash-count-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6D finance source-backed person ledger and investment '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const panel=page.locator('[data-finance-person-ledger]');
+      await panel.waitFor({timeout:12000});
+      await panel.getByText('FIN-UI-6D-001').waitFor({timeout:12000});
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/finance/persons/PERSON-1/ledger'),
+        'person rows must come from protected finance ledger endpoint');
+      await panel.getByRole('combobox',{name:'Finance ledger page size'}).selectOption('100');
+      await panel.getByRole('combobox',{name:'Finance transaction type'}).selectOption('Owner Investment');
+      await panel.getByRole('spinbutton',{name:'Finance transaction amount'}).fill('12.5');
+      await panel.getByRole('button',{name:'Review entry'}).click();
+      await panel.getByRole('button',{name:'Confirm entry'}).click();
+      await panel.getByText(/FIN-UI-6D-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/finance/transactions').length,1);
+      await screenshot(page,'phase6d-person-ledger-'+width);
+      await inspectLayout(page,'phase6d-person-ledger-'+width);
+      await audit(page,'phase6d-person-ledger-'+width);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }
