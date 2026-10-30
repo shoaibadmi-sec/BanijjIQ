@@ -41,7 +41,11 @@ try{
            ]}}
        ],customers:[{id:'CUST-D1-001',name:'Verified Customer D1',phone:'01700111111',
          fatherName:'',address:'Nawabpur',currentDue:450}],
-       bankAccounts:[],vendors:[],activeSession:null,invoiceDesign:{settings:{},logoDataUri:''}});
+       bankAccounts:[
+         {id:'D1-BANK-1',name:'Verified Bank D1',accountType:'Bank'},
+         {id:'D1-MOBILE-1',name:'Verified Mobile D1',accountType:'Mobile Banking'}
+       ],vendors:[],activeSession:{sessionId:'D1-SESSION-1',openedAt:'2026-10-30T09:00:00Z',openingCash:100},
+       invoiceDesign:{settings:{},logoDataUri:''}});
      if(path==='/api/bootstrap')return json({ok:true,products:[
        {productId:'D1-REAL-001',productName:'D1 Verified Cable',brand:'Test',category:'Electrical',unit:'Pcs',
         barcode:'D1-CB',sellingPrice:123,purchasePrice:80,currentStock:13,minimumStock:2,
@@ -84,6 +88,20 @@ try{
    await page.getByRole('textbox',{name:'Quantity in Carton'}).fill('1');
    await page.getByRole('textbox',{name:'Quantity in Box'}).fill('2');
    await page.getByRole('textbox',{name:'Quantity in Pcs'}).fill('3');
+   // Existing CheckoutPanel controls, unchanged: backend-only account source.
+   await page.getByRole('combobox',{name:'Payment method 1'}).click();
+   await page.getByRole('option',{name:'Bank',exact:true}).click();
+   await page.getByRole('combobox',{name:'Payment account 1'}).click();
+   await page.getByRole('option',{name:'Verified Bank D1'}).waitFor({timeout:10000});
+   assert.equal(await page.getByRole('option',{name:/Dutch-Bangla Bank/}).count(),0,
+     'demo bank labels must never appear in source checkout account choices');
+   await page.keyboard.press('Escape');
+   await page.getByRole('combobox',{name:'Payment method 1'}).click();
+   await page.getByRole('option',{name:'Card',exact:true}).click();
+   await page.getByRole('combobox',{name:'Payment account 1'}).click();
+   assert.equal(await page.getByRole('option',{name:/Verified Bank D1|Dutch-Bangla/}).count(),0,
+     'unsupported Card cannot borrow a bank or demo account');
+   await page.keyboard.press('Escape');
    assert.equal(calls.filter(c=>c.method==='POST').length,0,'no fake sale posting');
    assert.deepEqual(errors,[],'browser errors must not occur');
    console.log('PASS original HisabIQ source POS API preview '+width+'px');
