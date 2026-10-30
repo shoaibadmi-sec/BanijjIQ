@@ -358,7 +358,7 @@ try{
       await search.fill('Investment');
       assert.equal(await search.inputValue(),'Investment');
       const nav=page.getByRole('navigation',{name:'Report library'});
-      await nav.getByRole('button',{name:/Expenses/i}).first().click();
+      await nav.getByRole('button',{name:'Expense register'}).click();
       await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
       assert.equal(await search.inputValue(),'','switching report must not preserve a previous report-only record search');
       const reportCalls=calls.filter(x=>x.method==='GET'&&x.path==='/api/reports/v2/rows');
