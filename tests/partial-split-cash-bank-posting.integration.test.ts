@@ -5,7 +5,8 @@ import {SqliteDatabase} from '../server/db/sqlite.ts';
 import {runMigrations} from '../server/db/migrate.ts';
 import {postCashBankPartialSplitReturn} from '../server/modules/sales/partial-split-posting.ts';
 
-function fixture(){
+function fixture(cashCents=2000){
+  const bankCents=5000-cashCents;
   const db=new SqliteDatabase(':memory:');runMigrations(db.native,resolve('migrations'));
   const q=db.native;
   for(const sql of [
@@ -15,11 +16,11 @@ function fixture(){
     "INSERT INTO sales(invoice_id,sale_date,customer_id,customer_name,customer_phone,subtotal,grand_total,discount,paid_amount,due_amount,payment_type,payment_status,payment_method,status,is_deleted) VALUES ('CB-S','2026-10-30','CB-C','Buyer','01000007891',50,50,0,50,0,'Cash','Paid','Split','Completed',0)",
     "INSERT INTO sale_items(invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES ('CB-S','CB-P','Wire',5,10,50)",
     "INSERT INTO sale_item_lots(invoice_id,product_id,lot_id,quantity,unit_cost) VALUES ('CB-S','CB-P','CB-L',5,5)",
-    "INSERT INTO bank_accounts(bank_account_id,account_name,opening_balance,current_balance,status,account_type) VALUES ('CB-B','Bank One',70,100,'Active','Bank')",
-    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CB-T1','CB-S',1,'Cash',2000,'','','Cash')",
-    "INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CB-T2','CB-S',2,'Bank',3000,'CB-B','','Bank:CB-B')",
-    "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('CB-ORIG','2026-10-30','Sale','CB-S','Original cash',0,20,'Cash',0)",
-    "INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,is_deleted) VALUES ('BB-ORIG','CB-B','Bank One','2026-10-30','Sale','CB-S','Original bank',0,30,100,'Active',0)"
+    `INSERT INTO bank_accounts(bank_account_id,account_name,opening_balance,current_balance,status,account_type) VALUES ('CB-B','Bank One',${100-bankCents/100},100,'Active','Bank')`,
+    `INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CB-T1','CB-S',1,'Cash',${cashCents},'','','Cash')`,
+    `INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES ('CB-T2','CB-S',2,'Bank',${bankCents},'CB-B','','Bank:CB-B')`,
+    `INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('CB-ORIG','2026-10-30','Sale','CB-S','Original cash',0,${cashCents/100},'Cash',0)`,
+    `INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,is_deleted) VALUES ('BB-ORIG','CB-B','Bank One','2026-10-30','Sale','CB-S','Original bank',0,${bankCents/100},100,'Active',0)`
   ])q.exec(sql);
   const n=(table:string)=>Number((q.prepare('SELECT COUNT(*) n FROM '+table).get() as any).n);
   const val=(sql:string)=>Number((q.prepare(sql).get() as any).n);
@@ -138,5 +139,19 @@ test('G2-O competing three-unit returns cannot together consume six of five sold
     assert.equal(f.val("SELECT current_stock n FROM products WHERE product_id='CB-P'"),8);
     assert.equal(f.val("SELECT remaining_quantity n FROM stock_lots WHERE lot_id='CB-L'"),8);
     assert.equal(f.val("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='CB-B'"),82);
+  }finally{f.db.close();}
+});
+
+test('G2-O replay accepts a valid single-source refund when other original share rounds to zero poisha',async()=>{
+  const f=fixture(1); // Original Cash=0.01 BDT, Bank=49.99 BDT on a 50 BDT invoice.
+  try{
+    const first=await f.refund('ONE-SOURCE');
+    assert.deepEqual(first.allocations,[{sourceKey:'Bank:CB-B',amountCents:1000}],
+      'Do not create a phantom zero-poisha Cash allocation');
+    assert.equal(f.val("SELECT COUNT(*) n FROM cash_book WHERE reference='SRT-ONE-SOURCE'"),0);
+    assert.equal(f.val("SELECT debit n FROM bank_book WHERE reference='SRT-ONE-SOURCE'"),10);
+    const replay=await f.refund('ONE-SOURCE');
+    assert.equal(replay.alreadyPosted,true,'a valid one-source refund must remain idempotent');
+    assert.equal(f.n('sales_returns'),1);
   }finally{f.db.close();}
 });
