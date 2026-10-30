@@ -48,5 +48,16 @@ test('real v2 cash, bank, expense and finance GET routes are authenticated and n
   assert.equal((await api('POST','/api/reports/v2/rows?report=expenses',{})).status,404);
   const after=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
   assert.equal(after,before,'read-only reporting must not change D1');
+  // A booked expense without its money-book proof must NEVER leak a second,
+  // falsely verified operating-expense metric or a seemingly verified net profit.
+  db.native.prepare("INSERT INTO expenses(expense_id,expense_date,category_id,category_name,amount,payment_method) "+
+    "VALUES ('EX-MISSING-PROOF','2026-10-21','C-UNPOSTED','Unposted expense',70,'Cash')").run();
+  const blocked=await api('GET','/api/reports/v2/summary?from=2026-10-01&to=2026-10-30');
+  assert.equal(blocked.status,200,JSON.stringify(blocked));
+  const expensesMetrics=blocked.metrics.filter((m:any)=>m.key==='operatingExpenses');
+  assert.equal(expensesMetrics.length,1,'dashboard cannot emit contradictory expense metrics');
+  assert.equal(expensesMetrics[0].valueMinor,null);
+  assert.equal(blocked.metrics.find((m:any)=>m.key==='netProfit')?.valueMinor,null,
+    'profit must be withheld if the operating expense provenance does not reconcile');
  } finally {db.close();}
 });
