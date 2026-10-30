@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import {patchReportsPage} from '../../scripts/preview/patch-reports-two-tabs.mjs';
 
 const read = path => readFileSync(new URL('../../' + path, import.meta.url),'utf8');
 
@@ -96,11 +97,12 @@ test('5H1: production Reports route uses the pinned HisabIQ Reports component wi
  assert.doesNotMatch(prepare, /<Route path="reports" element=\{<LiveReports \/>\}/,
   'Live Reports must not replace the HisabIQ UI report screen');
  assert.match(prepare, /<Route path="reports" element=\{<Reports \/>\}/);
- const patch=read('scripts/preview/patch-reports-two-tabs.mjs');
- assert.match(patch, /useLiveReportResult/,
+ const original=read('apps/hisabiq-web/src/pages/Reports.tsx');
+ const adapted=patchReportsPage(original);
+ assert.match(adapted, /useLiveReportResult/,
   'original Reports must use an authenticated backend result adapter, not preview-store report totals');
- assert.doesNotMatch(patch, /useReportData\(refresh\)/,
-  'reports must not read the original preview-store data hook');
+ assert.doesNotMatch(adapted, /useReportData\(refresh\)/,
+  'live generated Reports must not call the preview-store data hook');
  const adapter=read('react-integration/overlay/src/integration/liveReportAdapter.ts');
  assert.match(adapter, /getLiveReportRows\(/);
  assert.doesNotMatch(adapter, /erpDemoStore|salesPreviewStore|useReportData\(/);
