@@ -213,3 +213,24 @@ test('cross-invoice return lines and lots cannot certify another invoice refund'
     'source reconciliation must not mutate recorded transactions');
  }finally{db.close();}
 });
+
+test('FIFO lot belonging to a different product cannot certify sale profitability',async()=>{
+ const db=fixture();
+ try {
+  db.native.prepare(`INSERT INTO products (product_id,product_name,category,unit,current_stock)
+    VALUES ('PROD-OTHER','Unrelated Product','Hardware','Pcs',0)`).run();
+  // The sale allocation still claims PROD-FIFO-001, but its underlying stock
+  // lot belongs to a different SKU. The existing quantity and cost still balance.
+  db.native.prepare("UPDATE stock_lots SET product_id='PROD-OTHER' WHERE lot_id='LOT-FIFO-001'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(result.coverage.status,'incomplete','source lot must belong to the sold product');
+  assert.match(result.coverage.reason,/lot.*product|product.*lot|FIFO.*product/i);
+  assert.equal(metric(result,'netSales').valueMinor,22000);
+  assert.equal(metric(result,'fifoCogs').valueMinor,null);
+  assert.equal(metric(result,'grossProfit').valueMinor,null);
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+    'invalid FIFO source detection must not modify stock or finance');
+ }finally{db.close();}
+});

@@ -9,7 +9,7 @@ type Invoice = {
   grand_total:number; status:string;
 };
 type Line = {invoice_id:string;product_id:string;quantity:number;line_total:number};
-type Lot = {invoice_id:string;product_id:string;lot_id:string;quantity:number;unit_cost:number;source_type:string|null};
+type Lot = {invoice_id:string;product_id:string;lot_id:string;quantity:number;unit_cost:number;source_type:string|null;lot_product_id:string|null};
 type ReturnHeader = {return_id:string;invoice_id:string;return_date:string;total_return_amount:number};
 type ReturnLine = {return_id:string;invoice_id:string;product_id:string;return_quantity:number;line_total:number};
 type ReturnLot = {return_id:string;invoice_id:string;product_id:string;lot_id:string;quantity:number};
@@ -52,7 +52,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const [linesR,lotsR,returnsR,returnLinesR,returnLotsR,expensesR,reversalsR,vendorR]=await Promise.all([
     db.prepare("SELECT i.invoice_id,i.product_id,i.quantity,i.line_total FROM sale_items i JOIN sales s ON s.invoice_id=i.invoice_id WHERE "+where)
       .bind(...params).all<Line>(),
-    db.prepare("SELECT l.invoice_id,l.product_id,l.lot_id,l.quantity,l.unit_cost,sl.source_type "+
+    db.prepare("SELECT l.invoice_id,l.product_id,l.lot_id,l.quantity,l.unit_cost,sl.source_type,sl.product_id AS lot_product_id "+
       "FROM sale_item_lots l JOIN sales s ON s.invoice_id=l.invoice_id LEFT JOIN stock_lots sl ON sl.lot_id=l.lot_id WHERE "+where)
       .bind(...params).all<Lot>(),
     db.prepare("SELECT r.return_id,r.invoice_id,r.return_date,r.total_return_amount FROM sales_returns r "+
@@ -121,6 +121,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(price)||price<=0||
       lot.source_type===null||lot.source_type==='OVERSOLD')
       reasons.add('Missing, zero or non-FIFO historical lot cost.');
+    if(lot.lot_product_id!==lot.product_id)
+      reasons.add('FIFO lot product does not match recorded sold product.');
     soldLotKeys.set(lk,lot);
     lotQty.set(k,(lotQty.get(k)||0)+quantity);
     lotCosts.set(lk,price);
