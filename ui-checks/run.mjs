@@ -77,6 +77,8 @@ async function withCheck(name,fn){
 function startMocking(context,calls){
   let postedPurchase=null;
   let returnedQty=0;
+  let supplierDue=100;
+  const supplierSettlements=[];
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -91,6 +93,36 @@ function startMocking(context,calls){
           {unit:'Pcs',symbol:'PCS',containsNext:null,factor:1,sellingPrice:20}
         ]}});
       return respond({ok:true,productId,revision:0,postingEnabled:true,profile:null});
+    }
+    if(path==='/api/purchases/supplier-settlements/supplier/SUP-UI-001'&&request.method()==='GET'){
+      return respond({ok:true,supplier:{id:'SUP-UI-001',name:'Khan Hardware',
+        currentDue:supplierDue},ledgerDue:supplierDue,needsReconciliation:false,
+        activeSession:true,bankAccounts:[{id:'BANK-UI-1',name:'Bank test account',
+         type:'Bank',currentBalance:500}],settlements:supplierSettlements});
+    }
+    if(path==='/api/purchases/supplier-settlements'&&request.method()==='POST'){
+      const x=request.postDataJSON();
+      assert.equal(x.supplierId,'SUP-UI-001');
+      assert.ok(/^[0-9a-f-]{32,36}$/i.test(x.clientRequestId));
+      assert.equal(x.method,'Cash');assert.equal(x.amount,40);
+      assert.ok(x.amount<=supplierDue);
+      supplierDue-=x.amount;
+      const settlementId='SST-UI-001',ledgerId='LEDGER-UI-001';
+      supplierSettlements.push({settlementId,requestId:x.clientRequestId,
+       ledgerId,amount:x.amount,method:x.method,bankAccountId:'',date:'2026-10-30',
+       status:'Posted',reversalLedgerId:'',createdAt:'2026-10-30'});
+      calls.push({method:'ASSERT',path,body:x});
+      return respond({ok:true,settlementId,ledgerId,amount:x.amount,newDue:supplierDue});
+    }
+    if(path==='/api/purchases/supplier-settlements/SST-UI-001/reverse'&&request.method()==='POST'){
+      const x=request.postDataJSON();assert.ok(x.reason.length>=4);
+      assert.equal(supplierSettlements.length,1);
+      assert.equal(supplierSettlements[0].status,'Posted');
+      supplierSettlements[0].status='Reversed';
+      supplierSettlements[0].reversalLedgerId='REV-UI-001';
+      supplierDue+=supplierSettlements[0].amount;
+      calls.push({method:'ASSERT',path,body:x});
+      return respond({ok:true,settlementId:'SST-UI-001',reversalLedgerId:'REV-UI-001',newDue:supplierDue});
     }
     if(path==='/api/purchases/supplier-search'&&request.method()==='GET'){
       const q=(url.searchParams.get('q')||'').toLowerCase();
@@ -407,6 +439,32 @@ try{
       assert.equal(calls.filter(c=>c.method==='ASSERT'&&c.path==='/api/purchase-returns').length,1);
       results.apiCalls.push(...calls);
       await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 4D supplier payment and reversal '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      page.on('pageerror',e=>results.consoleErrors.push('phase4d '+width+': '+e.message));
+      await page.goto(base+'/#/app/purchases?tab=payments&supplierId=SUP-UI-001');
+      await page.locator('[data-live-supplier-settlements]').waitFor({timeout:12000});
+      await page.getByText('Current due · বাকি:').waitFor({timeout:12000});
+      await page.getByRole('spinbutton',{name:'Supplier payment amount'}).fill('40');
+      await page.getByRole('combobox',{name:'Supplier payment method'}).selectOption('Cash');
+      await inspectLayout(page,'phase4d-supplier-payment-'+width);
+      await screenshot(page,'phase4d-supplier-payment-'+width);
+      if(width===390)await audit(page,'phase4d-supplier-payment-390');
+      await page.getByRole('button',{name:/Confirm Payment/}).click();
+      await page.getByText(/Payment saved · SST-UI-001/).waitFor({timeout:12000});
+      await page.getByRole('button',{name:/Reverse ·/}).click();
+      await page.getByRole('textbox',{name:'Supplier payment reversal reason'}).fill('Entered wrong payout');
+      await page.getByRole('button',{name:'Confirm reversal'}).click();
+      await page.getByText(/Reversal recorded · REV-UI-001/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/purchases/supplier-settlements').length,1);
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path.endsWith('/reverse')).length,1);
+      results.apiCalls.push(...calls);await ctx.close();
     });
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
