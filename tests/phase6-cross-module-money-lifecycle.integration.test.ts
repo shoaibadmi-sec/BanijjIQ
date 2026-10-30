@@ -40,7 +40,7 @@ test('6G purchase → supplier settlement → POS due → customer bank collecti
   assert.equal(purchase.dueAmount,60);
   const paidSupplier=await api('POST','/api/purchases/supplier-settlements',{
    supplierId:supplier.id,amount:20,method:'Bank',bankAccountId:'P6-INT-BANK',
-   clientRequestId:'P6G-SUPPLIER-PAY-0001'
+   clientRequestId:crypto.randomUUID()
   });
   assert.equal(paidSupplier.status,200,JSON.stringify(paidSupplier));
   assert.equal(one('SELECT current_due n FROM suppliers WHERE supplier_id=?',supplier.id).n,40);
