@@ -164,7 +164,7 @@ test('4F planner: partially converted plan cannot be rejected/deleted, both supp
 });
 
 test('4F supplier CRUD: invalid status and duplicate names must not modify master or payable',async()=>{
- await fixture(async({api,one,count,supplier,second})=>{
+ await fixture(async({api,one,count,db,supplier,second})=>{
   const search=await api('GET','/api/suppliers');safe(search);
   assert.ok(search.suppliers.some((s:any)=>s.id===supplier.id));
   assert.equal((await api('POST','/api/suppliers',{name:'  '})).status!==200,true);
