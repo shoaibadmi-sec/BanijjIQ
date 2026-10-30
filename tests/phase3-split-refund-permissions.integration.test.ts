@@ -16,8 +16,8 @@ test('G2-H split refund endpoints authorize Sales Returns, not ordinary sales po
   ] as const){
     db.native.prepare('INSERT INTO app_roles(role_name,permissions_json) VALUES(?,?)')
       .run(role,JSON.stringify(perms));
-    db.native.prepare("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES (?,?,'01000007777','fixture','fixture',?,'Active','Fixture')")
-      .run('USER-'+role,role,role);
+    db.native.prepare("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES (?,?,?,'fixture','fixture',?,'Active','Fixture')")
+      .run('USER-'+role,role,role==='return-cashier'?'01000007777':'01000007778',role);
     const token='token-'+role;
     db.native.prepare("INSERT INTO auth_sessions(session_id,user_id,token_hash,expires_at) VALUES (?,?,?,datetime('now','+2 hours'))")
       .run('AUTH-'+role,'USER-'+role,createHash('sha256').update(token).digest('base64'));
