@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import type { SherDatabase, SqlPreparedStatement, SqlResult, SqlValue } from './types.js';
 
@@ -98,6 +100,14 @@ export class SqliteDatabase implements SherDatabase {
     });
 
     return execute.immediate(statements);
+  }
+
+  async backupTo(destination: string): Promise<void> {
+    if (resolve(destination) === resolve(this.native.name) || existsSync(destination)) {
+      throw new Error('Refusing to overwrite source database or existing backup.');
+    }
+    // SQLite online backup includes committed WAL pages while the live DB stays open.
+    await this.native.backup(destination);
   }
 
   close(): void {
