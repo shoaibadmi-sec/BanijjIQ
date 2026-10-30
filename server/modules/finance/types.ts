@@ -19,7 +19,7 @@ export type BankManualInput = {
   backdatedReason?: string;
 };
 
-export type BankTransferInput = { fromAccountId?: string; toAccountId?: string; amount?: number; notes?: string };
+export type BankTransferInput = { fromAccountId?: string; toAccountId?: string; amount?: number; notes?: string; clientRequestId?: string };
 
 export type FinancePersonInput = { name?: string; personType?: 'Owner' | 'Lender'; phone?: string; notes?: string; status?: string };
 
