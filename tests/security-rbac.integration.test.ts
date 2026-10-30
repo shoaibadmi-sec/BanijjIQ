@@ -127,3 +127,63 @@ test('RBAC: users.delete cannot delete another administrator even with two admin
     })).status, 200);
   } finally { f.db.close(); }
 });
+
+
+test('RBAC: delegated role editor cannot assign permissions beyond own scope', async () => {
+  const f = await isolatedUsersFixture();
+  try {
+    const editor = await f.api('POST', '/api/roles', {
+      name: 'DelegatedEditor', permissions: {
+        roles: { view: true, add: true, edit: true },
+        products: { view: true },
+      },
+    }, f.adminToken);
+    assert.equal(editor.status, 200, JSON.stringify(editor));
+    const users = await f.api('GET', '/api/users', undefined, f.adminToken);
+    const member = users.users.find((row: any) => row.mobile === '01000002502');
+    assert.ok(member);
+    const roleSet = await f.api('PUT', '/api/users/' + member.id, {
+      name: member.name, mobile: member.mobile, role: 'DelegatedEditor',
+    }, f.adminToken);
+    assert.equal(roleSet.status, 200, JSON.stringify(roleSet));
+    const staff = await f.api('POST', '/api/auth/login', {
+      phone: '01000002502', password: 'Cashier-Original-2026!',
+    });
+    assert.equal(staff.status, 200);
+    const token = staff.token as string;
+
+    const allowed = await f.api('POST', '/api/roles', {
+      name: 'InventoryReader', permissions: { products: { view: true } },
+    }, token);
+    assert.equal(allowed.status, 200, JSON.stringify(allowed));
+
+    const escalated = await f.api('POST', '/api/roles', {
+      name: 'UnauthorizedAdminFunctions', permissions: {
+        users: { view: true, add: true, edit: true, delete: true },
+        settings: { view: true, edit: true },
+      },
+    }, token);
+    assert.equal(escalated.status, 403, JSON.stringify(escalated));
+
+    const editAttempt = await f.api('PUT', '/api/roles/' + allowed.id, {
+      name: 'InventoryReader', permissions: {
+        products: { view: true }, users: { edit: true },
+      },
+    }, token);
+    assert.equal(editAttempt.status, 403, JSON.stringify(editAttempt));
+
+    const after = await f.api('GET', '/api/roles', undefined, f.adminToken);
+    assert.equal(after.roles.some((r: any) => r.name === 'UnauthorizedAdminFunctions'), false,
+      'rejected role must not be created');
+    const unchanged = after.roles.find((r: any) => r.id === allowed.id);
+    assert.ok(unchanged);
+    assert.equal(unchanged.permissions.users?.edit ?? false, false,
+      'rejected update must not grant users.edit');
+    assert.equal(unchanged.permissions.products.view, true);
+
+    const adminAllowed = await f.api('POST', '/api/roles', {
+      name: 'AuthorizedAdminFunctions', permissions: { users: { view: true, edit: true } },
+    }, f.adminToken);
+    assert.equal(adminAllowed.status, 200, JSON.stringify(adminAllowed));
+  } finally { f.db.close(); }
+});
