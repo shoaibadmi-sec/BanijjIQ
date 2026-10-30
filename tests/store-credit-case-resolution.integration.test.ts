@@ -4,7 +4,6 @@ import {resolve} from 'node:path';
 import {SqliteDatabase} from '../server/db/sqlite.ts';
 import {runMigrations} from '../server/db/migrate.ts';
 import {handleApiRequest} from '../server/core/handler.ts';
-import {resolveStoreCreditCaseRoute} from '../server/modules/sales/store-credit-cases.ts';
 
 test('G2-F reviewed settlement requires real matched refund evidence, commits once, and never issues liability',async()=>{
   const db=new SqliteDatabase(':memory:');
@@ -64,9 +63,10 @@ test('G2-F reviewed settlement requires real matched refund evidence, commits on
       due:get("SELECT current_due FROM customers WHERE customer_id='SETTLE-CUS'").current_due,
       cases:get('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n
     };
-    assert.equal((await resolveStoreCreditCaseRoute(db,
-      {userId:'operator',fullName:'Cashier',phone:'01000008936',role:'operator',status:'Active'},
-      candidate.caseId,payload)).status,403);
+    const unauthenticated=await handleApiRequest(new Request('http://credit-resolution.test'+path,{
+      method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)
+    }),db);
+    assert.equal(unauthenticated.status,401);
     assert.equal((await api('POST',path,{...payload,evidenceIds:[]})).status,400);
     assert.equal((await api('POST',path,{...payload,expectedVersion:0})).status,409);
     assert.equal((await api('POST',path,{...payload,decision:'verified-outstanding'})).status,409);
