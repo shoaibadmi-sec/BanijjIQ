@@ -54,6 +54,11 @@ test('Phase 7E2 business: saved bundle appears on one cash invoice line; mixed-c
   const source=db.native.prepare('SELECT visible_product_id,component_id,lot_id,quantity,cost_minor FROM bundle_sale_allocations WHERE invoice_id=? ORDER BY id').all(posted.invoiceId) as any[];
   assert.deepEqual(source.map(x=>[x.visible_product_id,x.component_id,x.lot_id,x.quantity,x.cost_minor]),
    [['KIT-1','WIRE-1','W-LOT1',4,8000],['WIRE-1','WIRE-1','W-LOT1',1,2000],['KIT-1','SWITCH-1','S-LOT',2,1000]]);
+  const movementHistory=db.native.prepare("SELECT product_id,quantity_out,balance_after FROM stock_movements WHERE note LIKE 'BUNDLE:%' ORDER BY id").all() as any[];
+  assert.deepEqual(movementHistory.map(x=>[x.product_id,x.quantity_out,x.balance_after]),
+   [['WIRE-1',4,5],['WIRE-1',1,4],['SWITCH-1',2,1]],
+   'each physical FIFO draw must carry its own running stock balance, not the final master balance');
+
   const profit=db.native.prepare('SELECT product_id,SUM(quantity*unit_cost) c FROM sale_item_lots WHERE invoice_id=? GROUP BY product_id ORDER BY product_id').all(posted.invoiceId) as any[];
   assert.deepEqual(profit.map(x=>[x.product_id,x.c]),[['KIT-1',90],['WIRE-1',20]]);
   const report=await readSalesProfit(db,parseLiveReportQuery(new URL('http://local.test/api/reports/v2/rows?report=profit&from=2026-10-01&to=2026-10-31')));
