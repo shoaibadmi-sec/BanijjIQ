@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
+import {patchNativeParties} from './preview/patch-native-parties.mjs';
 import {patchOriginalPosApiCatalog} from './preview/patch-original-pos-api-catalog.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 
@@ -34,6 +35,10 @@ const sourceProductsPath=join(sourceWeb,'src/pages/Products.tsx');
 const generatedProductsPath=join(web,'src/pages/Products.tsx');
 // Pinned source never changes; the build-copy transform fails closed on unknown JSX.
 writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
+// Preserve pinned original Party JSX and switch only generated source reads.
+const sourcePartiesPath=join(sourceWeb,'src/pages/Parties.tsx');
+const generatedPartiesPath=join(web,'src/pages/Parties.tsx');
+writeFileSync(generatedPartiesPath,patchNativeParties(readFileSync(sourcePartiesPath,'utf8')));
 const sourcePosPath=join(sourceWeb,'src/pages/Pos.tsx');
 writeFileSync(join(web,'src/pages/Pos.tsx'),patchOriginalPosApiCatalog(readFileSync(sourcePosPath,'utf8')));
 
