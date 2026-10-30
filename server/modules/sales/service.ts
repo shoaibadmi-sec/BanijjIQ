@@ -2,6 +2,7 @@ import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import { daysSince, hasModulePermission } from '../auth/permissions.js';
 import type { PosSaleInput } from './types.js';
+import {validateTenderAllocation, type ValidatedTenderAllocation} from './sale-tenders.js';
 import { readStoreCreditReviewFlags } from './store-credit-reconciliation.js';
 import {quoteUnitQuantities, type UnitProfile} from '../products/unitProfile.js';
 import { aggregateSaleTrackingDraws, getAvailabilityMap, planTrackedSale, trackingEnabled, warrantyEndDate } from '../products/tracking.service.js';
@@ -116,12 +117,9 @@ async function saleFingerprint(input:PosSaleInput):Promise<string>{
 }
 
 export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:AuthUser):Promise<Response>{
-  // G2-G Task 4 only defines the accounting contract, not the transaction.
-  // Silently ignoring tenders would falsely book credit/bank as cash.
-  // Fail before generating invoice IDs, FIFO draws or idempotency records.
-  if(input.tenders!==undefined&&
-    (!Array.isArray(input.tenders)||input.tenders.length>0))
-    return error('Split-tender posting is not yet enabled; use a single verified payment method.',409);
+  if(input.tenders!==undefined&&!Array.isArray(input.tenders))
+    return error('Invalid tender allocations.',409);
+  const isSplit=Boolean(input.tenders?.length);
   const requestId=cleanText(input.clientRequestId);
   if(requestId&&!/^[A-Za-z0-9_-]{8,128}$/.test(requestId))return error('Invalid sale request key.');
   const fingerprint=requestId?await saleFingerprint(input):'';
@@ -179,11 +177,60 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     lines.push({product,q,price:unitSnapshot?lineTotal/q:price,lineTotal,unitSnapshot,draws,trackingDraws,shortfall:need,vendor,vendorQty,vendorUnitCost,ownQty:q-vendorQty,isTracked}); subtotal+=lineTotal;
   }
   const discount=Math.max(0,Number(input.discount||0)), grandTotal=Math.max(0,subtotal-discount); let paidAmount=0,dueAmount=0;
+  let split:ValidatedTenderAllocation|null=null;
+  const splitAccountNames=new Map<string,string>();
+  let splitCreditBefore=0;
+  if(isSplit){
+    // Phase G2-G first supports only complete settlements. Mixed due/credit
+    // requires its own source-verified A/R posting and remains blocked.
+    if(!requestId||input.paymentType!=='Cash'||!Number.isSafeInteger(Math.round(grandTotal*100))||
+       Math.abs(grandTotal*100-Math.round(grandTotal*100))>0.00001)
+      return error('Split payment needs a unique request ID and exact fully-paid invoice.',409);
+    const chosenId=cleanText(input.customerId);
+    const chosen=chosenId?await db.prepare(
+      'SELECT customer_id,phone,status,is_deleted,current_due FROM customers WHERE customer_id=?'
+    ).bind(chosenId).first<any>():null;
+    const withCredit=input.tenders!.some(t=>t?.method==='Store Credit');
+    if(withCredit&&(!chosen||chosen.phone!==customerPhone||Number(chosen.current_due)<0))
+      return error('Store Credit requires the original active linked customer.',409);
+    const sources=await Promise.all(input.tenders!.filter(t=>t?.bankAccountId)
+      .map(async t=>db.prepare('SELECT bank_account_id,account_name,account_type,status FROM bank_accounts WHERE bank_account_id=?')
+        .bind(cleanText(t.bankAccountId)).first<any>()));
+    const accounts=sources.filter(Boolean).map(a=>{
+      splitAccountNames.set(String(a.bank_account_id),String(a.account_name));
+      return {bankAccountId:String(a.bank_account_id),
+        accountType:a.account_type,status:a.status,isDeleted:false};
+    });
+    if(withCredit){
+      const legacy=await db.prepare(
+        "SELECT 1 x FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' LIMIT 1"
+      ).bind(chosenId).first();
+      const unresolved=await db.prepare(
+        "SELECT 1 x FROM store_credit_legacy_unreconciled l "+
+        "JOIN sales_returns sr ON sr.return_id=l.return_id "+
+        "WHERE sr.customer_id=? OR sr.customer_phone=? LIMIT 1"
+      ).bind(chosenId,customerPhone).first();
+      if(legacy||unresolved)return error('Historical Store Credit must be reviewed before spending.',409);
+      const credit=await db.prepare('SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?')
+        .bind(chosenId).first<any>();
+      splitCreditBefore=Number(credit?.available_cents||0);
+    }
+    try{
+      split=validateTenderAllocation(input,Math.round(grandTotal*100),chosenId,{
+        customer:chosen?{customerId:chosen.customer_id,status:chosen.status,
+          isDeleted:Number(chosen.is_deleted)!==0}:null,
+        availableStoreCreditCents:splitCreditBefore,
+        legacyReviewRequired:false,bankAccounts:accounts
+      });
+      if(!split||split.allocations.length<2||split.dueCents!==0)
+        return error('Split payment must fully settle the invoice using two or more sources.',409);
+    }catch(err){return error(err instanceof Error?err.message:'Invalid split payment.',409);}
+  }
   if(cleanText(input.paymentMethod)==='Store Credit'&&input.paymentType!=='Cash')
     return error('Store Credit cannot be combined with due or partial payment.',409);
-  if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
-  const paymentStatus=dueAmount<=0?'Paid':paidAmount>0?'Partial':'Due', paymentMethod=paidAmount>0?(cleanText(input.paymentMethod)||'Cash'):''; let bankId='',bankName='';
-  if(paidAmount>0&&!['Cash','Bank','Mobile Banking','Store Credit'].includes(paymentMethod))
+  if(split) paidAmount=split.paidCents/100; else if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
+  const paymentStatus=dueAmount<=0?'Paid':paidAmount>0?'Partial':'Due', paymentMethod=split?'Split':paidAmount>0?(cleanText(input.paymentMethod)||'Cash'):''; let bankId='',bankName='';
+  if(paidAmount>0&&!['Cash','Bank','Mobile Banking','Store Credit','Split'].includes(paymentMethod))
     return error('Choose a supported payment method.',409);
   const isCreditTender=paymentMethod==='Store Credit';
   let creditBeforeCents=0,creditSpentCents=0;
@@ -243,6 +290,12 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     'INSERT INTO pos_sale_requests (request_id,payload_sha256,invoice_id) VALUES (?,?,?)'
   ).bind(requestId,fingerprint,invoiceId));
   stmts.push(db.prepare(`INSERT INTO sales (invoice_id,sale_date,sale_time,customer_id,customer_name,customer_phone,customer_address,customer_father_name,subtotal,discount,grand_total,paid_amount,due_amount,payment_type,payment_status,payment_method,bank_account_id,bank_account_name,is_backdated,backdated_reason,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Completed',?)`).bind(invoiceId,date,nowTime(),customerId,customerName,customerPhone,cleanText(input.customerAddress),cleanText(input.customerFatherName),subtotal,discount,grandTotal,paidAmount,dueAmount,input.paymentType,paymentStatus,paymentMethod,bankId,bankName,date<todayDate()?1:0,cleanText(input.backdatedReason),user.fullName));
+  if(split)split.allocations.forEach((t,i)=>stmts.push(db.prepare(
+    "INSERT INTO sale_tender_allocations "+
+    "(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) "+
+    "VALUES (?,?,?,?,?,?,?,?)"
+  ).bind('TA-'+crypto.randomUUID().slice(0,12),invoiceId,i+1,t.method,t.amountCents,
+    t.bankAccountId,t.method==='Store Credit'?customerId:'',t.sourceKey)));
   for(const line of lines){
     const displayName=String(line.product.brand||'').trim()?`${String(line.product.brand).trim()} ${line.product.product_name}`:line.product.product_name;
     stmts.push(db.prepare(`INSERT INTO sale_items (invoice_id,product_id,product_name,quantity,unit_price,line_total) VALUES (?,?,?,?,?,?)`).bind(invoiceId,line.product.product_id,displayName,line.q,line.price,line.lineTotal));
@@ -268,7 +321,37 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     if(Number(line.product.track_warranty||0)&&Number(line.product.warranty_period_value||0)>0){const end=warrantyEndDate(date,line.product.warranty_period_value,line.product.warranty_period_unit);const serialDraws=line.trackingDraws.filter((t:any)=>t.serialId);if(serialDraws.length){for(const t of serialDraws)stmts.push(db.prepare(`INSERT INTO warranty_records (warranty_id,invoice_id,sale_date,product_id,product_name,customer_id,customer_name,customer_phone,serial_id,serial_number,quantity,remaining_quantity,warranty_end_date,status) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,?,'Active')`).bind(`WAR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,invoiceId,date,line.product.product_id,displayName,customerId,customerName,customerPhone,t.serialId,t.serialNumber||'',end));}else{stmts.push(db.prepare(`INSERT INTO warranty_records (warranty_id,invoice_id,sale_date,product_id,product_name,customer_id,customer_name,customer_phone,quantity,remaining_quantity,warranty_end_date,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Active')`).bind(`WAR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,invoiceId,date,line.product.product_id,displayName,customerId,customerName,customerPhone,line.q,line.q,end));}}
   }
   if(paidAmount>0){
-    if(paymentMethod==='Bank'||paymentMethod==='Mobile Banking'){
+    if(split){
+      for(const tender of split.allocations){
+        const amount=tender.amountCents/100;
+        if(tender.method==='Cash'){
+          stmts.push(db.prepare(
+            "INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) "+
+            "VALUES (?,?,'Sale',?,?,0,?,'Cash',0)"
+          ).bind('CB-'+crypto.randomUUID().slice(0,10).toUpperCase(),date,invoiceId,
+            'Split sale to '+customerName,amount));
+        }else if(tender.method==='Bank'||tender.method==='Mobile Banking'){
+          const accountId=tender.bankAccountId,accountName=splitAccountNames.get(accountId)||'';
+          stmts.push(db.prepare(
+            "UPDATE bank_accounts SET current_balance=current_balance+? "+
+            "WHERE bank_account_id=? AND status='Active' AND account_type=?"
+          ).bind(amount,accountId,tender.method));
+          stmts.push(db.prepare(
+            "INSERT INTO bank_book (entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,status,created_by,is_deleted) "+
+            "VALUES (?,?,?,?, 'Sale',?,?,0,?,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,0)"
+          ).bind('BB-'+crypto.randomUUID().slice(0,10).toUpperCase(),accountId,accountName,
+            date,invoiceId,'Split sale to '+customerName,amount,accountId,user.fullName));
+        }else{
+          stmts.push(db.prepare(
+            "INSERT INTO customer_store_credit_entries "+
+            "(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,note,created_by) "+
+            "VALUES (?,?,'REDEEM','Sale',?,?,?,?,?)"
+          ).bind('SC-'+crypto.randomUUID().slice(0,12).toUpperCase(),customerId,invoiceId,
+            -tender.amountCents,splitCreditBefore-tender.amountCents,
+            'Split credit tender for '+invoiceId,user.userId));
+        }
+      }
+    }else if(paymentMethod==='Bank'||paymentMethod==='Mobile Banking'){
       // Keep the stored bank-account balance and the bank ledger in the same
       // atomic D1 sale batch; old bank entries are never rewritten.
       stmts.push(db.prepare('UPDATE bank_accounts SET current_balance=current_balance+? WHERE bank_account_id=? AND status=\'Active\'')
@@ -295,6 +378,8 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   try{await db.batch(stmts);}catch(err){
     // A concurrent duplicate request can lose the unique-index race.
     // The losing batch rolls back: return the committed invoice when available.
+    if(String(err).includes('SPLIT_TENDER_ACCOUNTING_CONFLICT'))
+      return error('Split payment sources changed; refresh and verify the allocation.',409);
     if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||
        String(err).includes('STORE_CREDIT_REDEMPTION_REQUIRED')||
        String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))
@@ -311,7 +396,8 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     if(String(err).includes('POS_STOCK_CONFLICT'))return error('Stock changed during checkout. Reload POS and review available stock before retrying.',409);
     throw err;
   }
-  return json({ok:true,invoice:{invoiceId,date,customerName,customerPhone,customerFatherName:cleanText(input.customerFatherName),customerAddress:cleanText(input.customerAddress),subtotal,discount,grandTotal,paidAmount,dueAmount,paymentStatus,paymentMethod,items:lines.map(l=>({productId:l.product.product_id,productName:(String(l.product.brand||'').trim()?`${String(l.product.brand).trim()} ${l.product.product_name}`:l.product.product_name),quantity:l.q,unit:l.product.unit||'',unitPrice:l.price,lineTotal:l.lineTotal,unitDescription:l.unitSnapshot?.description,unitSnapshot:l.unitSnapshot?{profile:l.unitSnapshot.profile,quantities:l.unitSnapshot.quantities,revision:l.unitSnapshot.revision}:undefined}))}});
+  return json({ok:true,invoice:{invoiceId,date,customerName,customerPhone,customerFatherName:cleanText(input.customerFatherName),customerAddress:cleanText(input.customerAddress),subtotal,discount,grandTotal,paidAmount,dueAmount,paymentStatus,paymentMethod,
+    paymentAllocations:split?.allocations||[],items:lines.map(l=>({productId:l.product.product_id,productName:(String(l.product.brand||'').trim()?`${String(l.product.brand).trim()} ${l.product.product_name}`:l.product.product_name),quantity:l.q,unit:l.product.unit||'',unitPrice:l.price,lineTotal:l.lineTotal,unitDescription:l.unitSnapshot?.description,unitSnapshot:l.unitSnapshot?{profile:l.unitSnapshot.profile,quantities:l.unitSnapshot.quantities,revision:l.unitSnapshot.revision}:undefined}))}});
 }
 
 export async function getSalesByPhoneRoute(db:SherDatabase,phone:string):Promise<Response>{const r=await db.prepare(`SELECT invoice_id,sale_date,grand_total,payment_status FROM sales WHERE customer_phone=? AND is_deleted=0 ORDER BY sale_date DESC,created_at DESC LIMIT 50`).bind(phone).all<any>();return json({ok:true,sales:(r.results||[]).map((s:any)=>({invoiceId:s.invoice_id,date:s.sale_date,grandTotal:Number(s.grand_total||0),paymentStatus:s.payment_status}))});}
