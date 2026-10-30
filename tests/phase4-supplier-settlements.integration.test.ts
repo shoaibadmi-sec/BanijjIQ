@@ -71,6 +71,13 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
   assert.deepEqual(state(),{due:500,ledger:500,journals:2,bank:200,cash:200});
   const bankRow=sql('SELECT bank_account_id AS id,debit,balance FROM bank_book WHERE reference=?',bank.ledgerId);
   assert.deepEqual([bankRow.id,bankRow.debit,bankRow.balance],['BANK-4D',300,200]);
+  const paymentDetail=await api('GET','/api/supplier-payments/'+bank.ledgerId);
+  assert.equal(paymentDetail.status,200,JSON.stringify(paymentDetail));
+  assert.equal(paymentDetail.payment.amount,300);
+  assert.equal(paymentDetail.payment.bankAccountId,'BANK-4D');
+  assert.equal((await api('GET','/api/supplier-payments/UNKNOWN')).status,404);
+  const unknownSupplier=await api('GET','/api/purchases/supplier-settlements/supplier/UNKNOWN');
+  assert.notEqual(unknownSupplier.status,200);
   const list=await api('GET','/api/purchases/supplier-settlements/supplier/'+supplier.id);
   assert.equal(list.status,200,JSON.stringify(list));
   assert.equal(list.bankAccounts[0].id,'BANK-4D');
@@ -121,5 +128,18 @@ test('4D: atomic supplier cash/bank settlement, exact due, retries, reversals an
   assert.deepEqual(state(),{due:500,ledger:500,journals:4,bank:500,cash:500});
   assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='SUPPLIER_SETTLEMENT'").n,4);
   assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n,2);
+  const mobile=await api('POST','/api/purchases/supplier-settlements',
+   pay(50,'Mobile Banking',crypto.randomUUID(),'BANK-4D'));
+  assert.equal(mobile.status,200,JSON.stringify(mobile));
+  assert.deepEqual(state(),{due:450,ledger:450,journals:5,bank:450,cash:500});
+  const mobileDetail=await api('GET','/api/supplier-payments/'+mobile.ledgerId);
+  assert.equal(mobileDetail.status,200);
+  assert.equal(mobileDetail.payment.method,'Mobile Banking');
+  const mobileReversed=await api('POST',
+   '/api/purchases/supplier-settlements/'+mobile.settlementId+'/reverse',
+   {reason:'Mobile account transfer reversed'});
+  assert.equal(mobileReversed.status,200,JSON.stringify(mobileReversed));
+  assert.deepEqual(state(),{due:500,ledger:500,journals:5,bank:500,cash:500});
+  assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='REVERSE_SUPPLIER_SETTLEMENT'").n,3);
  }finally{db.close();}
 });

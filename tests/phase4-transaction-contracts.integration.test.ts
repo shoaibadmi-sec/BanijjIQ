@@ -69,6 +69,8 @@ test('4F planner: draft edit, inactive supplier approval hold, approve/reject/de
   const id=saved.planId;
   safe(await api('PUT','/api/purchases/planner/plans/'+id,{
    items:planItems(p1,p2,supplier,second),notes:'Updated draft'}));
+  const listed=await api('GET','/api/purchases/planner/plans');safe(listed);
+  assert.ok(listed.plans.some((r:any)=>r.planId===id));
   const draft=await api('GET','/api/purchases/planner/plans/'+id);safe(draft);
   assert.equal(draft.plan.status,'Draft');assert.equal(draft.plan.notes,'Updated draft');
   assert.deepEqual(new Set(draft.items.map((i:any)=>i.supplierId)),new Set([supplier.id,second.id]));
@@ -82,6 +84,8 @@ test('4F planner: draft edit, inactive supplier approval hold, approve/reject/de
   const approved=await api('POST','/api/purchases/planner/plans/'+id+'/approve',{});safe(approved);
   assert.equal(approved.orders.length,2);
   assert.equal(count('purchase_plan_orders'),2);
+  const orderList=await api('GET','/api/purchases/planner/orders');safe(orderList);
+  assert.equal(orderList.orders.filter((o:any)=>o.planId===id).length,2);
   assert.equal((await api('POST','/api/purchases/planner/plans/'+id+'/approve',{})).status!==200,true);
   assert.notEqual((await api('PUT','/api/purchases/planner/plans/'+id,{
    items:planItems(p1,p2,supplier,second)})).status,200);
@@ -179,6 +183,19 @@ test('4F supplier CRUD: invalid status and duplicate names must not modify maste
   assert.equal(one('SELECT is_deleted FROM suppliers WHERE supplier_id=?',second.id).is_deleted,1);
   assert.equal(one("SELECT COUNT(*) AS n FROM audit_logs WHERE action='DELETE_SUPPLIER'").n,1);
   assert.equal(count('purchases'),0);assert.equal(count('supplier_settlement_entries'),0);
+  const beforeOpening=await api('POST','/api/suppliers',{
+   name:'4F Opening Supplier',openingBalance:25});
+  assert.notEqual(beforeOpening.status,200,'Opening dues need an active cash session');
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'TEST','Open')")
+   .run('CS-4F-OPENING');
+  const opening=await api('POST','/api/suppliers',{
+   name:'4F Opening Supplier',openingBalance:25});
+  safe(opening);
+  assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',opening.id).n,25);
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',opening.id).n,25);
+  assert.notEqual((await api('DELETE','/api/suppliers/'+opening.id,
+   {reason:'Outstanding dues must block deletion'})).status,200);
+  assert.equal(one('SELECT is_deleted FROM suppliers WHERE supplier_id=?',opening.id).is_deleted,0);
  });
 });
 
