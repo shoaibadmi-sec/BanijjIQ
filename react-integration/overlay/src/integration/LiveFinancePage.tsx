@@ -324,7 +324,7 @@ function LiveFinancePersonLedger({people,symbol,canAdd,canBankView,activeCashSes
     Boolean(action)&&
     (method==='Cash'||accounts.some(a=>a.id===bankId&&a.accountType===method&&a.status==='Active'))&&
     (!transactionDate||transactionDate>=new Date().toISOString().slice(0,10)||backdatedReason.trim().length>0);
-  const refresh=()=>{setReload(v=>v+1);onChanged();};
+  const refresh=(alsoReloadParent=true)=>{setReload(v=>v+1);if(alsoReloadParent)onChanged();};
   async function submitFinance(){
     if(!canPost||pending)return;
     setPending(true);setError('');setNotice('');
@@ -338,7 +338,7 @@ function LiveFinancePersonLedger({people,symbol,canAdd,canBankView,activeCashSes
       setNotice(text('Finance entry posted: ','অর্থ লেনদেন জমা হয়েছে: ')+result.id);
       setAmount('');setNotes('');setBackdatedReason('');setAction('');setReview(false);setUncertain(false);
       requestId.current=crypto.randomUUID();
-      refresh();
+      refresh(false);
     }catch(e){
       const ambiguous=e instanceof BackendRequestError&&(e.status===null||e.status>=500);
       setUncertain(ambiguous);
@@ -357,7 +357,7 @@ function LiveFinancePersonLedger({people,symbol,canAdd,canBankView,activeCashSes
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="text-sm font-semibold text-ink"><Users className="mr-2 inline-block size-4 text-primary" aria-hidden="true"/>
         {text('Owner & lender ledger','মালিক ও ঋণদাতার খতিয়ান')}</h2>
-      <button type="button" onClick={refresh} className="h-9 rounded-lg border border-border px-3 text-xs">
+      <button type="button" onClick={()=>refresh()} className="h-9 rounded-lg border border-border px-3 text-xs">
         {text('Refresh','হালনাগাদ')}</button>
     </div>
     <div role="tablist" aria-label={text('Finance person type','ব্যক্তির ধরন')} className="flex gap-5 border-b border-border">
