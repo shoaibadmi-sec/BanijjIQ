@@ -13,7 +13,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
     ];
     await context.route('**/api/**',async route=>{
       const req=route.request(),method=req.method(),path=new URL(req.url()).pathname;
-      calls.push({method,path,body:method==='PUT'?req.postDataJSON():null});
+      calls.push({method,path,body:method==='POST'?req.postDataJSON():null});
       const reply=(status,body)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
       if(path==='/api/auth/me')return reply(200,{ok:true,user:{
         userId:admin?'admin-1':'staff-manager',fullName:'Authenticated Operator',
@@ -26,7 +26,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
           canAssignAdministrator:admin});
       if(path==='/api/roles'&&method==='GET')return reply(200,{ok:true,roles:[],
         moduleOptions:[{key:'products',label:'Products'}],deleteWindowOptions:[]});
-      if(path==='/api/users/staff-1/reset-password'&&method==='PUT'){
+      if(path==='/api/users/staff-1/reset-password'&&method==='POST'){
         if(!admin)return reply(403,{ok:false,error:'Administrator required'});
         if(reject)return reply(400,{ok:false,error:'Password reset was rejected by the server.'});
         return reply(200,{ok:true,id:'staff-1'});
@@ -52,12 +52,12 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
         const dialog=await openReset(f.page);
         await dialog.getByLabel('New password').fill('Only-For-Local-Test-2026!');
         await dialog.getByLabel('Confirm password').fill('Only-For-Local-Test-2026!');
-        assert.equal(f.calls.filter(c=>c.method==='PUT').length,0,'no write on opening password dialog');
+        assert.equal(f.calls.filter(c=>c.method==='POST').length,0,'no write on opening password dialog');
         await dialog.getByRole('button',{name:'Reset password'}).click();
         await f.page.getByRole('status').getByText('Password reset. Existing sessions were revoked.').waitFor({timeout:12000});
         assert.equal(await dialog.count(),0);
-        assert.deepEqual(f.calls.filter(c=>c.method==='PUT'),[{
-          method:'PUT',path:'/api/users/staff-1/reset-password',
+        assert.deepEqual(f.calls.filter(c=>c.method==='POST'),[{
+          method:'POST',path:'/api/users/staff-1/reset-password',
           body:{newPassword:'Only-For-Local-Test-2026!'}
         }]);
         assert.equal(f.employees[0].name,'Existing Real Employee');
@@ -74,7 +74,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
       await dialog.getByLabel('Confirm password').fill('Different-Password-2026!');
       await dialog.getByRole('button',{name:'Reset password'}).click();
       await dialog.getByRole('alert').getByText('Passwords do not match.').waitFor({timeout:12000});
-      assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
       assert.equal(await dialog.count(),1);
     }finally{await f.context.close();}
   });
@@ -87,7 +87,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
       await dialog.getByRole('button',{name:'Reset password'}).click();
       await dialog.getByRole('alert').getByText('Password reset was rejected by the server.').waitFor();
       assert.equal(await dialog.count(),1);
-      assert.equal(f.calls.filter(c=>c.method==='PUT').length,1);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,1);
       assert.equal(await f.page.getByText('Password reset. Existing sessions were revoked.').count(),0);
     }finally{await f.context.close();}
   });
@@ -96,7 +96,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
     try{
       await f.page.getByText('Existing Real Employee').waitFor();
       assert.equal(await f.page.getByRole('button',{name:'Actions for Existing Real Employee'}).count(),0);
-      assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
     }finally{await f.context.close();}
   });
   await withCheck('Phase 8A3B4 administrator password is not resettable through Team employee actions',async()=>{
@@ -104,7 +104,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
     try{
       await f.page.getByText('Business Administrator').waitFor();
       assert.equal(await f.page.getByRole('button',{name:'Actions for Business Administrator'}).count(),0);
-      assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
     }finally{await f.context.close();}
   });
   await withCheck('Phase 8A3B4 unavailable employees API does not expose password reset actions',async()=>{
@@ -112,7 +112,7 @@ export async function runAdminPasswordResetChecks({browser,base,withCheck}){
     try{
       await f.page.getByRole('alert').getByText('Employee directory unavailable').waitFor({timeout:12000});
       assert.equal(await f.page.getByRole('menuitem',{name:'Reset password'}).count(),0);
-      assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+      assert.equal(f.calls.filter(c=>c.method==='POST').length,0);
     }finally{await f.context.close();}
   });
 }
