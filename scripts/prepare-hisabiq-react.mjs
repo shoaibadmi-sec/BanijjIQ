@@ -48,8 +48,9 @@ const posAnchor = '<Route path="pos" element={<Pos />} />';
 const productsAnchor = '<Route path="products" element={<Products />} />';
 const reportsAnchor = '<Route path="reports" element={<Reports />} />';
 const financeAnchor = '<Route path="finance" element={<Finance />} />';
+const expensesAnchor = '<Route path="expenses" element={<Expenses />} />';
 const daybookAnchor = '<Route path="daybook" element={<Daybook />} />';
-if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, financeAnchor, daybookAnchor].every(anchor => app.includes(anchor))) {
+if (![importAnchor, posAnchor, productsAnchor, reportsAnchor, financeAnchor, daybookAnchor, expensesAnchor].every(anchor => app.includes(anchor))) {
   throw new Error('HisabIQ upstream routes changed; review the API integration before rebuilding');
 }
 app = app.replace(importAnchor, [
@@ -58,6 +59,7 @@ app = app.replace(importAnchor, [
   "const LiveSalesReturns = lazy(() => import('./integration/LiveSalesReturnsPage').then(module => ({ default: module.LiveSalesReturnsPage })));",
   "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
   "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
+  "const LiveExpenses = lazy(() => import('./integration/LiveExpensesPage').then(module => ({ default: module.LiveExpensesPage })));",
   "const LiveDaybook = lazy(() => import('./integration/LiveDaybookPage').then(module => ({ default: module.LiveDaybookPage })));",
   importAnchor
 ].join('\n'));
@@ -71,5 +73,7 @@ app = app.replace(financeAnchor,
   '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
 app = app.replace(daybookAnchor,
   '<Route path="daybook" element={<LiveDaybook />} />\\n          <Route path="daybook-design-preview" element={<Daybook />} />');
+app = app.replace(expensesAnchor,
+  '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
 writeFileSync(appPath, app);
 console.log('Prepared isolated React build: real Products, POS and two-tab Reports route; unreconciled report figures remain unavailable.');
