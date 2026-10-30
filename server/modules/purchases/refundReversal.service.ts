@@ -59,7 +59,6 @@ export async function reversePaidPurchaseRefund(db:SherDatabase,returnId:string,
    return reject('Original purchase payment ledger has changed.');
  const session=await db.prepare("SELECT session_id FROM cash_sessions WHERE status='Open' LIMIT 1").first();
  if(!session)return reject('Open a cash session before refund reversal.');
- const moneyTable=method==='Cash'?'cash_book':'bank_book';
  const readMoney=method==='Cash'
    ?'SELECT entry_id,type,reference,debit,credit,payment_method FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0'
    :'SELECT entry_id,type,reference,debit,credit,bank_account_id FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0';
@@ -126,11 +125,11 @@ export async function reversePaidPurchaseRefund(db:SherDatabase,returnId:string,
      return reject('Tracked or unavailable products require a separate reversal.');
    const newStock=round4(Number(product.current_stock)+quantity);
    if(!Number.isFinite(newStock))return reject('Invalid stock quantity for refund reversal.');
-   batch.push(db.prepare("UPDATE products SET current_stock=?,updated_at=datetime('now') WHERE product_id=?")
-     .bind(newStock,productId));
+   batch.push(db.prepare("UPDATE products SET current_stock=current_stock+?,updated_at=datetime('now') WHERE product_id=?")
+     .bind(quantity,productId));
    for(const m of changes.results.filter(m=>m.product_id===productId)){
-     batch.push(db.prepare("INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,lot_id,note,created_at) VALUES (?,?,'Purchase Return Reversal',?,0,?,?,?,datetime('now'))")
-       .bind(crypto.randomUUID(),productId,m.quantity_out,newStock,m.lot_id,returnId));
+     batch.push(db.prepare("INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,lot_id,note,created_at) VALUES (?,?,'Purchase Return Reversal',?,0,(SELECT current_stock FROM products WHERE product_id=?),?,?,datetime('now'))")
+       .bind(crypto.randomUUID(),productId,m.quantity_out,productId,m.lot_id,returnId));
    }
  }
  batch.unshift(db.prepare("UPDATE purchase_returns SET refund_status='Reversed',reversal_request_id=?,reversal_reason=?,reversed_by=?,reversed_at=datetime('now') WHERE return_id=? AND refund_status='Posted'")
