@@ -1,6 +1,6 @@
 import type { LiveReportKey, LiveReportQuery, LiveReportRange } from './types.js';
 
-const keys: readonly LiveReportKey[] = ['sales','purchase','stock','receivables','payables','profit','cash','expenses','audit'];
+const keys: readonly LiveReportKey[] = ['sales','purchase','stock','receivables','payables','profit','cash','bank','finance','expenses','audit'];
 const sortKeys = ['date','amount','name','reference'] as const;
 
 export class LiveReportQueryError extends Error {
