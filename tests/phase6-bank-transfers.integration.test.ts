@@ -41,7 +41,7 @@ test('6B transfer posts once with balanced bank and mobile ledger legs; same key
     assert.equal(next.id,first.id,'same request key returns original transfer, never a second charge');
     assert.equal(f.headers().length,1);
     assert.deepEqual(f.amounts().map(x=>x.current_balance),[70,55,0]);
-    assert.deepEqual(f.legs(first.id).map(x=>[x.type,x.debit,x.credit]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])),
+    assert.deepEqual(f.legs(first.id).map(x=>[x.type,x.debit,x.credit]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))),
       [['Transfer In',0,30],['Transfer Out',30,0]].sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
     assert.equal((await post(f.db,f.user,{...input(),amount:31})).status,409,
       'same id with altered amount must not silently reuse original');
