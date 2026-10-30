@@ -81,6 +81,32 @@ function startMocking(context,calls){
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 
     // Finance 6A uses real endpoint shapes, never the pinned demo account store.
+    if(path==='/api/bank/accounts'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',bankAccounts:[
+        {id:'BK-OK',name:'Shop Bank',accountType:'Bank',currentBalance:125.6234,status:'Active'},
+        {id:'BK-DISPUTED',name:'Disputed Bank',accountType:'Mobile Banking',currentBalance:999,status:'Active'}
+      ]});
+    if(path==='/api/bank/transfers'&&request.method()==='GET')return respond({
+      ok:true,transfers:[{transferId:'BTR-UI-6B-001',date:'2026-10-30',
+        fromAccountId:'BK-OK',fromAccountName:'Shop Bank',toAccountId:'BK-DISPUTED',
+        toAccountName:'Disputed Bank',amount:20,notes:'test posting',clientRequestId:'PREVIOUS-REQUEST-001',
+        reversedAt:'',reversalReason:''}]});
+    if(path==='/api/bank/transfers'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(typeof payload.clientRequestId==='string'&&payload.clientRequestId.length>8,
+        'all transfer posts must carry an idempotency key');
+      assert.equal(payload.fromAccountId,'BK-OK');
+      assert.equal(payload.toAccountId,'BK-DISPUTED');
+      assert.equal(payload.amount,12.5);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'BTR-UI-6B-POSTED',replayed:false});
+    }
+    if(path==='/api/bank/transfers/BTR-UI-6B-001/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'BTR-UI-6B-001',reversed:true});
+    }
     if(path==='/api/bank/reconciliation'&&request.method()==='GET')return respond({
       ok:true,asOf:'2026-10-30T09:00:00.000Z',coverage:{status:'needs-review',reason:'One account differs from bank book.'},
       accounts:[
@@ -305,6 +331,35 @@ try{
       await inspectLayout(page,'phase6a-finance-'+width);
       await audit(page,'phase6a-finance-'+width);
       await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6B bank transfer review and paired reversal '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      await page.locator('[data-phase6-bank-transfers]').waitFor({timeout:12000});
+      await page.getByRole('combobox',{name:'Transfer from account'}).selectOption('BK-OK');
+      await page.getByRole('combobox',{name:'Transfer to account'}).selectOption('BK-DISPUTED');
+      await page.getByRole('spinbutton',{name:'Transfer amount'}).fill('12.5');
+      await page.getByRole('textbox',{name:'Transfer note'}).fill('operating float');
+      await page.getByRole('button',{name:'Review transfer'}).click();
+      await page.getByRole('button',{name:'Confirm transfer'}).click();
+      await page.getByText(/BTR-UI-6B-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/bank/transfers').length,1,
+        'transfer is posted exactly once');
+      await page.getByRole('button',{name:'Reverse',exact:true}).first().click();
+      await page.getByRole('textbox',{name:'Transfer reversal reason'}).fill('Customer funds correction');
+      await page.getByRole('button',{name:'Confirm reversal'}).click();
+      await page.getByText(/two ledger entries/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path.includes('/reverse')).length,1);
+      await screenshot(page,'phase6b-bank-transfer-'+width);
+      await inspectLayout(page,'phase6b-bank-transfer-'+width);
+      await audit(page,'phase6b-bank-transfer-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
     });
   }
 
