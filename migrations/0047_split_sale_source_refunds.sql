@@ -267,6 +267,23 @@ BEGIN SELECT RAISE(ABORT,'SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'); END;
 
 -- Final audit is last in the batch: if even one money/credit source is
 -- absent or mismatched, D1 reverts the entire stock+refund+liability batch.
+-- Original FIFO lot snapshot is saved before the restore, append-only.
+-- Final audit checks the *new* balance equals the pre-update balance plus
+-- exactly the quantity originally drawn by this invoice. No silent 0-row UPDATE.
+CREATE TABLE IF NOT EXISTS split_refund_lot_restorations (
+  return_id TEXT NOT NULL REFERENCES sales_returns(return_id),
+  invoice_id TEXT NOT NULL REFERENCES sales(invoice_id),
+  lot_id TEXT NOT NULL REFERENCES stock_lots(lot_id),
+  product_id TEXT NOT NULL REFERENCES products(product_id),
+  quantity REAL NOT NULL CHECK(quantity>0),
+  prior_remaining REAL NOT NULL CHECK(prior_remaining>=0),
+  PRIMARY KEY(return_id,lot_id)
+);
+CREATE TRIGGER split_refund_lots_immutable_update BEFORE UPDATE ON split_refund_lot_restorations
+BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_LOTS_APPEND_ONLY'); END;
+CREATE TRIGGER split_refund_lots_immutable_delete BEFORE DELETE ON split_refund_lot_restorations
+BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_LOTS_APPEND_ONLY'); END;
+
 CREATE TRIGGER trg_split_refund_audit_reconciles
 BEFORE INSERT ON audit_logs
 WHEN NEW.action='REVERSE_SPLIT_SALE'
@@ -334,6 +351,45 @@ AND NOT EXISTS (
     AND (SELECT COALESCE(SUM(CAST(ROUND(item.line_total*100) AS INTEGER)),0)
       FROM sales_return_items item WHERE item.return_id=sr.return_id)
         =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
+    AND (SELECT COUNT(*) FROM split_refund_lot_restorations evidence
+      WHERE evidence.return_id=sr.return_id)
+      =(SELECT COUNT(DISTINCT sold.lot_id) FROM sale_item_lots sold
+        WHERE sold.invoice_id=s.invoice_id)
+    AND NOT EXISTS (
+      SELECT 1 FROM split_refund_lot_restorations evidence
+      LEFT JOIN stock_lots lot ON lot.lot_id=evidence.lot_id
+      WHERE evidence.return_id=sr.return_id
+        AND (evidence.invoice_id<>s.invoice_id
+          OR lot.lot_id IS NULL
+          OR ABS(lot.remaining_quantity-evidence.prior_remaining-evidence.quantity)>0.00001
+          OR lot.remaining_quantity>lot.original_quantity
+          OR NOT EXISTS (SELECT 1 FROM sale_item_lots sold
+            WHERE sold.invoice_id=s.invoice_id AND sold.lot_id=evidence.lot_id
+              AND sold.product_id=evidence.product_id))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM sale_item_lots sold
+      WHERE sold.invoice_id=s.invoice_id AND (
+        SELECT ABS(COALESCE(SUM(evidence.quantity),0)
+          -COALESCE((SELECT SUM(original.quantity) FROM sale_item_lots original
+            WHERE original.invoice_id=s.invoice_id AND original.lot_id=sold.lot_id),0))
+        FROM split_refund_lot_restorations evidence
+        WHERE evidence.return_id=sr.return_id AND evidence.lot_id=sold.lot_id
+      )>0.00001
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM sales_return_items item
+      LEFT JOIN products product ON product.product_id=item.product_id
+      WHERE item.return_id=sr.return_id AND (
+        product.product_id IS NULL
+        OR (SELECT COUNT(*) FROM stock_movements sm
+          WHERE sm.note=sr.return_id AND sm.product_id=item.product_id
+            AND sm.movement_type='Sales Return')<>1
+        OR ABS(product.current_stock-COALESCE((SELECT sm.balance_after
+          FROM stock_movements sm WHERE sm.note=sr.return_id AND sm.product_id=item.product_id
+            AND sm.movement_type='Sales Return' LIMIT 1),-1))>0.00001
+      )
+    )
     AND NOT EXISTS (SELECT 1 FROM customer_ledger cl WHERE cl.reference=sr.return_id)
 )
 BEGIN SELECT RAISE(ABORT,'SPLIT_REFUND_ACCOUNTING_CONFLICT'); END;
