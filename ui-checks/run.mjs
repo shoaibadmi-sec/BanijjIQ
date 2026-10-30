@@ -725,8 +725,14 @@ try{
       await page.goto(base+'/#/app/pos');
       await page.locator('[data-live-pos]').waitFor();
       await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
-      await page.getByRole('combobox',{name:'Customer name'}).fill('Credit UI Buyer');
-      await page.getByRole('combobox',{name:'Customer name'}).press('Tab');
+      // Wait for the real mocked bootstrap customer before typing. Otherwise
+      // blur can race bootstrap and leave Store Credit/customer validation disabled.
+      await page.locator('datalist#live-pos-customer-names option[value="Credit UI Buyer"]').waitFor({state:'attached',timeout:12000});
+      const name=page.getByRole('combobox',{name:'Customer name'});
+      await name.fill('Credit UI Buyer');await name.press('Tab');
+      await page.locator('[data-pos-previous-balance-inline]').waitFor({timeout:12000});
+      assert.equal(await page.getByRole('combobox',{name:'Customer phone'}).inputValue(),'01000009801');
+      await page.locator('[data-pos-store-credit-balance]').waitFor();
       await page.getByRole('button',{name:'Split payment · একাধিক মাধ্যম'}).click();
       await page.getByRole('spinbutton',{name:'Split amount 1'}).fill('40');
       await page.getByRole('spinbutton',{name:'Split amount 2'}).fill('60');
