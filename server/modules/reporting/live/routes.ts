@@ -24,7 +24,7 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
   const offset=(query.page-1)*query.pageSize;
   const result=await db.prepare(`SELECT invoice_id,sale_date,customer_id,customer_phone,customer_name,grand_total,paid_amount,due_amount
     FROM sales WHERE ${where} ORDER BY ${orderColumn} ${query.direction.toUpperCase()},invoice_id DESC LIMIT ? OFFSET ?`)
-    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
+    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_id:string;customer_phone:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
   const rows:LiveReportRow[]=(result.results||[]).map(row=>{
     const amountMinor=toMinor(row.grand_total);
     const rawPaid=row.paid_amount===null?null:toMinor(row.paid_amount);
