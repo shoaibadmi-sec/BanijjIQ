@@ -104,5 +104,23 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
     assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.journal);
     assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
     assert.equal(row('SELECT COUNT(*) n FROM customer_ledger').n,before.ledger);
+    // Two historical ledger offsets may point at the same original return.
+    // They are distinct accounting anomalies and MUST have distinct case IDs.
+    db.native.prepare(
+      "INSERT INTO customer_ledger(ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) "+
+      "VALUES ('CASE-LEDGER-2','2026-10-30','CASE-CUS','Historical Customer','Sales Return Credit',"+
+      "'CASE-RETURN',0,1,-6,'Second mistaken credit offset')"
+    ).run();
+    const duplicates=await api('GET','/api/pos/store-credit/reconciliation/cases?limit=10');
+    assert.equal(duplicates.total,4,JSON.stringify(duplicates));
+    assert.equal(new Set(duplicates.cases.map((c:any)=>c.caseId)).size,4,
+      'different legacy ledger entry IDs must have unique review case IDs');
+    const secondary=duplicates.cases.find((c:any)=>c.flagCode==='LEGACY_RECEIVABLE_CREDIT'
+      && c.referenceId==='CASE-LEDGER-2');
+    assert.ok(secondary,JSON.stringify(duplicates.cases));
+    const duplicateEvidence=await api('GET',
+      '/api/pos/store-credit/reconciliation/cases/'+encodeURIComponent(secondary.caseId));
+    assert.equal(duplicateEvidence.ok,true,JSON.stringify(duplicateEvidence));
+    assert.equal(duplicateEvidence.evidence.return.returnId,'CASE-RETURN');
   }finally{db.close();}
 });
