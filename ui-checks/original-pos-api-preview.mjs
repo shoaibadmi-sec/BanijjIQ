@@ -45,6 +45,10 @@ try{
     'API preview must start empty, not with seeded cart lines');
    assert.ok(!((await page.locator('[data-pos-layout]').innerText()).includes('Copper Wire 1.5')));
    assert.equal(calls.filter(c=>c.path==='/api/bootstrap').length,1,'source POS must load real D1 catalog once');
+   await page.getByRole('button',{name:/D1 Verified Cable/}).first().click();
+   await page.locator('[data-pos-layout] [data-cart-row="sale"]').first().waitFor({timeout:12000});
+   assert.ok((await page.locator('[data-pos-layout] [data-cart-row="sale"]').first().innerText()).includes('D1 Verified Cable'),
+     'original CartTable must receive the actual API-backed selected product');
    assert.equal(calls.filter(c=>c.method==='POST').length,0,'no fake sale posting');
    assert.deepEqual(errors,[],'browser errors must not occur');
    console.log('PASS original HisabIQ source POS API preview '+width+'px');
