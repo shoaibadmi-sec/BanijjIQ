@@ -52,8 +52,8 @@ async function resolveEmployeeRoles(db:SherDatabase,input:any,actor:AuthUser,
     return error('Employee roles must be unique.');
   if(roles.includes('admin') && (roles.length!==1 || actor.role!=='admin'))
     return error('Only an Administrator can assign the Administrator role.',403);
-  if(roles.length>1 && actor.role!=='admin')
-    return error('Only an Administrator can assign multiple roles.',403);
+  if(explicit && actor.role!=='admin')
+    return error('Only an Administrator can assign roleIds until delegated grant checks are integrated.',403);
   if(explicit&&legacy&&legacy!==roles[0])return error('Primary role and roleIds do not match.');
   return {role:roles[0],roleIds:roles};
 }
