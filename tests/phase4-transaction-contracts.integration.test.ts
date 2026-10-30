@@ -331,6 +331,60 @@ test('4F money safety: forbid unposted paid purchases, paid edits and cash refun
  });
 });
 
+test('4I-C1: fully paid purchase cannot create negative supplier due through Supplier Credit',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4IC1','Open')")
+   .run('CS-4IC1-PAID');
+  const paid=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:100,
+   paymentMethod:'Cash',clientRequestId:crypto.randomUUID(),
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(paid);
+  const state=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_type='PURCHASE' AND source_ref=?",paid.purchaseId).n,
+   invoice:one('SELECT returned_amount AS returned FROM purchases WHERE purchase_id=?',paid.purchaseId),
+   returns:count('purchase_returns'),returnLines:count('purchase_return_items'),
+   cash:count('cash_book'),audit:count('audit_logs')
+  });
+  const before=state();
+  assert.equal(before.due,0);assert.equal(before.ledger,0);
+  const input={purchaseId:paid.purchaseId,reason:'Supplier goods damaged',items:[
+   {productId:p1.productId,qty:1,unitPrice:50}]};
+  const unbackedCredit=await api('POST','/api/purchase-returns',{
+   ...input,refundMethod:'Supplier Credit'});
+  assert.equal(unbackedCredit.status,409,
+   'Already-paid goods cannot turn into a negative supplier payable without an explicit receivable');
+  assert.deepEqual(state(),before,'Rejected supplier credit must not alter FIFO stock, due, cash or audit');
+  const unpostedCash=await api('POST','/api/purchase-returns',{
+   ...input,refundMethod:'Cash'});
+  assert.equal(unpostedCash.status,409,'Cash refund remains blocked until an actual receipt is posted');
+  assert.deepEqual(state(),before);
+ });
+});
+
+test('4I-C1: supplier credit return rejects tampered supplier master/ledger without stock effects',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  const due=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(due);
+  db.native.prepare('UPDATE suppliers SET current_due=? WHERE supplier_id=?').run(90,supplier.id);
+  const snapshot=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT SUM(debit-credit) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lots:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=?",due.purchaseId).n,
+   returns:count('purchase_returns'),returnItems:count('purchase_return_items'),audit:count('audit_logs')
+  });
+  const original=snapshot();
+  assert.equal(original.due,90);assert.equal(original.ledger,100);
+  const response=await api('POST','/api/purchase-returns',{
+   purchaseId:due.purchaseId,refundMethod:'Supplier Credit',reason:'Defective parts',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.equal(response.status,409,'Return must not further corrupt unreconciled supplier payables');
+  assert.deepEqual(snapshot(),original,'Rejected return must leave supplier, stock, and audit unchanged');
+ });
+});
+
 test('4I Cash: paid purchase posts invoice, full supplier debit, payment credit and cash book atomically',async()=>{
  await fixture(async({api,one,count,db,supplier,p1})=>{
   const requestId=crypto.randomUUID();
