@@ -9,11 +9,11 @@ function json(data:unknown,status=200):Response{
   return new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8'}});
 }
 function fail(message:string,status=400){return json({ok:false,error:message},status);}
-function caseIdOf(flag:StoreCreditReviewFlag):string{
+export function caseIdOf(flag:StoreCreditReviewFlag):string{
   return ['SC1',flag.flagCode,flag.customerId,flag.referenceId]
     .map((part,i)=>i===0?part:encodeURIComponent(part)).join(':');
 }
-function parseId(id:string):{flagCode:string;customerId:string;referenceId:string}|null{
+export function parseId(id:string):{flagCode:string;customerId:string;referenceId:string}|null{
   if(id.length>512)return null;
   const parts=id.split(':');
   if(parts.length!==4||parts[0]!=='SC1')return null;
