@@ -63,5 +63,34 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal((await call('POST','/api/reports/v2/rows',{})).status,404);
     const after = (db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
     assert.equal(after,before);
+    // Long-report acceptance: real posted invoices, deterministic page membership and no read-side writes.
+    const insert=db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES (?,?,?,?,?,'Cash','Paid')");
+    for(let i=1;i<=105;i++)
+      insert.run('INV-CI-PAGE-'+String(i).padStart(4,'0'),'2026-10-15',
+        'Pagination Test Buyer','01000000121',i);
+    const pageBefore=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
+    const base='/api/reports/v2/rows?report=sales&from=2026-10-01&to=2026-10-30&search=CI-PAGE&sort=reference&direction=asc';
+    const pages=[];
+    for(const n of [1,2,3]) {
+      const data=await call('GET',base+'&page='+n+'&pageSize=50');
+      assert.equal(data.status,200,JSON.stringify(data));
+      assert.equal(data.totalRows,105);
+      pages.push(data.rows as Array<{sourceId:string}>);
+    }
+    assert.deepEqual(pages.map(x=>x.length),[50,50,5]);
+    const allIds=pages.flat().map(x=>x.sourceId);
+    assert.equal(new Set(allIds).size,105,'each posted invoice must appear exactly once');
+    assert.deepEqual([allIds[0],allIds[49],allIds[50],allIds[104]],
+      ['INV-CI-PAGE-0001','INV-CI-PAGE-0050','INV-CI-PAGE-0051','INV-CI-PAGE-0105']);
+    const wide=await call('GET',base+'&page=2&pageSize=100');
+    assert.equal(wide.totalRows,105);
+    assert.deepEqual(wide.rows.map((x:{sourceId:string})=>x.sourceId),allIds.slice(100));
+    const filtered=await call('GET','/api/reports/v2/rows?report=sales&search=INV-CI-PAGE-0105');
+    assert.equal(filtered.totalRows,1);
+    assert.equal(filtered.rows[0].sourceId,'INV-CI-PAGE-0105');
+    assert.equal((await call('GET',base+'&page=0')).status,400);
+    assert.equal((await call('GET',base+'&pageSize=75')).status,400);
+    const pageAfter=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
+    assert.equal(pageAfter,pageBefore,'report pagination and filtering cannot mutate posted accounting sources');
   } finally { db.close(); }
 });
