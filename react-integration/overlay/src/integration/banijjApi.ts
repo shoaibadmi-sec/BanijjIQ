@@ -231,3 +231,20 @@ export const postMixedReversal = (id:string,reason:string)=>
 
 export const getSalesReturnHistory = () =>
   request<{ok:true;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>}>('/api/sales-returns');
+
+export interface SplitReversalAllocation {
+  method:'Cash'|'Bank'|'Mobile Banking'|'Store Credit';
+  amountCents:number;bankAccountId:string;sourceKey:string;
+}
+export interface SplitReversalPreview {
+  eligible:boolean;reason:string;invoiceId:string;totalCents:number;
+  refundCents:number;creditReissueCents:number;allocations:SplitReversalAllocation[];
+}
+export const getSplitReversalPreview=(id:string)=>
+  request<{ok:true;preview:SplitReversalPreview}>(
+    '/api/sales-management/'+encodeURIComponent(id)+'/split-reversal');
+export const postSplitReversal=(id:string,reason:string)=>
+  request<{ok:true;returnId:string;refundCents:number;creditReissueCents:number}>(
+    '/api/sales-management/'+encodeURIComponent(id)+'/split-reversal',{
+      method:'POST',body:JSON.stringify({reason})
+    });
