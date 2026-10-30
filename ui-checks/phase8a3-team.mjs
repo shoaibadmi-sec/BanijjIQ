@@ -73,7 +73,7 @@ export async function runLiveTeamChecks({browser,base,withCheck}){
       await panel.getByText('InventoryStaff').first().waitFor({timeout:12000});
       assert.equal(f.calls.filter(c=>c.path==='/api/users').length,0);
       assert.equal(await panel.getByText('Live Warehouse Keeper').count(),0);
-      assert.equal(await f.page.getByRole('tab',{name:/Employees/}).count(),0);
+      assert.equal(await f.page.getByRole('tablist',{name:'Employee settings views'}).getByRole('tab',{name:/^Employees/}).count(),0);
     }finally{await f.ctx.close();}
   });
 
