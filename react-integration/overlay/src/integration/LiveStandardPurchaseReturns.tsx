@@ -90,6 +90,12 @@ export function LiveStandardPurchaseReturns({purchaseId,onRefresh}:{
    const history=await loadPurchaseReturnHistory();
    const receipt=history.find(x=>x.refundRequestId===requestId.current);
    if(receipt){
+    if(receipt.refundStatus!=='Posted'){
+     setError('Refund was reversed · '+receipt.returnId+' — no active supplier refund receipt. Review history before recording another return.');
+     setSuccess('');requestId.current=crypto.randomUUID();
+     setQuantities({});setReason('');setReceived(false);setUncertain(false);
+     await reload();return;
+    }
     setSuccess('Refund recorded · '+receipt.returnId+' · '+taka(receipt.totalReturnAmount));
     requestId.current=crypto.randomUUID();setQuantities({});setReason('');setReceived(false);
     setUncertain(false);await reload();
