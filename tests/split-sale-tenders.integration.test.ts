@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {SqliteDatabase} from '../server/db/sqlite.ts';
 import {runMigrations} from '../server/db/migrate.ts';
+import {handleApiRequest} from '../server/core/handler.ts';
 
 const mod=await import('../server/modules/sales/sale-tenders.ts').catch(()=>({} as any));
 const validateTenderAllocation=(mod as any).validateTenderAllocation;
@@ -107,5 +108,55 @@ test('G2-G tender journal migration is source-unique and append-only',()=>{
     assert.ok(sql.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sale_tender_allocations'").get());
     assert.ok(sql.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_sale_tender_no_update'").get());
     assert.ok(sql.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_sale_tender_no_delete'").get());
+  }finally{db.close();}
+});
+
+test('G2-G rejects unimplemented split checkout before invoice, receipt or FIFO posting',async()=>{
+  const db=new SqliteDatabase(':memory:');
+  try{
+    runMigrations(db.native,resolve('migrations'));
+    let token='';
+    async function api(method:string,path:string,body?:unknown){
+      const result=await handleApiRequest(new Request('http://split-guard.test'+path,{
+        method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},
+        body:body===undefined?undefined:JSON.stringify(body)
+      }),db);
+      return {status:result.status,...await result.json() as any};
+    }
+    const setup=await api('POST','/api/setup/admin',{
+      fullName:'Split Tender Guard',phone:'01000009071',password:'SplitTenderTest2026Strong!'
+    });
+    assert.equal(setup.ok,true,JSON.stringify(setup));token=setup.token;
+    assert.equal((await api('POST','/api/pos/cash-session/start',{openingCash:0})).ok,true);
+    const item=await api('POST','/api/products',{
+      productName:'Guarded Cable',category:'Electrical',unit:'Pcs',
+      purchasePrice:5,sellingPrice:10,currentStock:4,minimumStock:0,status:'Active'
+    });
+    assert.equal(item.ok,true,JSON.stringify(item));
+    const row=(query:string)=>db.native.prepare(query).get() as any;
+    const initial={
+      invoices:row('SELECT COUNT(*) n FROM sales').n,
+      cash:row('SELECT COUNT(*) n FROM cash_book').n,
+      bank:row('SELECT COUNT(*) n FROM bank_book').n,
+      journal:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
+      tenders:row('SELECT COUNT(*) n FROM sale_tender_allocations').n
+    };
+    const response=await api('POST','/api/pos/sales',{
+      clientRequestId:'split-task4-must-block-001',
+      customerName:'Split Guard Customer',customerPhone:'01000009072',
+      paymentType:'Cash',paymentMethod:'Cash',
+      tenders:[{method:'Cash',amountCents:100},{method:'Store Credit',amountCents:900}],
+      items:[{productId:item.productId,qty:1,unitPrice:10}]
+    });
+    assert.equal(response.status,409,JSON.stringify(response));
+    assert.match(String(response.error),/split|tender|allocation/i);
+    assert.equal(row('SELECT COUNT(*) n FROM sales').n,initial.invoices);
+    assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,initial.cash);
+    assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,initial.bank);
+    assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,initial.journal);
+    assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,initial.tenders);
+    assert.equal(db.native.prepare('SELECT current_stock n FROM products WHERE product_id=?')
+      .get(item.productId).n,4);
+    assert.equal(row('SELECT COUNT(*) n FROM pos_sale_requests').n,0);
   }finally{db.close();}
 });
