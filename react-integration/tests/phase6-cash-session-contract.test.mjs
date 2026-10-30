@@ -14,7 +14,9 @@ test('6C cash count stays source-backed and two-step confirmed',()=>{
  assert.ok(page.includes('canUseModule(user,\'pos\',\'view\')'));
  assert.ok(page.includes('canUseModule(user,\'pos\',\'add\')'));
  assert.ok(page.includes('canUseModule(user,\'pos\',\'edit\')'));
- assert.ok(page.includes('clientRequestId'));
+ assert.ok(api.includes('clientRequestId'), 'API includes stable request key');
+ assert.ok(page.includes('startRequestId')&&page.includes('closeRequestId'),
+  'start and close retain distinct stable request keys across retries');
  assert.ok(page.includes('countedCash'));
  assert.ok(page.includes('expectedCash'));
  assert.ok(page.includes('Review close'));
