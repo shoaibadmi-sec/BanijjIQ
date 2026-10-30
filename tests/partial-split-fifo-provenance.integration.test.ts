@@ -90,3 +90,22 @@ test('G2-J rejects tracked or oversold lots without writing FIFO evidence',()=>{
     assert.equal(f.n(),0);
   }finally{f.db.close();}
 });
+
+test('G2-J forged FIFO evidence rolls back the whole money and inventory batch',async()=>{
+  const f=fixture();
+  try{
+    f.startReturn('FIFO-R1');
+    const stock=Number((f.q.prepare("SELECT current_stock n FROM products WHERE product_id='FIFO-PA'").get() as any).n);
+    const cash=Number((f.q.prepare("SELECT COUNT(*) n FROM cash_book").get() as any).n);
+    await assert.rejects(
+      f.db.batch([
+        f.db.prepare("UPDATE products SET current_stock=current_stock+2 WHERE product_id='FIFO-PA'"),
+        f.db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('FIFO-ROLLBACK-CASH','2026-10-30','Sales Return','FIFO-R1','Provisional refund',20,0,'Cash',0)"),
+        f.db.prepare("INSERT INTO sales_return_item_lots(return_id,invoice_id,product_id,lot_id,quantity) VALUES ('FIFO-R1','FIFO-B','FIFO-PB','FIFO-LB',1)")
+      ]),/SPLIT_PARTIAL_FIFO_PROVENANCE_CONFLICT/
+    );
+    assert.equal((f.q.prepare("SELECT current_stock n FROM products WHERE product_id='FIFO-PA'").get() as any).n,stock);
+    assert.equal((f.q.prepare('SELECT COUNT(*) n FROM cash_book').get() as any).n,cash);
+    assert.equal(f.n(),0,'partial-amount journal cannot be attached to a forged FIFO restoration');
+  }finally{f.db.close();}
+});
