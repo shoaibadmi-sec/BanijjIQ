@@ -663,7 +663,7 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
  */
 export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   if(user.role!=='admin')return error('Administrator permission is required for Store Credit reconciliation.',403);
-  const [review,entries,customers]=await Promise.all([
+  const [review,entries,customers,historical]=await Promise.all([
     readStoreCreditReviewFlags(db),
     db.prepare(
       "SELECT COALESCE(SUM(CASE WHEN entry_type='ISSUE' THEN delta_cents ELSE 0 END),0) issued_cents, "+
@@ -672,15 +672,20 @@ export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:Aut
       "FROM customer_store_credit_entries"
     ).first<any>(),
     db.prepare(
-      "SELECT COUNT(*) n FROM (SELECT customer_id FROM customer_store_credit_entries GROUP BY customer_id)"
-    ).first<{n:number}>()
+      "SELECT COUNT(*) n FROM (SELECT customer_id FROM customer_store_credit_entries "+
+      "UNION SELECT customer_id FROM store_credit_historical_adjustments)"
+    ).first<{n:number}>(),
+    db.prepare(
+      "SELECT COALESCE(SUM(delta_cents),0) cents,COUNT(*) entries "+
+      "FROM store_credit_historical_adjustments"
+    ).first<{cents:number;entries:number}>()
   ]);
   return json({ok:true,readOnly:true,reviewRequired:review.flagsCount>0,
     ...review,
-    issuedCents:Number(entries?.issued_cents||0),
+    issuedCents:Number(entries?.issued_cents||0)+Number(historical?.cents||0),
     redeemedCents:Number(entries?.redeemed_cents||0),
-    outstandingCents:Number(entries?.outstanding_cents||0),
-    journalEntries:Number(entries?.entries||0),
+    outstandingCents:Number(entries?.outstanding_cents||0)+Number(historical?.cents||0),
+    journalEntries:Number(entries?.entries||0)+Number(historical?.entries||0),
     customerAccounts:Number(customers?.n||0)});
 }
 
