@@ -272,3 +272,36 @@ test('4F legacy purchase returns: reject duplicate line over-return and rollback
   assert.equal(one("SELECT COUNT(*) AS n FROM audit_logs WHERE action='PURCHASE_RETURN'").n,2);
  });
 });
+
+test('4F money safety: forbid unposted paid purchases, paid edits and cash refunds',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const state=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   cash:count('cash_book'),bank:count('bank_book'),invoices:count('purchases'),returns:count('purchase_returns')
+  });
+  const empty={due:0,ledger:0,stock:0,cash:0,bank:0,invoices:0,returns:0};
+  const item={productId:p1.productId,qty:2,unitPrice:50};
+  const paid=await api('POST','/api/purchases',{
+   supplierId:supplier.id,paidAmount:50,paymentMethod:'Cash',discount:0,items:[item]});
+  assert.notEqual(paid.status,200,
+   'Cannot accept payment without posting corresponding cash/bank book in the same transaction');
+  assert.deepEqual(state(),empty);
+  const due=await api('POST','/api/purchases',{
+   supplierId:supplier.id,paidAmount:0,discount:0,items:[item]});safe(due);
+  const unchanged={due:100,ledger:100,stock:2,cash:0,bank:0,invoices:1,returns:0};
+  assert.deepEqual(state(),unchanged);
+  const edited=await api('PUT','/api/purchases/'+due.purchaseId,{
+   reason:'Attempt to mark as paid',supplierId:supplier.id,paidAmount:50,discount:0,items:[item]});
+  assert.notEqual(edited.status,200,
+   'Editing money fields cannot create fictitious purchase payments');
+  assert.deepEqual(state(),unchanged);
+  const cashRefund=await api('POST','/api/purchase-returns',{
+   purchaseId:due.purchaseId,refundMethod:'Cash',reason:'Returned for cash',
+   items:[{productId:p1.productId,qty:1,unitPrice:50}]});
+  assert.notEqual(cashRefund.status,200,
+   'Cash refund requires a real auditable cash movement, not only a return row');
+  assert.deepEqual(state(),unchanged);
+ });
+});
