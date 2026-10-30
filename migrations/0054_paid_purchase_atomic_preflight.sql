@@ -32,3 +32,16 @@ BEGIN
    AND b.status='Active' AND b.current_balance>=NEW.paid_amount
  ) THEN RAISE(ABORT,'purchase_bank_balance_or_account_changed') END;
 END;
+
+-- Due purchases must respect the same supplier master/ledger invariant as paid purchases.
+CREATE TRIGGER IF NOT EXISTS purchase_due_supplier_reconcile
+BEFORE INSERT ON purchases WHEN NEW.paid_amount=0 AND NEW.supplier_id<>''
+BEGIN
+ SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM suppliers s WHERE s.supplier_id=NEW.supplier_id
+   AND s.status='Active' AND s.is_deleted=0
+   AND ABS(s.current_due-(SELECT COALESCE(SUM(sl.debit-sl.credit),0)
+     FROM supplier_ledger sl WHERE sl.supplier_id=s.supplier_id
+       AND COALESCE(sl.is_deleted,0)=0))<0.0001
+ ) THEN RAISE(ABORT,'supplier_due_unreconciled') END;
+END;
