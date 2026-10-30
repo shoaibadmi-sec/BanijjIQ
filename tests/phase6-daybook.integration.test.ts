@@ -84,3 +84,19 @@ test('6E reversed bank transfer is preserved as reversed, not shown as a newly a
   assert.equal(data.totals.netBank,0);
  }finally{f.db.close();}
 });
+
+test('6E orphan internal transfer book leg never masquerades as external bank income or expense',async()=>{
+ const f=fixture();
+ try{
+  f.db.native.prepare("INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,debit,credit,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run('BB-ORPHAN','BK-SOURCE','Source Bank','2026-10-30','Transfer Out','BTR-MISSING-HEADER',20,0,'Active','2026-10-30 13:00:00');
+  const data=await f.read('dateFrom=2026-10-30&dateTo=2026-10-30&page=1&pageSize=50');
+  assert.equal(data.status,200);
+  assert.equal(data.rows.length,1);
+  assert.equal(data.rows[0].module,'Bank');
+  assert.equal(data.rows[0].status,'Needs review');
+  assert.equal(data.rows[0].deleteAction,'');
+  assert.equal(data.totals.bankIn,0);
+  assert.equal(data.totals.bankOut,0,'internal transfer must never be counted as spending');
+ }finally{f.db.close();}
+});
