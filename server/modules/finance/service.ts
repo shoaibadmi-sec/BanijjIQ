@@ -273,17 +273,23 @@ async function postFinanceMoney(db:SherDatabase,financeId:string,type:FinanceTxT
   }
 }
 async function financeReversalStatements(db:SherDatabase,financeId:string,
- user:AuthUser,reason:string):Promise<SqlPreparedStatement[]>{
+ user:AuthUser,reason:string,source:any):Promise<SqlPreparedStatement[]>{
  const [cash,bank]=await Promise.all([
-   db.prepare("SELECT entry_id,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
+   db.prepare("SELECT entry_id,type,payment_method,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
      .bind(financeId).all<any>(),
-   db.prepare("SELECT entry_id,bank_account_id,debit,credit FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
+   db.prepare("SELECT entry_id,type,bank_account_id,debit,credit FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0")
      .bind(financeId).all<any>()
  ]);
  const original=[...(cash.results||[]),...(bank.results||[])];
- if(original.length!==1||!Number.isFinite(Number(original[0].debit))||
-   !Number.isFinite(Number(original[0].credit))||
-   (Number(original[0].debit)>0&&Number(original[0].credit)>0))
+ const sourceType=financeType(cleanText(source.transaction_type)),sourceAmount=money(source.amount);
+ const cashSource=cleanText(source.payment_method)==='Cash',entry=original[0];
+ if(!sourceType||sourceAmount<=0||original.length!==1||
+   (cashSource?cash.results.length!==1:bank.results.length!==1)||
+   cleanText(entry.type)!==sourceType.key||
+   Number(entry.debit)!==(sourceType.direction==='out'?sourceAmount:0)||
+   Number(entry.credit)!==(sourceType.direction==='in'?sourceAmount:0)||
+   (cashSource?cleanText(entry.payment_method)!=='Cash':
+     cleanText(entry.bank_account_id)!==cleanText(source.bank_account_id)))
    throw new Error('Finance original money posting is missing or unreconciled.');
  const batch:SqlPreparedStatement[]=[];
  for(const entry of cash.results||[])
@@ -404,7 +410,7 @@ export async function updateFinanceTransactionRoute(db:SherDatabase,id:string,in
   const type=financeType(cleanText(input.transactionType)); if(!type)return error('Choose a valid transaction type.'); const amount=money(input.amount); if(!(amount>0))return error('Enter a valid amount.');
   const personId=cleanText(input.personId); const person=await resolveFinancePerson(db,personId); if(!person)return error('Person not found.'); const method=FINANCE_PAYMENT_METHODS.includes(cleanText(input.paymentMethod))?cleanText(input.paymentMethod):''; if(!method)return error('Choose a valid payment method.');
   let bank:any;try{bank=await resolveFinanceBank(db,method,cleanText(input.bankAccountId));}catch(e){return error(e instanceof Error?e.message:'Bank account error.');} const dv=validateFinanceDate(input);if(dv instanceof Response)return dv;
-  const reverse=await financeReversalStatements(db,id,user,'Finance entry edited');
+  const reverse=await financeReversalStatements(db,id,user,'Finance entry edited',old);
   await db.batch([
     ...reverse,
     db.prepare(`UPDATE finance_transactions SET date=?,transaction_type=?,person_id=?,person_name=?,payment_method=?,bank_account_id=?,bank_account_name=?,amount=?,reference_no=?,notes=?,is_backdated=?,backdated_days=?,backdated_reason=? WHERE finance_id=? AND COALESCE(is_deleted,0)=0`)
@@ -419,8 +425,8 @@ export async function updateFinanceTransactionRoute(db:SherDatabase,id:string,in
 }
 export async function deleteFinanceTransactionRoute(db:SherDatabase,id:string,reason:string,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start the POS Cash Session before deleting a finance transaction.'); if(!reason)return error('Enter a reason for deleting this transaction.');
-  const row=await db.prepare(`SELECT finance_id FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first();if(!row)return error('Transaction not found.',404);
-  const reverse=await financeReversalStatements(db,id,user,reason);
+  const row=await db.prepare(`SELECT * FROM finance_transactions WHERE finance_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first();if(!row)return error('Transaction not found.',404);
+  const reverse=await financeReversalStatements(db,id,user,reason,row);
   await db.batch([
     ...reverse,
     db.prepare(`UPDATE finance_transactions SET is_deleted=1,delete_reason=?,deleted_by=?,deleted_at=datetime('now') WHERE finance_id=? AND COALESCE(is_deleted,0)=0`)
