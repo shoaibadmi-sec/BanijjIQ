@@ -116,6 +116,10 @@ async function saleFingerprint(input:PosSaleInput):Promise<string>{
 }
 
 export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:AuthUser):Promise<Response>{
+  // Fail closed until per-source journal, receipt and due postings land atomically.
+  // Without this guard the old checkout silently records every split as Cash.
+  if(input.tenders!==undefined)
+    return error('Split tender allocation is not enabled until verified source-specific posting is available.',409);
   const requestId=cleanText(input.clientRequestId);
   if(requestId&&!/^[A-Za-z0-9_-]{8,128}$/.test(requestId))return error('Invalid sale request key.');
   const fingerprint=requestId?await saleFingerprint(input):'';
