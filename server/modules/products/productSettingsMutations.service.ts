@@ -77,7 +77,7 @@ export async function setSettingsLookupStatus(db:SherDatabase,kind:LookupKind,id
     AND trim(other.symbol)<>'' AND lower(trim(other.symbol))=lower(trim(product_units.symbol)))`;
  const updated=await db.prepare(sql).bind(status,id).run();
  if(Number(updated.meta.changes)!==1)return failure('Another active unit already uses this symbol.',409);
- return json({ok:true,id,status});
+ return json({ok:true,id,active:status==='Active'});
 }
 
 /**
