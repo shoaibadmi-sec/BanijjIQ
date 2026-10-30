@@ -40,7 +40,7 @@ test('live POS uses existing transaction endpoint and makes unsupported products
   const api=read('overlay/src/integration/banijjApi.ts');
   for(const url of ['/api/pos/bootstrap','/api/pos/cash-session/start','/api/pos/sales']) assert.ok(api.includes(url),url);
   const page=read('overlay/src/integration/LivePosPage.tsx');
-  for(const marker of ['ProductCombobox','getPosBootstrap','postSale(payload)','startCashSession(amount)',
+  for(const marker of ['ProductCombobox','getPosBootstrap','postSale(payload)','startCashSession(amount,startSessionRequestId.current)',
     'canUseModule(user, \'pos\', \'add\')','reviewOpen','Confirm and post','quoteLiveUnits',
     'getPosTrackingOptions(id)','SerialPickerDialog','LiveStockShortageDialog','line.qty > line.product.stock',
     'paidAmount > total','paymentType: PosSalePayload']) assert.ok(page.includes(marker),marker);

@@ -127,10 +127,19 @@ export interface PosInvoice {
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
 }
 export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');
-export const startCashSession = (openingCash: number) =>
-  request<{ ok: true; sessionId: string }>('/api/pos/cash-session/start', {
-    method: 'POST', body: JSON.stringify({ openingCash })
+export const startCashSession = (openingCash: number, clientRequestId = crypto.randomUUID(),notes = '') =>
+  request<{ ok: true; sessionId: string; replayed?: boolean }>('/api/pos/cash-session/start', {
+    method: 'POST', body: JSON.stringify({ openingCash, clientRequestId, notes })
   });
+export interface CashSessionSummary {
+  sessionId:string;openedAt:string;openingCash:number;cashIn:number;cashOut:number;expectedCash:number;
+}
+export const getCashSessionSummary = () =>
+  request<{ok:true;summary:CashSessionSummary|null}>('/api/pos/cash-session/summary');
+export const closeCashSession = (countedCash:number,notes:string,clientRequestId:string) =>
+  request<{ok:true;sessionId:string;expected:number;counted:number;variance:number;replayed?:boolean}>(
+    '/api/pos/cash-session/close',{method:'POST',body:JSON.stringify({countedCash,notes,clientRequestId})});
+
 export const postSale = (payload: PosSalePayload) =>
   request<{ ok: true; invoice: PosInvoice }>('/api/pos/sales', {
     method: 'POST', body: JSON.stringify(payload)
@@ -251,3 +260,144 @@ export const getLiveReportSummary=(from:string,to:string)=>{
   return request<{ok:true;range:{from:string;to:string};metrics:LiveReportMetric[];
     coverage:{status:LiveReportStatus;reason:string}}>('/api/reports/v2/summary?'+params.toString());
 };
+
+export interface BankReconciliationAccount {
+  id: string;
+  name: string;
+  accountType: 'Bank' | 'Mobile Banking';
+  openingBalance: number;
+  recordedBalance: number;
+  bookBalance: number | null;
+  status: 'ready' | 'needs-review';
+  reason: string;
+}
+export interface BankReconciliation {
+  ok: true;
+  asOf: string;
+  accounts: BankReconciliationAccount[];
+  coverage: { status:'ready'|'needs-review'; reason:string };
+}
+export interface FinanceBootstrap {
+  ok: true;
+  currencySymbol: string;
+  activeCashSession: boolean;
+  personsAll: Array<{id:string;name:string;type:'Owner'|'Lender';status:string;phone:string}>;
+}
+export const getBankReconciliation = () =>
+  request<BankReconciliation>('/api/bank/reconciliation');
+export const getFinanceBootstrap = () =>
+  request<FinanceBootstrap>('/api/finance/bootstrap');
+
+
+export interface LiveBankAccount {
+  id:string; name:string; accountType:'Bank'|'Mobile Banking';
+  currentBalance:number; status:string;
+}
+export interface LiveBankTransfer {
+  transferId:string; date:string; fromAccountId:string; toAccountId:string;
+  fromAccountName:string; toAccountName:string; amount:number; notes:string;
+  clientRequestId:string; reversedAt:string; reversalReason:string;
+}
+export interface LiveBankTransferInput {
+  fromAccountId:string; toAccountId:string; amount:number;
+  notes:string; clientRequestId:string;
+}
+export const getBankAccounts = () =>
+  request<{ok:true;bankAccounts:LiveBankAccount[];currencySymbol:string}>('/api/bank/accounts');
+export const getBankTransfers = () =>
+  request<{ok:true;transfers:LiveBankTransfer[]}>('/api/bank/transfers');
+export const postBankTransfer = (payload:LiveBankTransferInput) =>
+  request<{ok:true;id:string;replayed:boolean}>('/api/bank/transfers',{
+    method:'POST',body:JSON.stringify(payload)
+  });
+export const reverseBankTransfer = (id:string,reason:string) =>
+  request<{ok:true;id:string;reversed:boolean}>('/api/bank/transfers/'+encodeURIComponent(id)+'/reverse',{
+    method:'POST',body:JSON.stringify({reason})
+  });
+
+export interface FinancePersonLedgerRow {
+  financeId:string;personId:string;date:string;transactionType:string;paymentMethod:string;
+  amount:number;debit:number;credit:number;balance:number|null;sourceStatus:'matched'|'needs-review';
+  referenceNo:string;notes:string;createdBy:string;createdAt:string;isBackdated:boolean;backdatedReason:string;
+}
+export interface FinancePersonLedgerResponse {
+  ok:true;person:{id:string;name:string;type:'Owner'|'Lender';status:string};
+  balance:number|null;openingBalance:number|null;closingBalance:number|null;
+  rows:FinancePersonLedgerRow[];totalRows:number;totalPages:number;page:number;
+  pageSize:50|100;dateFrom:string;dateTo:string;
+  coverage:{status:'ready'|'needs-review';reason:string};
+}
+export interface FinancePersonLedgerQuery {
+  dateFrom?:string;dateTo?:string;page:number;pageSize:50|100;
+}
+export const getFinancePersonLedger=(personId:string,query:FinancePersonLedgerQuery)=>{
+  const params=new URLSearchParams({
+    page:String(query.page),pageSize:String(query.pageSize),
+    dateFrom:query.dateFrom||'',dateTo:query.dateTo||''
+  });
+  return request<FinancePersonLedgerResponse>('/api/finance/persons/'+encodeURIComponent(personId)+'/ledger?'+params.toString());
+};
+export interface FinanceTransactionPost {
+  clientRequestId:string;personId:string;transactionType:string;paymentMethod:'Cash'|'Bank'|'Mobile Banking';
+  bankAccountId?:string;amount:number;date?:string;referenceNo?:string;notes?:string;backdatedReason?:string;
+}
+export const postFinanceTransaction=(payload:FinanceTransactionPost)=>
+  request<{ok:true;id:string;replayed:boolean}>('/api/finance/transactions',{
+    method:'POST',body:JSON.stringify(payload)
+  });
+
+export interface LiveDaybookEntry {
+  ts:string;date:string;time:string;referenceNo:string;module:string;transactionType:string;
+  party:string;description:string;paymentMethod:string;
+  cashIn:number;cashOut:number;bankIn:number;bankOut:number;amount:number;runningCashBalance:number|null;
+  createdBy:string;status:string;isDeleted:boolean;deletedBy:string;deleteReason:string;
+  isBackdated:boolean;backdatedDays:number;backdatedReason:string;
+  sourceModule:string;sourceId:string;openId:string;deleteAction:string;deleteId:string;canEdit:boolean;
+}
+export interface LiveDaybookQuery {
+  dateFrom:string;dateTo:string;module?:string;paymentMethod?:string;query?:string;
+  sortBy:'createdAt'|'transactionDate';page:number;pageSize:50|100;
+}
+export interface LiveDaybookResponse {
+  ok:true;rows:LiveDaybookEntry[];totalRows:number;totalPages:number;page:number;pageSize:number;
+  dateFrom:string;dateTo:string;sortBy:'createdAt'|'transactionDate';
+  totals:{cashIn:number;cashOut:number;bankIn:number;bankOut:number;netCash:number;netBank:number};
+  isAdmin:boolean;count:number;
+}
+export const getLiveDaybookBootstrap=()=>request<{
+  ok:true;currencySymbol:string;editableDays:number;modules:string[];isAdmin:boolean
+}>('/api/daybook/bootstrap');
+export const getLiveDaybookRows=(query:LiveDaybookQuery)=>{
+  const p=new URLSearchParams({
+    dateFrom:query.dateFrom,dateTo:query.dateTo,module:query.module||'',
+    paymentMethod:query.paymentMethod||'',query:query.query||'',sortBy:query.sortBy,
+    page:String(query.page),pageSize:String(query.pageSize)
+  });
+  return request<LiveDaybookResponse>('/api/daybook?'+p.toString());
+};
+
+export interface LiveExpenseRow {
+ expenseId:string;date:string;categoryId:string;category:string;payeeId:string;payeeName:string;
+ amount:number;paymentMethod:string;bankAccountId:string;bankAccountName:string;
+ description:string;referenceNo:string;notes:string;status:string;createdBy:string;createdAt:string;
+ isBackdated:boolean;backdatedDays:number;backdatedReason:string;
+}
+export interface LiveExpenseInput {
+ categoryId:string;payeeId?:string;amount:number;paymentMethod:'Cash'|'Bank'|'Mobile Banking';
+ bankAccountId?:string;description?:string;date?:string;referenceNo?:string;
+ notes?:string;backdatedReason?:string;clientRequestId?:string;
+}
+export interface LiveExpenseBootstrap {
+ ok:true;currencySymbol:string;activeCashSession:boolean;
+ categories:Array<{id:string;name:string;status:string}>;
+ payees:Array<{id:string;name:string;status:string}>;
+ bankAccounts:Array<{id:string;name:string;accountType:'Bank'|'Mobile Banking'}>;
+}
+export const getLiveExpenseBootstrap=()=>request<LiveExpenseBootstrap>('/api/expenses/bootstrap');
+export const getLiveExpenses=()=>request<{ok:true;expenses:LiveExpenseRow[]}>('/api/expenses');
+export const postLiveExpense=(payload:LiveExpenseInput)=>request<{ok:true;id:string;replayed?:boolean}>(
+ '/api/expenses',{method:'POST',body:JSON.stringify(payload)});
+export const updateLiveExpense=(id:string,payload:LiveExpenseInput)=>request<{ok:true;id:string}>(
+ '/api/expenses/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(payload)});
+export const cancelLiveExpense=(id:string,reason:string)=>request<{ok:true;id:string}>(
+ '/api/expenses/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:JSON.stringify({reason})});

@@ -48,14 +48,14 @@ test('Phase 5G19: cancelled edited Cash/Bank expenses restore books, preserve or
   const owner=await api('POST','/api/finance/persons',{name:'G19 Owner',personType:'Owner'});ok(owner);
   const lender=await api('POST','/api/finance/persons',{name:'G19 Lender',personType:'Lender'});ok(lender);
   const investment=await api('POST','/api/finance/transactions',{personId:owner.id,
-   transactionType:'Owner Investment',paymentMethod:'Cash',amount:200});ok(investment);
+   transactionType:'Owner Investment',paymentMethod:'Cash',amount:200,clientRequestId:'G19-OWNER-CAPITAL-001'});ok(investment);
   const loan=await api('POST','/api/finance/transactions',{personId:lender.id,
-   transactionType:'Loan Received',paymentMethod:'Bank',bankAccountId:bank.id,amount:100});ok(loan);
+   transactionType:'Loan Received',paymentMethod:'Bank',bankAccountId:bank.id,amount:100,clientRequestId:'G19-LOAN-POST-0001'});ok(loan);
 
   const cashExpense=(amount:number)=>({categoryId:category.id,paymentMethod:'Cash',
-   description:'G19 adjusted cash expense',amount});
+   description:'G19 adjusted cash expense',clientRequestId:crypto.randomUUID(),amount});
   const bankExpense=(amount:number)=>({categoryId:category.id,paymentMethod:'Bank',
-   bankAccountId:bank.id,description:'G19 adjusted bank expense',amount});
+   bankAccountId:bank.id,description:'G19 adjusted bank expense',clientRequestId:crypto.randomUUID(),amount});
   const cash=await api('POST','/api/expenses',cashExpense(30));ok(cash);
   const cashEdited=await api('PUT','/api/expenses/'+cash.id,cashExpense(40));ok(cashEdited);
   const cashCancelled=await api('POST','/api/expenses/'+cash.id+'/cancel',{

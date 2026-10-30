@@ -1,6 +1,6 @@
 name: HisabIQ React / BanijjIQ API integration
 on:
-  # Every PR must run the integration gate; no path-filter bypass.
+  # Every PR runs financial/security acceptance; no path-filter bypass.
   pull_request:
   workflow_dispatch:
     inputs:
@@ -51,6 +51,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          npm run test:phase6
           node --import tsx --test tests/preview-demo-seed.integration.test.ts
           node --import tsx scripts/preview/demo-seed-remote.mjs --dry-run
           npm run test:security

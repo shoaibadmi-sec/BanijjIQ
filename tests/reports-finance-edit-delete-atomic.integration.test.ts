@@ -40,7 +40,7 @@ test('5G20: finance bank→cash edit and delete are atomic across source, journa
   const lender=await api('POST','/api/finance/persons',{name:'G20 Lender',personType:'Lender'});ok(lender);
   const loan=await api('POST','/api/finance/transactions',{
    personId:lender.id,transactionType:'Loan Received',paymentMethod:'Bank',
-   bankAccountId:bank.id,amount:120,notes:'G20 loan original'
+   bankAccountId:bank.id,amount:120,clientRequestId:'P6-G20-LOAN-ORIGINAL-1',notes:'G20 loan original'
   });ok(loan);
   const id=loan.id;
   const balance=()=>Number(one('SELECT current_balance n FROM bank_accounts WHERE bank_account_id=?',bank.id).n);

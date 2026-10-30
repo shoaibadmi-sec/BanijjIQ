@@ -1,4 +1,5 @@
 export type ExpenseInput = {
+  clientRequestId?: string;
   date?: string;
   categoryId?: string;
   payeeId?: string;

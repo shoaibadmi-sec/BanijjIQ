@@ -88,6 +88,18 @@ try{
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='pos_sale_requests'").length);
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='sales'").length);
   });
+  await check('Phase 6 migrations exist in real isolated D1 and replay does not alter schema',async()=>{
+    const triggers=()=>query("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'trg_phase6%' ORDER BY name");
+    const before=triggers();
+    assert.ok(before.some(x=>x.name==='trg_phase6_cash_close_reconcile'));
+    assert.ok(before.some(x=>x.name==='trg_phase6_bank_reversal_single'));
+    const migrated=query("SELECT name FROM sqlite_master WHERE type='table' AND name='d1_migrations'");
+    assert.equal(migrated.length,1);
+    const count=query("SELECT COUNT(*) n FROM d1_migrations")[0].n;
+    wrangler(['d1','migrations','apply','DB','--local','--persist-to',state]);
+    assert.equal(query("SELECT COUNT(*) n FROM d1_migrations")[0].n,count);
+    assert.deepEqual(triggers(),before);
+  });
   worker=spawn(process.execPath,[cliPath,'dev',
     '--config',config,'--local','--persist-to',state,
     '--ip','127.0.0.1','--port','8788',

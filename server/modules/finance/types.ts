@@ -19,13 +19,13 @@ export type BankManualInput = {
   backdatedReason?: string;
 };
 
-export type BankTransferInput = { fromAccountId?: string; toAccountId?: string; amount?: number; notes?: string };
+export type BankTransferInput = { fromAccountId?: string; toAccountId?: string; amount?: number; notes?: string; clientRequestId?: string };
 
 export type FinancePersonInput = { name?: string; personType?: 'Owner' | 'Lender'; phone?: string; notes?: string; status?: string };
 
 export type FinanceInput = {
   date?: string; transactionType?: string; personId?: string; paymentMethod?: string; bankAccountId?: string;
-  amount?: number; referenceNo?: string; notes?: string; backdatedReason?: string;
+  amount?: number; referenceNo?: string; notes?: string; backdatedReason?: string; clientRequestId?: string;
 };
 
 export type FinanceTxType = { key: string; label: string; account: 'capital' | 'loan'; direction: 'in' | 'out' };

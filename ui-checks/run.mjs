@@ -76,6 +76,7 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls){
+  let cashSessionOpen=true;
   let postedPurchase=null;
   let returnedQty=0;
   let supplierDue=100;
@@ -87,6 +88,139 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 
+    if(path==='/api/daybook/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',editableDays:7,
+      modules:['Sales','Purchase','Expense','Bank','Bank Transfer','Finance'],isAdmin:true
+    });
+    if(path==='/api/daybook'&&request.method()==='GET'){
+      const page=Number(url.searchParams.get('page')||1),pageSize=Number(url.searchParams.get('pageSize')||50);
+      assert.ok(pageSize===50||pageSize===100,'Daybook must use 50/100 paging');
+      assert.ok(['createdAt','transactionDate'].includes(url.searchParams.get('sortBy')));
+      calls.push({method:'ASSERT',path,page,pageSize,sortBy:url.searchParams.get('sortBy')});
+      return respond({ok:true,page,pageSize,totalRows:1,totalPages:1,dateFrom:url.searchParams.get('dateFrom'),
+        dateTo:url.searchParams.get('dateTo'),sortBy:url.searchParams.get('sortBy'),isAdmin:true,count:1,
+        totals:{cashIn:0,cashOut:0,bankIn:0,bankOut:0,netCash:0,netBank:0},
+        rows:[{ts:'2026-10-30T11:00:00',date:'2026-10-30',time:'11:00:00',
+          referenceNo:'BTR-UI-6E-001',module:'Bank Transfer',transactionType:'Bank Transfer',
+          party:'Shop Bank → Wallet',description:'Internal transfer between accounts',
+          paymentMethod:'Bank',cashIn:0,cashOut:0,bankIn:0,bankOut:0,amount:0,
+          runningCashBalance:null,createdBy:'Test Admin',status:'Active',isDeleted:false,
+          isBackdated:false,backdatedDays:0,backdatedReason:'',
+          sourceModule:'Bank Transfer',sourceId:'BTR-UI-6E-001',openId:'BTR-UI-6E-001',
+          deleteAction:'',deleteId:'BTR-UI-6E-001',canEdit:false}]
+      });
+    }
+    if(path==='/api/expenses/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',activeCashSession:true,
+      categories:[{id:'CAT-UI-6F',name:'Shop Rent',status:'Active'}],
+      payees:[],bankAccounts:[{id:'BK-UI-6F',name:'Shop Bank',accountType:'Bank'}],
+      paymentMethods:['Cash','Bank','Mobile Banking']
+    });
+    if(path==='/api/expenses'&&request.method()==='GET')return respond({
+      ok:true,expenses:[{expenseId:'EXP-UI-6F-OLD',date:'2026-10-30',
+        categoryId:'CAT-UI-6F',category:'Shop Rent',payeeId:'',payeeName:'',
+        amount:15,paymentMethod:'Cash',bankAccountId:'',bankAccountName:'',
+        description:'Legacy shop rent',referenceNo:'',notes:'',status:'Active',
+        createdBy:'Test Cashier',createdAt:'2026-10-30 08:00:00',
+        isBackdated:false,backdatedDays:0,backdatedReason:''}]
+    });
+    if(path==='/api/expenses'&&request.method()==='POST'){
+      const data=request.postDataJSON();
+      assert.equal(data.categoryId,'CAT-UI-6F');
+      assert.equal(data.paymentMethod,'Bank');
+      assert.equal(data.bankAccountId,'BK-UI-6F');
+      assert.equal(data.amount,35.5);
+      assert.ok(typeof data.clientRequestId==='string'&&data.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload:data});
+      return respond({ok:true,id:'EXP-UI-6F-POSTED',replayed:false});
+    }
+    if(path==='/api/expenses/EXP-UI-6F-OLD/cancel'&&request.method()==='POST'){
+      const data=request.postDataJSON();
+      assert.ok(data.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload:data});
+      return respond({ok:true,id:'EXP-UI-6F-OLD'});
+    }
+    // Finance 6A uses real endpoint shapes, never the pinned demo account store.
+    if(path==='/api/bank/accounts'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',bankAccounts:[
+        {id:'BK-OK',name:'Shop Bank',accountType:'Bank',currentBalance:125.6234,status:'Active'},
+        {id:'BK-DISPUTED',name:'Disputed Bank',accountType:'Mobile Banking',currentBalance:999,status:'Active'}
+      ]});
+    if(path==='/api/bank/transfers'&&request.method()==='GET')return respond({
+      ok:true,transfers:[{transferId:'BTR-UI-6B-001',date:'2026-10-30',
+        fromAccountId:'BK-OK',fromAccountName:'Shop Bank',toAccountId:'BK-DISPUTED',
+        toAccountName:'Disputed Bank',amount:20,notes:'test posting',clientRequestId:'PREVIOUS-REQUEST-001',
+        reversedAt:'',reversalReason:''}]});
+    if(path==='/api/bank/transfers'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(typeof payload.clientRequestId==='string'&&payload.clientRequestId.length>8,
+        'all transfer posts must carry an idempotency key');
+      assert.equal(payload.fromAccountId,'BK-OK');
+      assert.equal(payload.toAccountId,'BK-DISPUTED');
+      assert.equal(payload.amount,12.5);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'BTR-UI-6B-POSTED',replayed:false});
+    }
+    if(path==='/api/bank/transfers/BTR-UI-6B-001/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'BTR-UI-6B-001',reversed:true});
+    }
+    if(path==='/api/pos/cash-session/summary'&&request.method()==='GET')
+      return respond({ok:true,summary:cashSessionOpen?{
+        sessionId:'CS-UI-6C-001',openedAt:'2026-10-30 08:00:00',openingCash:100,
+        cashIn:200,cashOut:50,expectedCash:250
+      }:null});
+    if(path==='/api/pos/cash-session/close'&&request.method()==='POST'){
+      const body=request.postDataJSON();
+      assert.equal(body.countedCash,255);
+      assert.ok(body.notes.length>=8);
+      assert.ok(typeof body.clientRequestId==='string'&&body.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload:body});
+      cashSessionOpen=false;
+      return respond({ok:true,sessionId:'CS-UI-6C-001',expected:250,counted:255,variance:5,replayed:false});
+    }
+    if(path==='/api/pos/cash-session/start'&&request.method()==='POST'){
+      const body=request.postDataJSON();
+      assert.ok(typeof body.clientRequestId==='string'&&body.clientRequestId.length>=8);
+      cashSessionOpen=true;
+      calls.push({method:'ASSERT',path,payload:body});
+      return respond({ok:true,sessionId:'CS-UI-6C-002',replayed:false});
+    }
+    if(path==='/api/bank/reconciliation'&&request.method()==='GET')return respond({
+      ok:true,asOf:'2026-10-30T09:00:00.000Z',coverage:{status:'needs-review',reason:'One account differs from bank book.'},
+      accounts:[
+        {id:'BK-OK',name:'Shop Bank',accountType:'Bank',openingBalance:100,
+          recordedBalance:125.6234,bookBalance:125.6234,status:'ready',reason:'Bank-book movements agree.'},
+        {id:'BK-DISPUTED',name:'Disputed Bank',accountType:'Mobile Banking',openingBalance:0,
+          recordedBalance:999,bookBalance:null,status:'needs-review',reason:'Bank-book mismatch.'}
+      ]});
+    if(path==='/api/finance/persons/PERSON-1/ledger'&&request.method()==='GET')return respond({
+      ok:true,person:{id:'PERSON-1',name:'Finance Test Owner',type:'Owner',status:'Active'},
+      balance:120,openingBalance:0,closingBalance:120,page:Number(url.searchParams.get('page')||1),
+      pageSize:Number(url.searchParams.get('pageSize')||50),
+      totalRows:1,totalPages:1,dateFrom:url.searchParams.get('dateFrom')||'',dateTo:url.searchParams.get('dateTo')||'',
+      coverage:{status:'ready',reason:'Every finance entry has one matching source.'},
+      rows:[{financeId:'FIN-UI-6D-001',personId:'PERSON-1',date:'2026-10-29',
+        transactionType:'Owner Investment',paymentMethod:'Cash',amount:120,debit:0,credit:120,
+        balance:120,sourceStatus:'matched',referenceNo:'',notes:'',
+        createdBy:'Test Finance',createdAt:'2026-10-29 12:00:00',isBackdated:false,backdatedReason:''}]
+    });
+    if(path==='/api/finance/transactions'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.equal(payload.personId,'PERSON-1');
+      assert.equal(payload.transactionType,'Owner Investment');
+      assert.equal(payload.paymentMethod,'Cash');
+      assert.equal(payload.amount,12.5);
+      assert.ok(typeof payload.clientRequestId==='string'&&payload.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,id:'FIN-UI-6D-POSTED',replayed:false});
+    }
+    if(path==='/api/finance/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,personsAll:[{id:'PERSON-1',name:'Finance Test Owner',type:'Owner',status:'Active',phone:''}],
+      currencySymbol:'৳',activeCashSession:true
+    });
     if(path==='/api/reports/v2/catalog'&&request.method()==='GET')return respond({ok:true,
       mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
       reports:[{id:'sales',en:'Sales register',bn:'বিক্রির হিসাব',group:'sales',status:'needs-review',reason:'Unreconciled invoice sources.'}]});
@@ -443,7 +577,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook], [data-live-expenses], [data-live-purchases], [data-live-purchase-editor]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -457,7 +591,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-purchases], [data-live-purchase-editor]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-finance], [data-live-daybook], [data-live-expenses], [data-live-purchases], [data-live-purchase-editor]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -487,6 +621,166 @@ try{
     await screenshot(page,'auth-390');
     await ctx.close();
   });
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6A Finance shows only reconciled bank values '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const finance=page.locator('[data-live-finance]');await finance.waitFor({timeout:10000});
+      const personSelector=page.getByRole('combobox',{name:'Finance person'});
+      await personSelector.waitFor({timeout:10000});
+      assert.equal(await personSelector.locator('option[value="PERSON-1"]').count(),1);
+      assert.ok((await finance.innerText()).includes('Shop Bank'));
+      assert.ok((await finance.innerText()).includes('125.6234'));
+      assert.ok((await finance.innerText()).includes('Disputed Bank'));
+      assert.ok(!(await finance.innerText()).includes('999.00'),'disputed recorded balance must never show');
+      assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/bank/reconciliation'));
+      assert.ok(calls.some(c=>c.method==='GET'&&c.path==='/api/finance/bootstrap'));
+      assert.ok(!calls.some(c=>c.method!=='GET'&&c.path.includes('/api/bank/')));
+      await screenshot(page,'phase6a-finance-'+width);
+      await inspectLayout(page,'phase6a-finance-'+width);
+      await audit(page,'phase6a-finance-'+width);
+      await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6B bank transfer review and paired reversal '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      await page.locator('[data-phase6-bank-transfers]').waitFor({timeout:12000});
+      await page.getByRole('combobox',{name:'Transfer from account'}).selectOption('BK-OK');
+      await page.getByRole('combobox',{name:'Transfer to account'}).selectOption('BK-DISPUTED');
+      await page.getByRole('spinbutton',{name:'Transfer amount'}).fill('12.5');
+      await page.getByRole('textbox',{name:'Transfer note'}).fill('operating float');
+      await page.getByRole('button',{name:'Review transfer'}).click();
+      await page.getByRole('button',{name:'Confirm transfer'}).click();
+      await page.getByText(/BTR-UI-6B-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/bank/transfers').length,1,
+        'transfer is posted exactly once');
+      await page.getByRole('button',{name:'Reverse',exact:true}).first().click();
+      await page.getByRole('textbox',{name:'Transfer reversal reason'}).fill('Customer funds correction');
+      await page.getByRole('button',{name:'Confirm reversal'}).click();
+      await page.getByText(/two ledger entries/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path.includes('/reverse')).length,1);
+      await screenshot(page,'phase6b-bank-transfer-'+width);
+      await inspectLayout(page,'phase6b-bank-transfer-'+width);
+      await audit(page,'phase6b-bank-transfer-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6C cash count and variance review '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const panel=page.locator('[data-phase6-cash-session]');
+      await panel.waitFor({timeout:12000});
+      await page.getByText('Expected cash').waitFor({timeout:12000});
+      assert.ok((await panel.innerText()).includes('250'));
+      await page.getByRole('spinbutton',{name:'Counted cash'}).fill('255');
+      await page.getByRole('textbox',{name:'Cash variance reason'}).fill('Cash difference checked by manager');
+      await page.getByRole('button',{name:'Review close'}).click();
+      await page.getByRole('button',{name:'Confirm close'}).click();
+      await page.getByText(/Cash session closed/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/pos/cash-session/close').length,1);
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/cash-session/close').length,1);
+      await screenshot(page,'phase6c-cash-count-'+width);
+      await inspectLayout(page,'phase6c-cash-count-'+width);
+      await audit(page,'phase6c-cash-count-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6D finance source-backed person ledger and investment '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const panel=page.locator('[data-finance-person-ledger]');
+      await panel.waitFor({timeout:12000});
+      await panel.getByText('FIN-UI-6D-001').waitFor({timeout:12000});
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/finance/persons/PERSON-1/ledger'),
+        'person rows must come from protected finance ledger endpoint');
+      await panel.getByRole('combobox',{name:'Finance ledger page size'}).selectOption('100');
+      await panel.getByRole('combobox',{name:'Finance transaction type'}).selectOption('Owner Investment');
+      await panel.getByRole('spinbutton',{name:'Finance transaction amount'}).fill('12.5');
+      await panel.getByRole('button',{name:'Review entry'}).click();
+      await panel.getByRole('button',{name:'Confirm entry'}).click();
+      await panel.getByText(/FIN-UI-6D-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/finance/transactions').length,1);
+      await screenshot(page,'phase6d-person-ledger-'+width);
+      await inspectLayout(page,'phase6d-person-ledger-'+width);
+      await audit(page,'phase6d-person-ledger-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6F real Expense posting and cancellation '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/expenses');
+      const panel=page.locator('[data-live-expenses]');
+      await panel.waitFor({timeout:12000});
+      await panel.getByText('EXP-UI-6F-OLD').waitFor({timeout:12000});
+      await page.getByRole('combobox',{name:'Expense category'}).selectOption('CAT-UI-6F');
+      await page.getByRole('spinbutton',{name:'Expense amount'}).fill('35.5');
+      await page.getByRole('combobox',{name:'Expense payment method'}).selectOption('Bank');
+      await page.getByRole('combobox',{name:'Expense bank account'}).selectOption('BK-UI-6F');
+      await page.getByRole('button',{name:'Review expense'}).click();
+      await page.getByRole('button',{name:'Confirm expense'}).click();
+      await page.getByText(/EXP-UI-6F-POSTED/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/expenses').length,1);
+      await panel.getByRole('button',{name:'Cancel',exact:true}).first().click();
+      await page.getByRole('textbox',{name:'Expense cancellation reason'}).fill('Duplicate shop rent reviewed');
+      await page.getByRole('button',{name:'Confirm cancel'}).click();
+      await page.getByText(/Expense cancelled/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path.includes('/cancel')).length,1);
+      await screenshot(page,'phase6f-expenses-'+width);
+      await inspectLayout(page,'phase6f-expenses-'+width);
+      await audit(page,'phase6f-expenses-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6E source-linked read-only Daybook '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/daybook');
+      const daybook=page.locator('[data-live-daybook]');
+      await daybook.waitFor({timeout:12000});
+      await daybook.getByText('BTR-UI-6E-001').waitFor({timeout:12000});
+      assert.equal(await daybook.getByRole('link',{name:'Open module'}).count(),1);
+      assert.equal((await daybook.getByRole('link',{name:'Open module'}).getAttribute('href')),
+        '#/app/finance?sourceId=BTR-UI-6E-001');
+      await daybook.getByRole('combobox',{name:'Daybook page size'}).selectOption('100');
+      await daybook.getByRole('combobox',{name:'Daybook sort order'}).selectOption('createdAt');
+      await page.waitForFunction(()=>document.querySelector('[data-live-daybook]')?.textContent?.includes('1 transactions'),null,{timeout:12000});
+      assert.ok(calls.some(x=>x.method==='ASSERT'&&x.path==='/api/daybook'&&x.pageSize===100&&x.sortBy==='createdAt'));
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/daybook')));
+      await screenshot(page,'phase6e-daybook-'+width);
+      await inspectLayout(page,'phase6e-daybook-'+width);
+      await audit(page,'phase6e-daybook-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
 
   for(const width of [390,768,1440]){
     await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{

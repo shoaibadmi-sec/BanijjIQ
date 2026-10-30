@@ -1,4 +1,4 @@
-import type { SherDatabase } from '../../db/types.js';
+import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { ExpenseInput } from './types.js';
 import { getLedgerPrintHeader, ledgerDateWhere, ledgerHistoryMeta, parseLedgerHistory } from '../../core/ledgerHistory.js';
@@ -46,7 +46,7 @@ async function expenseBankAccount(db: SherDatabase, method: string, rawId: unkno
   const id = cleanText(rawId);
   if (!id) throw new Error(method === 'Mobile Banking' ? 'Select a mobile banking account.' : 'Select a bank account.');
   const row = await db.prepare(`SELECT bank_account_id, account_name, account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active' LIMIT 1`).bind(id).first<any>();
-  if (!row) throw new Error('Bank/mobile banking account not found.');
+  if (!row || row.account_type !== method) throw new Error('Choose an active account matching the payment method.');
   return { id, name: cleanText(row.account_name) };
 }
 
@@ -152,49 +152,191 @@ export async function getExpensesRoute(db:SherDatabase):Promise<Response>{
 
 export async function getExpenseDetailRoute(db:SherDatabase,id:string):Promise<Response>{const r=await db.prepare(`SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first<any>();if(!r)return error('Expense not found.',404);return json({ok:true,expense:mapExpenseRow(r)});}
 
-async function postExpenseMoney(db:SherDatabase,id:string,date:string,category:string,description:string,amount:number,method:string,bank:{id:string;name:string},type='Expense'):Promise<void>{
-  const desc=category+(description?` — ${description}`:'');
-  if(method==='Cash')await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?,?,?,?,?,0,'Cash',0)`).bind(expenseId('CB'),date,type,id,desc,amount).run();
-  else if(method==='Bank'||method==='Mobile Banking'){
-    await db.batch([db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,?,?,?,?,0,0)`).bind(expenseId('BB'),bank.id,date,type,id,desc,amount),db.prepare(`UPDATE bank_accounts SET current_balance=current_balance-? WHERE bank_account_id=?`).bind(amount,bank.id)]);
-  }
+function expenseAmount(raw:unknown):number|null {
+  const n=Number(raw),ticks=Math.round(n*10000);
+  return raw==null||raw===''||!Number.isFinite(n)||!Number.isSafeInteger(ticks)||ticks<=0||
+    Math.abs(n*10000-ticks)>0.00001 ? null : ticks/10000;
+}
+function expenseMoneySteps(db:SherDatabase,id:string,date:string,category:string,description:string,
+  amount:number,method:string,bank:{id:string;name:string},type='Expense'):SqlPreparedStatement[]{
+  const desc=category+(description?' — '+description:'');
+  if(method==='Cash')return [db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?,?,?,?,?,0,'Cash',0)")
+    .bind(expenseId('CB'),date,type,id,desc,amount)];
+  if(method==='Bank'||method==='Mobile Banking')return [
+    db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,?,?,?,?,0,0)")
+      .bind(expenseId('BB'),bank.id,date,type,id,desc,amount),
+    db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance-?,4) WHERE bank_account_id=? AND status=\'Active\'')
+      .bind(amount,bank.id)
+  ];
+  return [];
+}
+function expenseDeltaSteps(db:SherDatabase,id:string,delta:number,method:'Cash'|'Bank',
+  bankId=''):SqlPreparedStatement[]{
+  if(!delta)return [];
+  if(method==='Cash')return [db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?,'Expense Update',?,?,?,?,'Cash',0)")
+    .bind(expenseId('CB'),todayDate(),id,'Expense correction '+id,delta>0?delta:0,delta<0?-delta:0)];
+  return [
+    db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Expense Update',?,?,?,?,0)")
+      .bind(expenseId('BB'),bankId,todayDate(),id,'Expense correction '+id,delta>0?delta:0,delta<0?-delta:0),
+    db.prepare("UPDATE bank_accounts SET current_balance=ROUND(current_balance-?,4) WHERE bank_account_id=?")
+      .bind(delta,bankId)
+  ];
 }
 
 export async function addExpenseRoute(db:SherDatabase,input:ExpenseInput,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before recording an expense.');
-  const amount=money(input.amount);if(amount<=0)return error('Enter a valid expense amount.');const categoryId=cleanText(input.categoryId);if(!categoryId)return error('Choose an expense category.');
-  const cat=await db.prepare(`SELECT category_name,status FROM expense_categories WHERE category_id=? LIMIT 1`).bind(categoryId).first<any>();if(!cat)return error('Category not found.');if(cat.status==='Inactive')return error('This expense category is inactive.');
-  const method=cleanText(input.paymentMethod);if(!['Cash','Bank','Mobile Banking','Other'].includes(method))return error('Choose a valid payment method.');let bank:{id:string;name:string};try{bank=await expenseBankAccount(db,method,input.bankAccountId);}catch(e){return error(e instanceof Error?e.message:'Invalid bank account.');}
-  const date=cleanText(input.date)||todayDate();const isBackdated=date<todayDate();const reason=cleanText(input.backdatedReason);if(isBackdated&&!reason)return error('A reason is required when dating an expense in the past.');
-  let payee:{id:string;name:string};try{payee=await resolveExpensePayee(db,input.payeeId);}catch(e){return error(e instanceof Error?e.message:'Invalid payee.');}
-  const id=expenseId('EXP'),description=cleanText(input.description),referenceNo=cleanText(input.referenceNo),notes=cleanText(input.notes),days=isBackdated?dayDiff(date,todayDate()):0;
-  await db.prepare(`INSERT INTO expenses(expense_id,expense_date,category_id,category_name,ledger_id,ledger_name,amount,payment_method,description,reference_no,notes,status,created_by,bank_account_id,bank_account_name,is_backdated,backdated_days,backdated_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Active',?,?,?,?,?,?)`).bind(id,date,categoryId,cat.category_name,payee.id,payee.name,amount,method,description,referenceNo,notes,user.fullName,bank.id,bank.name,isBackdated?1:0,days,reason).run();
-  await postExpenseMoney(db,id,date,cat.category_name,description,amount,method,bank,'Expense');return json({ok:true,id});
+  const amount=expenseAmount(input.amount);
+  if(amount===null)return error('Enter a valid positive expense amount (up to four decimals).');
+  const categoryId=cleanText(input.categoryId);
+  if(!categoryId)return error('Choose an expense category.');
+  const cat=await db.prepare("SELECT category_name,status FROM expense_categories WHERE category_id=? LIMIT 1").bind(categoryId).first<any>();
+  if(!cat||cat.status!=='Active')return error('Choose an active expense category.');
+  const method=cleanText(input.paymentMethod);
+  if(!['Cash','Bank','Mobile Banking','Other'].includes(method))return error('Choose a valid payment method.');
+  let bank:{id:string;name:string};
+  try{bank=await expenseBankAccount(db,method,input.bankAccountId);}catch(e){return error(e instanceof Error?e.message:'Invalid bank account.');}
+  const date=cleanText(input.date)||todayDate(),reason=cleanText(input.backdatedReason);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date)))return error('Enter a valid expense date.');
+  const isBackdated=date<todayDate();if(isBackdated&&!reason)return error('A reason is required when dating an expense in the past.');
+  let payee:{id:string;name:string};
+  try{payee=await resolveExpensePayee(db,input.payeeId);}catch(e){return error(e instanceof Error?e.message:'Invalid payee.');}
+  const description=cleanText(input.description),referenceNo=cleanText(input.referenceNo),
+    notes=cleanText(input.notes),days=isBackdated?dayDiff(date,todayDate()):0;
+  const key=cleanText(input.clientRequestId);
+  if(key&&!/^[A-Za-z0-9._:-]{8,120}$/.test(key))return error('Invalid client request ID.');
+  const fingerprint=JSON.stringify([date,categoryId,payee.id,Math.round(amount*10000),method,bank.id,description,referenceNo,notes,reason]);
+  const find=()=>db.prepare('SELECT expense_id,request_fingerprint,status FROM expenses WHERE client_request_id=? LIMIT 1')
+    .bind(key).first<{expense_id:string;request_fingerprint:string;status:string}>();
+  if(key){
+    const existing=await find();
+    if(existing)return existing.request_fingerprint===fingerprint&&existing.status==='Active'?
+      json({ok:true,id:existing.expense_id,replayed:true}):
+      error('Client request ID was already used for another expense.',409);
+  }
+  const id=expenseId('EXP');
+  try{await db.batch([
+    db.prepare("INSERT INTO expenses(expense_id,expense_date,category_id,category_name,ledger_id,ledger_name,amount,payment_method,description,reference_no,notes,status,created_by,bank_account_id,bank_account_name,is_backdated,backdated_days,backdated_reason,client_request_id,request_fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Active',?,?,?,?,?,?,?,?)")
+      .bind(id,date,categoryId,cat.category_name,payee.id,payee.name,amount,method,description,referenceNo,notes,user.fullName,bank.id,bank.name,isBackdated?1:0,days,reason,key,fingerprint),
+    ...expenseMoneySteps(db,id,date,cat.category_name,description,amount,method,bank)
+  ]);}catch{
+    const existing=key?await find():null;
+    if(existing)return existing.request_fingerprint===fingerprint&&existing.status==='Active'?
+      json({ok:true,id:existing.expense_id,replayed:true}):
+      error('Client request ID was already used for another expense.',409);
+    return error('Expense and money posting were not committed.',409);
+  }
+  return json({ok:true,id,replayed:false});
 }
 
+/** Fail closed: the current expense amount must equal its posted cash/bank source legs. */
+async function expenseSourceMatches(db:SherDatabase,expense:any):Promise<boolean>{
+  const id=String(expense.expense_id);
+  const [cash,bank]=await Promise.all([
+    db.prepare("SELECT type,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>(),
+    db.prepare("SELECT type,debit,credit,bank_account_id,status FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>()
+  ]);
+  const cashRows=cash.results||[],bankRows=bank.results||[];
+  if(cashRows.length+bankRows.length>1000)return false;
+  const amount=expenseAmount(expense.amount);
+  if(amount===null)return false;
+  const method=String(expense.payment_method);
+  if(method==='Other')return cashRows.length===0&&bankRows.length===0;
+  if(!['Cash','Bank','Mobile Banking'].includes(method))return false;
+  const rows=[...cashRows,...bankRows];
+  if(rows.filter(r=>r.type==='Expense').length!==1)return false;
+  const ticks=(v:unknown):number|null=>{
+    if(typeof v!=='number'||!Number.isFinite(v)||v<0)return null;
+    const t=Math.round(v*10000);
+    return Number.isSafeInteger(t)&&Math.abs(v*10000-t)<0.00001?t:null;
+  };
+  let cashNet=0;
+  const bankNet=new Map<string,number>();
+  for(const row of cashRows){
+    if(!['Expense','Expense Update'].includes(row.type))return false;
+    const debit=ticks(row.debit),credit=ticks(row.credit);
+    if(debit===null||credit===null||(debit>0&&credit>0))return false;
+    cashNet+=debit-credit;
+  }
+  for(const row of bankRows){
+    if(!['Expense','Expense Update'].includes(row.type)||row.status!=='Active')return false;
+    const debit=ticks(row.debit),credit=ticks(row.credit);
+    if(debit===null||credit===null||(debit>0&&credit>0))return false;
+    const account=String(row.bank_account_id);
+    bankNet.set(account,(bankNet.get(account)||0)+debit-credit);
+  }
+  const amountTicks=Math.round(amount*10000);
+  if(cashNet!==(method==='Cash'?amountTicks:0))return false;
+  const accountId=String(expense.bank_account_id||'');
+  for(const [account,total] of bankNet){
+    if(total!==(method!=='Cash'&&account===accountId?amountTicks:0))return false;
+  }
+  return method==='Cash'||bankNet.get(accountId)===amountTicks;
+}
 async function writeExpenseCashDelta(db:SherDatabase,id:string,delta:number):Promise<void>{if(!delta)return;await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Expense Update',?,?,?,?,'Cash',0)`).bind(expenseId('CB'),todayDate(),id,delta>0?`Additional cash for expense update ${id}`:`Cash reversed from expense update ${id}`,delta>0?delta:0,delta<0?Math.abs(delta):0).run();}
 async function writeExpenseBankDelta(db:SherDatabase,id:string,bankId:string,delta:number):Promise<void>{if(!delta)return;await db.batch([db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Expense Update',?,?,?,?,0)`).bind(expenseId('BB'),bankId,todayDate(),id,delta>0?`Additional funds for expense update ${id}`:`Funds reversed from expense update ${id}`,delta>0?delta:0,delta<0?Math.abs(delta):0),db.prepare(`UPDATE bank_accounts SET current_balance=current_balance-? WHERE bank_account_id=?`).bind(delta,bankId)]);}
 
 export async function updateExpenseRoute(db:SherDatabase,id:string,input:ExpenseInput):Promise<Response>{
-  if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before editing an expense.');const old=await db.prepare(`SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first<any>();if(!old)return error('Expense not found.',404);if(old.status==='Cancelled')return error('This expense is cancelled and can no longer be edited.');
-  const amount=money(input.amount);if(amount<=0)return error('Enter a valid expense amount.');const categoryId=cleanText(input.categoryId);if(!categoryId)return error('Choose an expense category.');const cat=await db.prepare(`SELECT category_name FROM expense_categories WHERE category_id=? LIMIT 1`).bind(categoryId).first<any>();if(!cat)return error('Category not found.');
-  const method=cleanText(input.paymentMethod);if(!['Cash','Bank','Mobile Banking','Other'].includes(method))return error('Choose a valid payment method.');let bank:{id:string;name:string};try{bank=await expenseBankAccount(db,method,input.bankAccountId);}catch(e){return error(e instanceof Error?e.message:'Invalid bank account.');}
-  let payee:{id:string;name:string};try{payee=await resolveExpensePayee(db,input.payeeId,String(old.ledger_id||''));}catch(e){return error(e instanceof Error?e.message:'Invalid payee.');}
-  const date=cleanText(input.date)||String(old.expense_date),description=cleanText(input.description),referenceNo=cleanText(input.referenceNo),notes=cleanText(input.notes);
-  await db.prepare(`UPDATE expenses SET expense_date=?,category_id=?,category_name=?,ledger_id=?,ledger_name=?,amount=?,payment_method=?,description=?,reference_no=?,notes=?,bank_account_id=?,bank_account_name=? WHERE expense_id=?`).bind(date,categoryId,cat.category_name,payee.id,payee.name,amount,method,description,referenceNo,notes,bank.id,bank.name,id).run();
-  const oldCash=old.payment_method==='Cash'?Number(old.amount||0):0,newCash=method==='Cash'?amount:0;await writeExpenseCashDelta(db,id,newCash-oldCash);
-  const oldBankId=(old.payment_method==='Bank'||old.payment_method==='Mobile Banking')?String(old.bank_account_id||''):'';const oldBankAmt=oldBankId?Number(old.amount||0):0;const newBankId=(method==='Bank'||method==='Mobile Banking')?bank.id:'';const newBankAmt=newBankId?amount:0;
-  if(oldBankId&&oldBankId===newBankId)await writeExpenseBankDelta(db,id,newBankId,newBankAmt-oldBankAmt);else{if(oldBankId)await writeExpenseBankDelta(db,id,oldBankId,-oldBankAmt);if(newBankId)await writeExpenseBankDelta(db,id,newBankId,newBankAmt);}
+  if(!(await getOpenCashSession(db)))return error('Start the cash session before editing an expense.');
+  const old=await db.prepare("SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 AND status='Active' LIMIT 1").bind(id).first<any>();
+  if(!old)return error('Active expense not found.',404);
+  if(!(await expenseSourceMatches(db,old)))return error('Original expense money postings do not reconcile. Review the source ledger before editing or cancelling.',409);
+  const amount=expenseAmount(input.amount);if(amount===null)return error('Enter a valid expense amount.');
+  const categoryId=cleanText(input.categoryId);
+  const cat=await db.prepare("SELECT category_name,status FROM expense_categories WHERE category_id=? LIMIT 1").bind(categoryId).first<any>();
+  if(!cat||cat.status!=='Active')return error('Choose an active expense category.');
+  const method=cleanText(input.paymentMethod);
+  if(!['Cash','Bank','Mobile Banking','Other'].includes(method))return error('Choose a valid payment method.');
+  let bank:{id:string;name:string};
+  try{bank=await expenseBankAccount(db,method,input.bankAccountId);}catch(e){return error(e instanceof Error?e.message:'Invalid bank account.');}
+  let payee:{id:string;name:string};
+  try{payee=await resolveExpensePayee(db,input.payeeId,String(old.ledger_id||''));}
+  catch(e){return error(e instanceof Error?e.message:'Invalid payee.');}
+  const date=cleanText(input.date)||String(old.expense_date),reason=cleanText(input.backdatedReason);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date)))return error('Enter a valid expense date.');
+  const backdated=date<todayDate();
+  if(backdated&&!reason)return error('A reason is required for backdating.');
+  const oldCash=old.payment_method==='Cash'?Number(old.amount):0,
+    newCash=method==='Cash'?amount:0,
+    oldBankId=['Bank','Mobile Banking'].includes(old.payment_method)?String(old.bank_account_id||''):'',
+    newBankId=['Bank','Mobile Banking'].includes(method)?bank.id:'';
+  const statements:SqlPreparedStatement[]=[
+    db.prepare("UPDATE expenses SET expense_date=?,category_id=?,category_name=?,ledger_id=?,ledger_name=?,amount=?,payment_method=?,description=?,reference_no=?,notes=?,bank_account_id=?,bank_account_name=?,is_backdated=?,backdated_days=?,backdated_reason=?,request_fingerprint='edited' WHERE expense_id=? AND status='Active'")
+      .bind(date,categoryId,cat.category_name,payee.id,payee.name,amount,method,cleanText(input.description),cleanText(input.referenceNo),cleanText(input.notes),
+        bank.id,bank.name,backdated?1:0,backdated?dayDiff(date,todayDate()):0,reason,id),
+    ...expenseDeltaSteps(db,id,newCash-oldCash,'Cash')
+  ];
+  if(oldBankId===newBankId){
+    if(newBankId)statements.push(...expenseDeltaSteps(db,id,amount-Number(old.amount),'Bank',newBankId));
+  }else{
+    if(oldBankId)statements.push(...expenseDeltaSteps(db,id,-Number(old.amount),'Bank',oldBankId));
+    if(newBankId)statements.push(...expenseDeltaSteps(db,id,amount,'Bank',newBankId));
+  }
+  try{await db.batch(statements);}catch{return error('Expense correction was not committed.',409);}
   return json({ok:true,id});
 }
 
 export async function cancelExpenseRoute(db:SherDatabase,id:string,reasonRaw:string,user:AuthUser):Promise<Response>{
-  if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before deleting an expense.');const reason=cleanText(reasonRaw);if(!reason)return error('Enter a reason for deleting this expense.');const old=await db.prepare(`SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 LIMIT 1`).bind(id).first<any>();if(!old)return error('Expense not found.',404);
-  await db.prepare(`UPDATE expenses SET status='Cancelled',is_deleted=1,deleted_by=?,deleted_at=datetime('now'),delete_reason=?,notes=CASE WHEN notes='' THEN ? ELSE notes||' | '||? END WHERE expense_id=?`).bind(user.fullName,reason,`Deleted: ${reason}`,`Deleted: ${reason}`,id).run();
-  const amount=Number(old.amount||0);if(old.payment_method==='Cash')await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Expense Deleted',?,'Reversal for deleted expense',0,?,'Cash',0)`).bind(expenseId('CB'),todayDate(),id,amount).run();
-  else if((old.payment_method==='Bank'||old.payment_method==='Mobile Banking')&&old.bank_account_id)await db.batch([db.prepare(`INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Expense Deleted',?,'Reversal for deleted expense',0,?,0)`).bind(expenseId('BB'),old.bank_account_id,todayDate(),id,amount),db.prepare(`UPDATE bank_accounts SET current_balance=current_balance+? WHERE bank_account_id=?`).bind(amount,old.bank_account_id)]);
-  await db.prepare(`INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'DELETE_EXPENSE','EXPENSE',?,?)`).bind(user.userId,id,reason).run().catch(()=>undefined);return json({ok:true,id});
+  if(!(await getOpenCashSession(db)))return error('Start the cash session before cancelling an expense.');
+  const reason=cleanText(reasonRaw);
+  if(reason.length<8)return error('Enter an explanation for cancellation (at least eight characters).');
+  const old=await db.prepare("SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 AND status='Active' LIMIT 1").bind(id).first<any>();
+  if(!old)return error('Active expense not found.',404);
+  if(!(await expenseSourceMatches(db,old)))return error('Original expense money postings do not reconcile. Review the source ledger before editing or cancelling.',409);
+  const amount=Number(old.amount),statements:SqlPreparedStatement[]=[
+    db.prepare("UPDATE expenses SET status='Cancelled',is_deleted=1,deleted_by=?,deleted_at=datetime('now'),delete_reason=? WHERE expense_id=? AND status='Active' AND COALESCE(is_deleted,0)=0")
+      .bind(user.fullName,reason,id)
+  ];
+  if(old.payment_method==='Cash'){
+    statements.push(db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?,'Expense Deleted',?,'Reversal for cancelled expense',0,?,'Cash',0)")
+      .bind(expenseId('CB'),todayDate(),id,amount));
+  }else if(['Bank','Mobile Banking'].includes(old.payment_method)&&old.bank_account_id){
+    statements.push(db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,date,type,reference,description,debit,credit,is_deleted) VALUES (?,?,?,'Expense Deleted',?,'Reversal for cancelled expense',0,?,0)")
+      .bind(expenseId('BB'),old.bank_account_id,todayDate(),id,amount));
+    statements.push(db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance+?,4) WHERE bank_account_id=?')
+      .bind(amount,old.bank_account_id));
+  }
+  statements.push(db.prepare("INSERT INTO audit_logs(user_id,action,entity_type,entity_id,note) VALUES (?,'DELETE_EXPENSE','EXPENSE',?,?)")
+    .bind(user.userId,id,reason));
+  try{await db.batch(statements);}catch{return error('Expense cancellation was not committed.',409);}
+  return json({ok:true,id});
 }
-
-
-

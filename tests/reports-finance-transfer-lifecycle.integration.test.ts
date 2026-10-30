@@ -46,16 +46,16 @@ test('5G18: real owner capital + bank loan + internal transfer + two expenses + 
   const owner=await api('POST','/api/finance/persons',{name:'G18 Owner',personType:'Owner'});ok(owner);
   const lender=await api('POST','/api/finance/persons',{name:'G18 Lender',personType:'Lender'});ok(lender);
   const equity=await api('POST','/api/finance/transactions',{
-   transactionType:'Owner Investment',personId:owner.id,paymentMethod:'Cash',amount:200,
+   transactionType:'Owner Investment',personId:owner.id,paymentMethod:'Cash',amount:200,clientRequestId:'G18-OWNER-CAPITAL-001',
    notes:'Real owner capital, not sales'
   });ok(equity);
   const loan=await api('POST','/api/finance/transactions',{
    transactionType:'Loan Received',personId:lender.id,paymentMethod:'Bank',
-   bankAccountId:bankA.id,amount:300,notes:'Liability financing not income'
+   bankAccountId:bankA.id,amount:300,clientRequestId:'G18-LOAN-POST-0001',notes:'Liability financing not income'
   });ok(loan);
   assert.equal(bankBalance(bankA.id),800);
   const transferred=await api('POST','/api/bank/transfers',{
-   fromAccountId:bankA.id,toAccountId:bankB.id,amount:120,
+   fromAccountId:bankA.id,toAccountId:bankB.id,amount:120,clientRequestId:'G18-INTERNAL-TRANSFER-001',
    notes:'Internal treasury allocation - not revenue'
   });ok(transferred);
   assert.equal(bankBalance(bankA.id),680);
@@ -69,10 +69,10 @@ test('5G18: real owner capital + bank loan + internal transfer + two expenses + 
   const category=await api('POST','/api/expense-categories',{name:'G18 Utilities'});ok(category);
   const bankExpense=await api('POST','/api/expenses',{
    categoryId:category.id,paymentMethod:'Bank',bankAccountId:bankB.id,
-   amount:40,description:'G18 bank expense'
+   amount:40,clientRequestId:'G18-EXPENSE-BANK-001',description:'G18 bank expense'
   });ok(bankExpense);
   const cashExpense=await api('POST','/api/expenses',{
-   categoryId:category.id,paymentMethod:'Cash',amount:30,
+   categoryId:category.id,paymentMethod:'Cash',amount:30,clientRequestId:'G18-EXPENSE-CASH-001',
    description:'G18 cash expense'
   });ok(cashExpense);
   assert.equal(bankBalance(bankB.id),180);

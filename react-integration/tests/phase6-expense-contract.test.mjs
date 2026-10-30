@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {existsSync,readFileSync} from 'node:fs';
+const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
+test('6F expense destination uses live authenticated source, not original demo store',()=>{
+ const uiPath=new URL('../overlay/src/integration/LiveExpensesPage.tsx',import.meta.url);
+ assert.ok(existsSync(uiPath),'LiveExpensesPage must exist for real source-backed expenses');
+ const ui=read('overlay/src/integration/LiveExpensesPage.tsx');
+ const api=read('overlay/src/integration/banijjApi.ts');
+ const prep=read('../scripts/prepare-hisabiq-react.mjs');
+ assert.match(prep,/LiveExpensesPage/);
+ assert.match(prep,/<Route path="expenses" element=\{<LiveExpenses \/>\} \/>/);
+ assert.match(prep,/expenses-design-preview/);
+ assert.match(api,/getLiveExpenseBootstrap/);
+ assert.match(api,/getLiveExpenses/);
+ assert.match(api,/postLiveExpense/);
+ assert.match(api,/cancelLiveExpense/);
+ assert.match(ui,/canUseModule\(user,'expense','view'\)/);
+ assert.match(ui,/clientRequestId/);
+ assert.match(ui,/getLiveExpenses\(/);
+ assert.match(ui,/postLiveExpense\(/);
+ assert.match(ui,/cancelLiveExpense\(/);
+ assert.match(ui,/data-live-expenses/);
+ assert.ok(!ui.includes('expenseDemoStore'));
+});

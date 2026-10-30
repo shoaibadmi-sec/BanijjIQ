@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "backend:dev": "tsx watch server/index.ts",
     "backend:build": "tsc -p tsconfig.server.json",
+    "test:phase6": "node --import tsx --test tests/phase6-*.integration.test.ts && node --test react-integration/tests/phase6-*.test.mjs",
     "test:security": "node --test .agents/skills/security-audit/validate-coverage-ledger.test.cjs .agents/skills/security-audit/validate-findings.test.cjs && node --import tsx --test tests/security-*.integration.test.ts",
     "test:phase4": "node --import tsx --test tests/phase4-*.integration.test.ts react-integration/tests/phase4-purchase-functions.test.ts",
     "test:phase4:coverage": "node --import tsx --experimental-test-coverage --test-coverage-include='server/modules/purchases/**' --test tests/phase4-*.integration.test.ts",
