@@ -199,9 +199,9 @@ test('G2-Q accepts original Cash and Store Credit tenders in either row order',a
       invoiceId:'CR-S',productId:'CR-P',quantity:1,
       requestId:'CR-REVERSE-TENDER',reason:'Cash and Store Credit sources were independently verified'
     });
-    assert.deepEqual(posted.allocations,[
-      {sourceKey:'Cash',amountCents:400},{sourceKey:'Store Credit',amountCents:600}
-    ]);
+    assert.deepEqual(Object.fromEntries(posted.allocations.map(a=>[a.sourceKey,a.amountCents])),{
+      Cash:400,'Store Credit':600
+    });
     assert.equal((f.q.prepare("SELECT delta_cents n FROM customer_store_credit_entries WHERE source_id='SRT-CR-REVERSE-TENDER'").get() as any).n,600);
     assert.equal((f.q.prepare("SELECT debit n FROM cash_book WHERE reference='SRT-CR-REVERSE-TENDER'").get() as any).n,4);
   }finally{f.db.close();}
