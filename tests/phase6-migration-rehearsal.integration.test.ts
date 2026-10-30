@@ -16,7 +16,7 @@ const tables=['bank_accounts','bank_book','bank_transfers','cash_sessions','cash
  'finance_persons','finance_transactions','expense_categories','expenses'];
 
 test('6H upgrade rehearsal preserves legacy financial rows and replay is idempotent',()=>{
- assert.deepEqual(phase6.map(n=>Number(n.slice(0,4))),[60,61,62,63,64,65,66,67]);
+ assert.deepEqual(phase6.map(n=>Number(n.slice(0,4))),[60,61,62,63,64,65,66,67,68]);
  const sandbox=mkdtempSync(join(tmpdir(),'hisabiq-phase6-migration-'));
  const stage=join(sandbox,'migrations');
  mkdirSync(stage);
@@ -47,6 +47,10 @@ test('6H upgrade rehearsal preserves legacy financial rows and replay is idempot
   const upgraded=runMigrations(db.native,stage);
   assert.deepEqual(upgraded.applied,phase6);
   assert.deepEqual(snapshot(),before,'migration must not rewrite original financial rows');
+  assert.throws(()=>db.native.prepare("UPDATE finance_persons SET person_type='Lender' WHERE person_id='P6H-OWNER'").run(),
+    /Finance person type cannot change after history exists/,
+    'upgrade installs historical finance-person type guard');
+  assert.deepEqual(snapshot(),before,'rejected identity change leaves historical books intact');
   assert.equal((db.native.prepare('PRAGMA integrity_check').get() as any).integrity_check,'ok');
   assert.deepEqual(db.native.prepare('PRAGMA foreign_key_check').all(),[]);
   assert.equal(runMigrations(db.native,stage).applied.length,0,'replay must not duplicate migrations');
@@ -94,7 +98,7 @@ test('6H duplicate legacy open sessions block the migration atomically and allow
   assert.deepEqual(db.native.prepare('SELECT session_id,opening_cash,status FROM cash_sessions ORDER BY session_id').all(),before);
   db.native.prepare("UPDATE cash_sessions SET status='Closed' WHERE session_id='P6H-DUP-A'").run();
   const retried=runMigrations(db.native,stage);
-  assert.equal(retried.applied.length,6,'once legacy state is resolved, apply exactly migrations 0062–0067');
+  assert.equal(retried.applied.length,7,'once legacy state is resolved, apply exactly migrations 0062–0068');
   assert.equal((db.native.prepare("SELECT COUNT(*) n FROM cash_sessions WHERE status='Open'").get() as any).n,1);
   assert.equal((db.native.prepare("SELECT COUNT(*) n FROM cash_book WHERE type='Day Close Adjustment'").get() as any).n,0);
   assert.equal((db.native.prepare('PRAGMA integrity_check').get() as any).integrity_check,'ok');
