@@ -17,6 +17,12 @@ async function readBody<T>(request: Request): Promise<T> {
   catch { throw new Error('Invalid JSON body'); }
 }
 
+async function isUnreversibleBundleSale(db: SherDatabase, invoiceId: string): Promise<boolean> {
+  if (!invoiceId) return false;
+  return !!(await db.prepare('SELECT 1 AS found FROM sale_bundle_components WHERE invoice_id=? LIMIT 1').bind(invoiceId).first());
+}
+const bundleLifecycleBlocked = () => Response.json({ok:false,error:'Bundle sale returns, edits and reversals require source-safe Phase 7E3 support.'},{status:409});
+
 export async function handleSalesRoute(db: SherDatabase, request: Request, path: string, user: AuthUser): Promise<Response | null> {
   const url = new URL(request.url);
 
@@ -26,7 +32,11 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnHistoryDetailMatch = path.match(/^\/api\/sales-returns\/history\/([^/]+)$/);
   if (salesReturnHistoryDetailMatch && request.method === 'GET') return getSalesReturnDetailRoute(db, decodeURIComponent(salesReturnHistoryDetailMatch[1]));
   if (path === '/api/sales-returns' && request.method === 'GET') return getSalesReturnHistoryRoute(db);
-  if (path === '/api/sales-returns' && request.method === 'POST') return completeSalesReturnRoute(db, await readBody<any>(request), user);
+  if (path === '/api/sales-returns' && request.method === 'POST') {
+    const body=await readBody<any>(request);
+    if(await isUnreversibleBundleSale(db,String(body?.invoiceId||''))) return bundleLifecycleBlocked();
+    return completeSalesReturnRoute(db,body,user);
+  }
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
@@ -44,6 +54,7 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   const reverseMatch=path.match(/^\/api\/sales-management\/([^/]+)\/reverse$/);
   if(reverseMatch && request.method==='GET')return getMixedSaleReversalPreviewRoute(db,decodeURIComponent(reverseMatch[1]));
+  if(reverseMatch && request.method==='POST' && await isUnreversibleBundleSale(db,decodeURIComponent(reverseMatch[1]))) return bundleLifecycleBlocked();
   if(reverseMatch && request.method==='POST')return reverseMixedSaleRoute(
     db,decodeURIComponent(reverseMatch[1]),await readBody<any>(request),user);
 
@@ -52,8 +63,13 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   const salesManageMatch = path.match(/^\/api\/sales-management\/([^/]+)$/);
   if (salesManageMatch && request.method === 'GET') return getSaleDetailRoute(db, decodeURIComponent(salesManageMatch[1]));
-  if (salesManageMatch && request.method === 'PUT') return updateSaleRoute(db, decodeURIComponent(salesManageMatch[1]), await readBody<any>(request), user);
+  if (salesManageMatch && request.method === 'PUT') {
+    const id=decodeURIComponent(salesManageMatch[1]);
+    if(await isUnreversibleBundleSale(db,id)) return bundleLifecycleBlocked();
+    return updateSaleRoute(db,id,await readBody<any>(request),user);
+  }
   if (salesManageMatch && request.method === 'DELETE') {
+    if(await isUnreversibleBundleSale(db,decodeURIComponent(salesManageMatch[1]))) return bundleLifecycleBlocked();
     const body = await readBody<{ reason?: string }>(request);
     return deleteSaleRoute(db, decodeURIComponent(salesManageMatch[1]), cleanText(body.reason), user);
   }
