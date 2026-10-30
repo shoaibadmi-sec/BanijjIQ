@@ -1,5 +1,5 @@
 export type ReportStatus = 'ready' | 'needs-review' | 'incomplete' | 'unavailable';
-export type LiveReportKey = 'sales' | 'purchase' | 'stock' | 'receivables' | 'payables' | 'profit' | 'cash' | 'bank' | 'finance' | 'expenses' | 'audit';
+export type LiveReportKey = 'sales' | 'purchase' | 'stock' | 'receivables' | 'payables' | 'profit' | 'product-profit' | 'profit-loss' | 'cash' | 'bank' | 'finance' | 'expenses' | 'audit';
 export type LiveReportRange = { from: string; to: string };
 export type LiveReportQuery = LiveReportRange & {
   report: LiveReportKey;

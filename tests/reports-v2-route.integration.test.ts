@@ -34,12 +34,18 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     token=deniedToken;
     assert.equal((await call('GET','/api/reports/v2/rows?report=sales')).status,403);
     assert.equal((await call('GET','/api/reports/v2/catalog')).status,403);
+    assert.equal((await call('GET','/api/reports/v2/rows?report=product-profit')).status,403);
+    assert.equal((await call('GET','/api/reports/v2/rows?report=profit-loss')).status,403);
     token=adminToken;
     const before = (db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
     const catalog = await call('GET','/api/reports/v2/catalog');
     assert.equal(catalog.status,200,JSON.stringify(catalog));
     assert.deepEqual(catalog.mainTabs.map((x:any)=>x.id),['overview','library']);
     assert.ok(!catalog.reports.some((x:any)=>x.id==='advisor'));
+    assert.equal(catalog.reports.find((x:any)=>x.id==='product-profit')?.status,'unavailable');
+    assert.equal(catalog.reports.find((x:any)=>x.id==='profit-loss')?.status,'unavailable');
+    assert.match(catalog.reports.find((x:any)=>x.id==='product-profit')?.reason ?? '',/product|FIFO/i);
+    assert.match(catalog.reports.find((x:any)=>x.id==='profit-loss')?.reason ?? '',/ledger/i);
     const rows = await call('GET','/api/reports/v2/rows?report=sales&from=2026-10-01&to=2026-10-30');
     assert.equal(rows.status,200,JSON.stringify(rows));
     assert.equal(rows.totalRows,1);
@@ -53,6 +59,16 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(uncosted.status,200);
     assert.equal(uncosted.coverage.status,'incomplete','no sale item or original FIFO data is certified');
     assert.equal(uncosted.metrics.find((m:any)=>m.key==='netProfit')?.valueMinor,null);
+    // Invoice-cohort profitability is not a product margin report or a full general-ledger P&L.
+    for(const report of ['product-profit','profit-loss']) {
+      const result=await call('GET','/api/reports/v2/rows?report='+report+'&from=2026-10-01&to=2026-10-30');
+      assert.equal(result.status,200,JSON.stringify(result));
+      assert.equal(result.report,report);
+      assert.equal(result.coverage.status,'unavailable');
+      assert.deepEqual(result.rows,[]);
+      assert.deepEqual(result.metrics,[]);
+      assert.equal(result.totalRows,0);
+    }
     const summary = await call('GET','/api/reports/v2/summary?from=2026-10-01&to=2026-10-30');
     assert.equal(summary.status,200);
     assert.equal(summary.metrics.find((m:any)=>m.key==='grossProfit')?.valueMinor,null);

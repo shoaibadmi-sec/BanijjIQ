@@ -91,6 +91,14 @@ function startMocking(context,calls){
       ],coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
     if(path==='/api/reports/v2/rows'&&request.method()==='GET'){
       const kind=url.searchParams.get('report')||'sales';
+      if(kind==='product-profit'||kind==='profit-loss'){
+        const reason=kind==='product-profit'
+          ?'Product-level FIFO allocations, line discounts and return costs are not yet reconciled.'
+          :'Full ledger balances and posted adjustments are required for a Profit & Loss statement.';
+        return respond({ok:true,report:kind,range:{from:'2026-10-01',to:'2026-10-30'},
+          page:1,pageSize:50,totalRows:0,rows:[],metrics:[],
+          coverage:{status:'unavailable',reason}});
+      }
       if(kind==='sales'&&url.searchParams.get('search')==='CI-PAGE'){
         const page=Number(url.searchParams.get('page')||1);
         const pageSize=Number(url.searchParams.get('pageSize')||50);
@@ -431,6 +439,30 @@ try{
       await screenshot(page,'reports-invoice-source-'+width);
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog',{name:'Recorded invoice'}).count(),0);
+      await ctx.close();
+    });
+  }
+  for(const width of [390,1440]){
+    await withCheck('profit report destinations do not reuse invoice-cohort figures '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();const queried=[];
+      page.on('request',request=>{
+        const url=new URL(request.url());
+        if(url.pathname==='/api/reports/v2/rows')queried.push(url.searchParams.get('report'));
+      });
+      await page.goto(base+'/#/app/reports?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
+      await page.getByText(/Product-level FIFO allocations/).waitFor({timeout:10000});
+      assert.ok(queried.includes('product-profit'),'product gross profit must have its own backend report ID');
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
+      await page.getByRole('navigation',{name:'Report library'})
+        .getByRole('button',{name:'Profit & Loss statement'}).click();
+      await page.getByText(/Full ledger balances and posted adjustments/).waitFor({timeout:10000});
+      assert.ok(queried.includes('profit-loss'),'a P&L must not reuse the invoice-cohort profitability endpoint');
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
+      assert.ok(!queried.includes('profit'),'neither unsupported report may present cohort profit as its own');
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await ctx.close();
     });
   }
