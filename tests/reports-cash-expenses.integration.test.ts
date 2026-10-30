@@ -177,3 +177,24 @@ test('5G22: Finance source outside the selected period cannot hide its in-period
    'Reporting must be read-only even for out-of-period Finance sources');
  }finally{db.close();}
 });
+
+test('5G23: expense journal date drift in the same reporting period withholds reported totals',async()=>{
+ const db=fixture();try {
+  const baseline=await readCashExpenses(db,query('expenses'));
+  assert.equal(baseline.coverage.status,'needs-review');
+  assert.equal(metric(baseline,'operatingExpenses').valueMinor,5000);
+  // The source expense is October 16; an unrelated October 17 journal is not valid evidence.
+  db.native.prepare("UPDATE cash_book SET date='2026-10-17' WHERE entry_id='C-EXP'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  for(const report of ['expenses','cash'] as const){
+   const page=await readCashExpenses(db,query(report));
+   assert.equal(page.coverage.status,'incomplete',report+' must reject changed expense journal date');
+   assert.match(page.coverage.reason,/expense|date|journal/i);
+   assert.equal(metric(page,'operatingExpenses').valueMinor,null);
+   assert.equal(metric(page,'cashPayments').valueMinor,null);
+   if(report==='expenses')assert.equal(page.rows[0].amountMinor,null);
+  }
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+   'A failed expense accounting report must never write to the database');
+ }finally{db.close();}
+});
