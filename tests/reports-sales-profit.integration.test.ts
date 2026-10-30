@@ -102,3 +102,16 @@ test('empty sales period does not invent profit and expenses remain separate',as
   assert.equal(metric(report,'netProfit').valueMinor,0);
  }finally{db.close();}
 });
+
+test('customer-filtered profit does not misallocate all business operating expenses',async()=>{
+ const db=fixture();
+ try {
+  const filtered=parseLiveReportQuery(new URL(
+   'http://local.test/api/reports/v2/rows?report=profit&from=2026-10-01&to=2026-10-30&search=Real%20Buyer'));
+  const result=await readSalesProfit(db,filtered);
+  assert.equal(result.totalRows,1);
+  assert.equal(result.coverage.status,'incomplete');
+  assert.equal(metric(result,'netProfit').valueMinor,null);
+  assert.match(result.coverage.reason,/search|expense allocation|filtered/i);
+ }finally{db.close();}
+});
