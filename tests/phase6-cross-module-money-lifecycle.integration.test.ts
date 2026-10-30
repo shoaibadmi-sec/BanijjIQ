@@ -103,3 +103,79 @@ test('6G customer due overpayment rejects without negative due, fictitious cash 
   assert.deepEqual(oneCount(),before,'rejected payment must post no money or audit');
  }finally{db.close();}
 });
+
+test('6G purchase → sale → sale cash return → supplier-credit return preserves stock, cash and payable',async()=>{
+ const db=new SqliteDatabase(':memory:');
+ try{
+  runMigrations(db.native,resolve('migrations'));
+  let token='';
+  const api=async(method:string,path:string,body?:unknown)=>{
+   const headers:Record<string,string>={'content-type':'application/json'};
+   if(token)headers.authorization='Bearer '+token;
+   const r=await handleApiRequest(new Request('https://phase6-returns.test'+path,{
+    method,headers,body:body===undefined?undefined:JSON.stringify(body)
+   }),db);
+   return {status:r.status,...await r.json() as Record<string,any>};
+  };
+  const one=(sql:string,...args:unknown[])=>db.native.prepare(sql).get(...args) as any;
+  const admin=await api('POST','/api/setup/admin',{
+   fullName:'Combined Returns Tester',phone:'01000009784',password:'Synthetic-Phase6-Returns-2026!'
+  });
+  assert.equal(admin.status,200,JSON.stringify(admin));token=admin.token;
+  assert.equal((await api('POST','/api/pos/cash-session/start',{openingCash:100,clientRequestId:'P6-RET-OPEN-0001'})).status,200);
+  const supplier=await api('POST','/api/suppliers',{name:'Cross-Return Supplier'});
+  const product=await api('POST','/api/products',{
+   productName:'Cross-Return Test Plug',category:'Electric',unit:'Pcs',
+   barcode:'P6-RET-PLUG',purchasePrice:10,sellingPrice:20,currentStock:0,
+   minimumStock:0,status:'Active',trackSerial:false,trackExpiry:false,trackWarranty:false
+  });
+  assert.equal(supplier.status,200);assert.equal(product.status,200);
+  const purchase=await api('POST','/api/purchases',{
+   supplierId:supplier.id,items:[{productId:product.productId,qty:4,unitPrice:10}],
+   paidAmount:0,discount:0
+  });
+  assert.equal(purchase.status,200,JSON.stringify(purchase));
+  const sale=await api('POST','/api/pos/sales',{
+   clientRequestId:'P6G-RET-SALE-0001',customerName:'Cash Return Buyer',customerPhone:'01000009785',
+   paymentType:'Cash',paidAmount:0,paymentMethod:'Cash',discount:0,
+   items:[{productId:product.productId,name:'Cross-Return Test Plug',qty:2,unitPrice:20,fulfillmentMode:'own'}]
+  });
+  assert.equal(sale.status,200,JSON.stringify(sale));
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,2);
+  const saleReturn=await api('POST','/api/sales-returns',{
+   invoiceId:sale.invoice.invoiceId,refundMethod:'Cash',reason:'Customer returned one unused plug',
+   items:[{productId:product.productId,qty:1,unitPrice:20}]
+  });
+  assert.equal(saleReturn.status,200,JSON.stringify(saleReturn));
+  assert.equal(saleReturn.totalReturnAmount,20);
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,3);
+  const purchaseReturn=await api('POST','/api/purchase-returns',{
+   purchaseId:purchase.purchaseId,refundMethod:'Supplier Credit',reason:'Rejected one unused plug',
+   items:[{productId:product.productId,qty:1,unitPrice:10}]
+  });
+  assert.equal(purchaseReturn.status,200,JSON.stringify(purchaseReturn));
+  assert.equal(purchaseReturn.totalReturnAmount,10);
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,2);
+  assert.equal(one('SELECT current_due n FROM suppliers WHERE supplier_id=?',supplier.id).n,30);
+  assert.equal(one('SELECT COALESCE(SUM(debit-credit),0) n FROM supplier_ledger WHERE supplier_id=?',supplier.id).n,30);
+  assert.equal(one("SELECT COALESCE(SUM(credit-debit),0) n FROM cash_book WHERE type IN ('Sale','Sales Return')").n,20);
+  const day=await api('GET','/api/daybook?dateFrom='+new Date().toISOString().slice(0,10)+
+   '&dateTo='+new Date().toISOString().slice(0,10)+'&page=1&pageSize=50');
+  assert.equal(day.status,200,JSON.stringify(day));
+  for(const module of ['Purchase','Sales','Sales Return','Purchase Return'])
+   assert.ok(day.rows.some((row:any)=>row.module===module),'Daybook missing '+module);
+  assert.equal(day.totals.cashIn,40);
+  assert.equal(day.totals.cashOut,20);
+  assert.equal(day.totals.netCash,20);
+  const summary=await api('GET','/api/pos/cash-session/summary');
+  assert.equal(summary.status,200);
+  assert.equal(summary.summary.expectedCash,120);
+  const over=await api('POST','/api/purchase-returns',{
+   purchaseId:purchase.purchaseId,refundMethod:'Supplier Credit',reason:'Cannot return already sold stock',
+   items:[{productId:product.productId,qty:4,unitPrice:10}]
+  });
+  assert.notEqual(over.status,200);
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,2);
+  assert.equal(one('SELECT current_due n FROM suppliers WHERE supplier_id=?',supplier.id).n,30);
+ }finally{db.close();}
+});
