@@ -48,6 +48,19 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: apps/hisabiq-web/package-lock.json
+      - name: Typecheck BanijjIQ backend
+        run: |
+          npm ci
+          npm run backend:build
+          node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
+          node --import tsx --test tests/reports-sales-profit.integration.test.ts
+          node --import tsx --test tests/reports-stock-dues.integration.test.ts
+          node --import tsx --test tests/reports-stock-dues-route.integration.test.ts
+          node --import tsx --test tests/reports-cash-expenses.integration.test.ts
+          node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
+          node --import tsx --test tests/phase6-finance-readonly.integration.test.ts
+          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts
+          node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Verify pinned React submodule and integration adapter
         run: |
           git submodule status
@@ -65,19 +78,6 @@ jobs:
           node scripts/preview/build-config.mjs --self-test
           node --test tests/preview-deploy.contract.test.mjs
           node --test tests/pr-preview.contract.test.mjs
-      - name: Typecheck BanijjIQ backend
-        run: |
-          npm ci
-          npm run backend:build
-          node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
-          node --import tsx --test tests/reports-sales-profit.integration.test.ts
-          node --import tsx --test tests/reports-stock-dues.integration.test.ts
-          node --import tsx --test tests/reports-stock-dues-route.integration.test.ts
-          node --import tsx --test tests/reports-cash-expenses.integration.test.ts
-          node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
-          node --import tsx --test tests/phase6-finance-readonly.integration.test.ts
-          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts
-          node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
       - name: Verify source submodule stays clean
