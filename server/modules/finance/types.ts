@@ -25,7 +25,7 @@ export type FinancePersonInput = { name?: string; personType?: 'Owner' | 'Lender
 
 export type FinanceInput = {
   date?: string; transactionType?: string; personId?: string; paymentMethod?: string; bankAccountId?: string;
-  amount?: number; referenceNo?: string; notes?: string; backdatedReason?: string;
+  amount?: number; referenceNo?: string; notes?: string; backdatedReason?: string; clientRequestId?: string;
 };
 
 export type FinanceTxType = { key: string; label: string; account: 'capital' | 'loan'; direction: 'in' | 'out' };
