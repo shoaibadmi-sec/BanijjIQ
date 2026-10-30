@@ -94,3 +94,20 @@ test('authorization: product creator without edit may count but not approve; vie
   assert.equal((db.native.prepare("SELECT status FROM stock_counts WHERE count_id='count-rbac-00001'").get() as any).status,'PENDING');
  }finally{db.close();}
 });
+
+
+test('transaction: even a no-variance approval rejects stock changed after count capture',async()=>{
+ const {db,api,login}=fixture();try{
+  await login();
+  db.native.prepare("INSERT INTO products(product_id,product_name,category,unit,current_stock) VALUES ('T-NOOP','Same quantity','Hardware','Pcs',2)").run();
+  db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,original_quantity,remaining_quantity,unit_cost) VALUES ('T-NOOP-L','T-NOOP','PURCHASE',2,2,30)").run();
+  assert.equal((await api('POST','/api/products/T-NOOP/stock-counts',{countId:'count-noop-stale1',countedQuantity:2})).status,200);
+  db.native.prepare("UPDATE products SET current_stock=1 WHERE product_id='T-NOOP'").run();
+  db.native.prepare("UPDATE stock_lots SET remaining_quantity=1 WHERE lot_id='T-NOOP-L'").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as any).n;
+  const refused=await api('POST','/api/products/T-NOOP/stock-counts/count-noop-stale1/approve',{});
+  assert.equal(refused.status,409,JSON.stringify(refused));
+  assert.equal((db.native.prepare("SELECT status FROM stock_counts WHERE count_id='count-noop-stale1'").get() as any).status,'PENDING');
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as any).n,before);
+ }finally{db.close();}
+});
