@@ -60,6 +60,7 @@ jobs:
           node --import tsx --test tests/reports-dual-return-accounting.integration.test.ts
           node --import tsx --test tests/reports-finance-transfer-lifecycle.integration.test.ts
           node --import tsx --test tests/reports-expense-cancellation-lifecycle.integration.test.ts
+          node --import tsx --test tests/reports-finance-edit-delete-atomic.integration.test.ts
           node --import tsx --test tests/reports-customer-payment.integration.test.ts
           node --import tsx --test tests/reports-sales-profit.integration.test.ts
           node --import tsx --test tests/reports-stock-dues.integration.test.ts
