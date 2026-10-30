@@ -116,6 +116,12 @@ async function saleFingerprint(input:PosSaleInput):Promise<string>{
 }
 
 export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:AuthUser):Promise<Response>{
+  // G2-G Task 4 only defines the accounting contract, not the transaction.
+  // Silently ignoring tenders would falsely book credit/bank as cash.
+  // Fail before generating invoice IDs, FIFO draws or idempotency records.
+  if(input.tenders!==undefined&&
+    (!Array.isArray(input.tenders)||input.tenders.length>0))
+    return error('Split-tender posting is not yet enabled; use a single verified payment method.',409);
   const requestId=cleanText(input.clientRequestId);
   if(requestId&&!/^[A-Za-z0-9_-]{8,128}$/.test(requestId))return error('Invalid sale request key.');
   const fingerprint=requestId?await saleFingerprint(input):'';
