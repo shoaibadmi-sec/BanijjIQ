@@ -43,3 +43,6 @@ wrangler.hisabiq-pr.generated.jsonc
 
 # One-time preview demo D1 migration config, generated locally
 wrangler.hisabiq-pr-migrations.generated.jsonc
+
+# Explicitly selected local audit runs (never commit findings or dummy secrets)
+.security-audit/

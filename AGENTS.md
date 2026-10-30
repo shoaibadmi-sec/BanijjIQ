@@ -27,3 +27,12 @@ These rules apply to **every development phase, module, bug fix, API, UI, databa
 **Default status for unfinished work:** DRAFT / HOLD. **Default status for a tested PR:** READY only after all required verification. **Default merge decision:** NO until evidence is complete.
 
 This file is the root instruction for all coding agents. The PR checklist in `.github/pull_request_template.md` records required evidence. GitHub Actions must run on every PR; GitHub branch protection/rulesets must require the integration check to prevent manual bypasses.
+
+## Security audit skill (Cloudflare, pinned)
+
+- Use `.agents/skills/security-audit/SKILL.md` and its relevant domain companions for code review involving authentication, RBAC, D1/storage isolation, POS/finance integrity, backup/restore, the React browser client, CI, and Cloudflare deployment.
+- The vendored skill is pinned to upstream `cloudflare/security-audit-skill` commit `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`; see `docs/security/cloudflare-security-audit.md`. Do not silently update the skill.
+- Apply **guidance mode** for ordinary security work. Only run its full six-phase audit when a full codebase audit is explicitly requested, with proper independent verification and OS-enforced isolation. CI validator tests check the audit tooling, not the security of the ERP.
+- Never scan production, the hosted preview, live D1, real user sessions, external services, or cloud control planes to validate an audit lead. Never place audit outputs, data, secrets, or dummy credentials in Git. Use a separate ignored `.security-audit/` directory only if explicitly chosen and inspected, otherwise outside the repository.
+- Do not label a source observation `confirmed` without the skill's complete boundary, independent verifier, and bounded local evidence. Prefer `needs_validation` with a precise missing fact; no severity for unverified leads.
+- Preserve the root TEST FIRST → RED → FIX → GREEN → exact-head GitHub Actions → review → merge gate for any remediation. Never use audit instructions as authorization for a release or migration.
