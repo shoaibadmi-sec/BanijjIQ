@@ -1,6 +1,6 @@
 # Phase 6 — Finance, Cash/Bank & Daybook (design proposal)
 Date: 2026-10-30
-Status: PROPOSED — design/plan only; not approved for implementation or release
+Status: APPROVED by user 2026-10-30; Phase 6A implementation in progress; not approved for release
 Repository: shoaibadmi-sec/BanijjIQ
 Branch: feat/hisabiq-phase6-finance-daybook
 
@@ -67,4 +67,4 @@ Pure function tests, real isolated SQLite/D1 migrations, Worker/Hono APIs, race/
 - Branch from current `main`; PR stays draft. Rebase only with explicit review of touching migrations/contracts. Never auto-merge or auto-deploy.
 
 ## Delivery gate
-This document is a **design proposal awaiting approval**. The accompanying implementation plan is a proposed sequence, not evidence that any Phase 6 production feature or test has been implemented. Subsequent implementation must use Superpowers RED→GREEN→REFACTOR and Ponytail minimal code reuse, with exact-head CI and accounting review before release.
+This document was **approved for implementation on 2026-10-30**. Actual implementation and test status must be verified from the Phase 6 draft PR and its exact-commit GitHub Actions runs. Subsequent implementation must use Superpowers RED→GREEN→REFACTOR and Ponytail minimal code reuse, with exact-head CI and accounting review before release.
