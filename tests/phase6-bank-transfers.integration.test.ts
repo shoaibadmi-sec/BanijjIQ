@@ -10,6 +10,7 @@ function fixture() {
   runMigrations(db.native,resolve('migrations'));
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,opening_cash) VALUES ('SESSION-P6B','Cashier',500)").run();
   db.native.prepare("INSERT INTO bank_accounts(bank_account_id,account_name,account_type,opening_balance,current_balance,status) VALUES ('BANK-A','Bank A','Bank',100,100,'Active'),('BANK-B','Mobile B','Mobile Banking',25,25,'Active'),('BANK-C','Bank C','Bank',0,0,'Inactive')").run();
+  db.native.prepare("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES ('P6B-ADMIN','Test Admin','01000006688','fixture','fixture','admin','Active','Fixture')").run();
   const user={userId:'P6B-ADMIN',fullName:'Test Admin',role:'admin'} as any;
   const amounts=()=>db.native.prepare("SELECT bank_account_id,current_balance FROM bank_accounts ORDER BY bank_account_id").all() as any[];
   const legs=(id?:string)=>db.native.prepare("SELECT type,bank_account_id,debit,credit,reference FROM bank_book WHERE (? IS NULL OR reference=?) ORDER BY entry_id").all(id??null,id??null) as any[];
@@ -40,7 +41,7 @@ test('6B transfer posts once with balanced bank and mobile ledger legs; same key
     assert.equal(next.id,first.id,'same request key returns original transfer, never a second charge');
     assert.equal(f.headers().length,1);
     assert.deepEqual(f.amounts().map(x=>x.current_balance),[70,55,0]);
-    assert.deepEqual(f.legs(first.id).map(x=>[x.type,x.debit,x.credit]),
+    assert.deepEqual(f.legs(first.id).map(x=>[x.type,x.debit,x.credit]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])),
       [['Transfer In',0,30],['Transfer Out',30,0]].sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
     assert.equal((await post(f.db,f.user,{...input(),amount:31})).status,409,
       'same id with altered amount must not silently reuse original');
