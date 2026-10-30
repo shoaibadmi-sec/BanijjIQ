@@ -20,6 +20,9 @@ export function usePhase6Finance(){
  const bankAccess=canUseModule(user,'bank','view');
  const cashAccess=canUseModule(user,'pos','view');
  const permitted=financeAccess||bankAccess;
+ const canTransfer=bankAccess&&canUseModule(user,'bank','add');
+ const [revision,setRevision]=useState(0);
+ const refreshFinance=()=>setRevision(v=>v+1);
  const [state,setState]=useState<FinanceState>(empty);
  const [error,setError]=useState(''),[loading,setLoading]=useState(false);
  useEffect(()=>{
@@ -73,12 +76,12 @@ export function usePhase6Finance(){
    }));
    if(active){
     setState({accounts,people,transactions,transfers,
-      sessionOpen:cashData?.summary!==null&&cashData!==null});
+      sessionOpen:cashData?.summary!=null});
     setError(needsReview>0?'Some finance source records need independent review. Unverified amounts are hidden.':'');
    }
   })().catch(e=>{if(active){setState(empty);setError(e instanceof Error?e.message:'Cannot load Finance.');}})
      .finally(()=>{if(active)setLoading(false)});
   return ()=>{active=false};
- },[permitted,financeAccess,bankAccess,cashAccess]);
- return {...state,permitted,loading,error};
+ },[permitted,financeAccess,bankAccess,cashAccess,revision]);
+ return {...state,permitted,loading,error,canTransfer,refreshFinance};
 }

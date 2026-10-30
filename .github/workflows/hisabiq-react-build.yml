@@ -54,6 +54,7 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test react-integration/tests/phase6-finance-posting.test.ts
           node --import tsx --test react-integration/tests/phase6-daybook-adapter.test.ts
           npm run test:phase6
           node --import tsx --test tests/preview-demo-seed.integration.test.ts

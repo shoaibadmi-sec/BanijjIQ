@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {patchSourceFinance} from '../../scripts/preview/patch-source-finance.mjs';
+import {patchSourceFinanceTransfer} from '../../scripts/preview/patch-source-finance-transfer.mjs';
 
 const read=path=>readFileSync(new URL('../../'+path,import.meta.url),'utf8');
 const source=read('apps/hisabiq-web/src/pages/Finance.tsx');
 
 test('source Finance transfer dialog awaits one real API posting before closing',()=>{
- const page=patchSourceFinance(source);
+ const page=patchSourceFinanceTransfer(patchSourceFinance(source));
  assert.match(page,/postBankTransfer\(/);
  assert.match(page,/clientRequestId/);
  assert.match(page,/const save = async \(\) =>/);

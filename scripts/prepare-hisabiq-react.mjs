@@ -4,6 +4,7 @@ import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 import { patchSourceDaybook, patchSourceDaybookActions, patchSourceDaybookDetails } from './preview/patch-source-daybook.mjs';
 import { patchSourceFinance } from './preview/patch-source-finance.mjs';
+import { patchSourceFinanceTransfer } from './preview/patch-source-finance-transfer.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -48,7 +49,7 @@ writeFileSync(daybookActionPath,patchSourceDaybookActions(readFileSync(daybookAc
 const daybookDetailsPath=join(web,'src/components/daybook/TransactionDetailsDialog.tsx');
 writeFileSync(daybookDetailsPath,patchSourceDaybookDetails(readFileSync(daybookDetailsPath,'utf8')));
 const financeSourcePath=join(web,'src/pages/Finance.tsx');
-writeFileSync(financeSourcePath,patchSourceFinance(readFileSync(financeSourcePath,'utf8')));
+writeFileSync(financeSourcePath,patchSourceFinanceTransfer(patchSourceFinance(readFileSync(financeSourcePath,'utf8'))));
 
 
 
