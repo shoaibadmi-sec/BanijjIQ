@@ -122,6 +122,9 @@ function startMocking(context,calls){
           metrics:[],coverage:{status:'needs-review',reason:'Posted invoice sources.'}});
       }
       const fixtures={
+        purchase:{sourceId:'PUR-LIVE-001',sourceModule:'purchases',date:'2026-10-18',
+          label:'Real Hardware Supplier',amountMinor:12000,paidMinor:0,dueMinor:12000,
+          status:'needs-review',reason:'Recorded purchase; returns and settlements are not netted.'},
         sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
           label:'Real API Mock Buyer',amountMinor:12000,paidMinor:4500,dueMinor:7500,
           status:'needs-review',reason:'Recorded invoice amount.'},
@@ -525,6 +528,31 @@ try{
         await inspectLayout(page,'native-reports-'+width);
         await screenshot(page,'native-reports-'+width);
         await audit(page,'native-reports-'+width);
+      }finally{await ctx.close();}
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('native HisabIQ Purchase Register reads posted backend purchase '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try{
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=purchases&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        await page.getByRole('button',{name:'PUR-LIVE-001'}).waitFor({timeout:10000});
+        const row=page.locator('[data-report-row]').first();
+        assert.match(await row.locator('td').nth(4).innerText(),/৳\\s*0(?:\\D|$)/,
+          'original Paid column must display a saved zero payment, not a fabricated value');
+        assert.match(await row.locator('td').nth(5).innerText(),/৳\\s*120(?:\\D|$)/,
+          'original Due column must show the full purchase obligation');
+        assert.ok(calls.some(x=>x.path==='/api/reports/v2/rows'&&x.method==='GET'),
+          'native Purchase Register must use authenticated backend reports');
+        assert.equal(await page.locator('[data-live-reports]').count(),0,
+          'purchase report must not use the custom Reports layout');
+        await inspectLayout(page,'native-purchase-report-'+width);
+        await screenshot(page,'native-purchase-report-'+width);
+        await audit(page,'native-purchase-report-'+width);
       }finally{await ctx.close();}
     });
   }
