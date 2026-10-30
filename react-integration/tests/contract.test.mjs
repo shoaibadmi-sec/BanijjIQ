@@ -116,3 +116,36 @@ test('Phase 13 real return route preserves source Sales preview and blocks uncer
     "canUseModule(user,'returns','add')",'Review real return','total>sale.netSale'])
     assert.ok(returns.includes(check),check);
 });
+
+
+test('source-faithful Dashboard uses authenticated report data and never renders preview balances', async () => {
+  const { patchLiveDashboardSource } = await import('../../scripts/preview/patch-live-dashboard.mjs');
+  const root=path=>readFileSync(new URL('../../apps/hisabiq-web/src/'+path,import.meta.url),'utf8');
+  const original={
+    dashboard:root('pages/Dashboard.tsx'),
+    metric:root('components/dashboard/MetricCard.tsx'),
+    trend:root('components/dashboard/SalesTrendChart.tsx'),
+    cashflow:root('components/dashboard/CashflowChart.tsx'),
+    sales:root('components/dashboard/RecentSalesTable.tsx'),
+    dues:root('components/dashboard/DuesList.tsx')
+  };
+  const patched=patchLiveDashboardSource(original);
+  assert.ok(patched.dashboard.includes('useLiveDashboardData()'));
+  assert.ok(patched.dashboard.includes('liveValue={live.values[w.id]'));
+  assert.ok(patched.dashboard.includes('<CustomizeDialog'),'Source layout controls must remain');
+  assert.ok(patched.dashboard.includes('<WidgetFrame'),'Source metric/panel composition must remain');
+  assert.ok(patched.metric.includes('liveValue ??'), 'No fixture-backed amount can reach a metric card');
+  for(const [key,required] of [['trend','data={data}'],['cashflow','data={data}'],
+    ['sales','(sales ?? recentSales).map'],['dues','(dues ?? duesToCollect).map']]){
+    assert.ok(patched[key].includes(required), key+' source component lost real-data seam');
+  }
+  for(const x of ['SalesTrendChart data={[]}','CashflowChart data={[]}',
+    'RecentSalesTable sales={[]}','DuesList dues={[]}'])
+    assert.ok(patched.dashboard.includes(x),'Unsupported source panel must not use sample records: '+x);
+  assert.throws(()=>patchLiveDashboardSource({...original,dashboard:'unexpected'}),/Dashboard upstream contract changed/);
+  const hook=read('overlay/src/integration/useLiveDashboardData.ts');
+  assert.ok(hook.includes('getLiveReportSummary('));
+  assert.ok(hook.includes('canUseModule('));
+  assert.ok(hook.includes("metric.status==='ready'"));
+  assert.ok(!hook.includes('from \x27../data/dashboard\x27'));
+});

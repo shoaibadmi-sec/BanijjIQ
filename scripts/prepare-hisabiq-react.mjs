@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchSourceCartForLive, patchJoinedUnitSymbolsForLive } from './preview/patch-source-cart-live.mjs';
+import { patchLiveDashboardSource } from './preview/patch-live-dashboard.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 
 const root = resolve(process.cwd());
@@ -39,6 +40,21 @@ const cartPath=join(web,'src/components/pos/CartTable.tsx');
 writeFileSync(cartPath,patchSourceCartForLive(readFileSync(cartPath,'utf8')));
 const joinedUnitsPath=join(web,'src/components/transactions/MultiUnitQuantityInput.tsx');
 writeFileSync(joinedUnitsPath,patchJoinedUnitSymbolsForLive(readFileSync(joinedUnitsPath,'utf8')));
+
+const dashboardFiles={
+  dashboard:'src/pages/Dashboard.tsx',
+  metric:'src/components/dashboard/MetricCard.tsx',
+  trend:'src/components/dashboard/SalesTrendChart.tsx',
+  cashflow:'src/components/dashboard/CashflowChart.tsx',
+  sales:'src/components/dashboard/RecentSalesTable.tsx',
+  dues:'src/components/dashboard/DuesList.tsx'
+};
+const patchedDashboard=patchLiveDashboardSource(Object.fromEntries(
+  Object.entries(dashboardFiles).map(([key,path])=>[key,readFileSync(join(web,path),'utf8')])
+));
+for(const [key,path] of Object.entries(dashboardFiles))
+  writeFileSync(join(web,path),patchedDashboard[key]);
+
 
 // Phase 5: simplify generated Reports navigation without touching the pinned React source.
 const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
