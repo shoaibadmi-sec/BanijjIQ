@@ -675,6 +675,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (items.length === 0) return error('Select at least one product to return.');
   const refundMethod = cleanText(input.refundMethod || 'Supplier Credit');
   if (refundMethod !== 'Cash' && refundMethod !== 'Supplier Credit') return error('Choose a refund method.');
+  if (refundMethod === 'Cash')
+    return error('Cash purchase returns require an audited money receipt. Use Supplier Credit until cash-book posting is implemented.',409);
   const reason = cleanText(input.reason);
   if (!reason) return error('Enter a return reason.');
   const returnDate = cleanText(input.date) || new Date().toISOString().slice(0, 10);
