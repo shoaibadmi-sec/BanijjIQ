@@ -126,6 +126,18 @@ try{
     assert.deepEqual(review.flags,[]);
     assert.equal((await request('POST','/api/pos/store-credit/reconciliation',{}, {token})).status,404);
   });
+  await check('real local D1 lists read-only historical credit cases with pagination',async()=>{
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='table' AND name='store_credit_reconciliation_cases'").length,1);
+    assert.equal((await request('GET','/api/pos/store-credit/reconciliation/cases')).status,401);
+    const page=await request('GET','/api/pos/store-credit/reconciliation/cases?limit=2&offset=0',undefined,{token});
+    assert.equal(page.ok,true,JSON.stringify(page));
+    assert.equal(page.readOnly,true);
+    assert.equal(page.total,0);
+    assert.deepEqual(page.cases,[]);
+    assert.equal((await request('GET','/api/pos/store-credit/reconciliation/cases?limit=0',undefined,{token})).status,400);
+    assert.equal((await request('GET','/api/pos/store-credit/reconciliation/cases/invalid',undefined,{token})).status,404);
+    assert.equal((await request('POST','/api/pos/store-credit/reconciliation/cases',{}, {token})).status,404);
+  });
   await check('real Worker creates product and opening FIFO inventory',async()=>{
     const added=await request('POST','/api/products',product,{token});
     assert.equal(added.ok,true,JSON.stringify(added));
