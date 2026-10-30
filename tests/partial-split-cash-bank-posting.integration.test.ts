@@ -81,3 +81,62 @@ test('G2-N failed final D1 audit rolls back original-source payments and FIFO at
     assert.equal(f.n('cash_book'),1);assert.equal(f.n('bank_book'),1);
   }finally{f.db.close();}
 });
+
+
+test('G2-O refuses idempotent replay when a previously posted Cash or Bank journal was changed',async()=>{
+  for(const sql of [
+    "UPDATE cash_book SET debit=3 WHERE reference='SRT-IDEMP-ONE'",
+    "DELETE FROM cash_book WHERE reference='SRT-IDEMP-ONE'",
+    "INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES ('EXTRA-CB','2026-10-30','Sales Return','SRT-IDEMP-ONE','Forged',4,0,'Cash',0)",
+    "UPDATE bank_book SET debit=5 WHERE reference='SRT-IDEMP-ONE'",
+    "DELETE FROM bank_book WHERE reference='SRT-IDEMP-ONE'",
+    "UPDATE bank_book SET is_deleted=1 WHERE reference='SRT-IDEMP-ONE'"
+  ]){
+    const f=fixture();
+    try{
+      await f.refund('IDEMP-ONE');
+      f.q.exec(sql);
+      await assert.rejects(f.refund('IDEMP-ONE'),/replay|journal|conflict|source|reconcil/i,
+        'A successful prior audit cannot excuse later altered refund books: '+sql);
+      assert.equal(f.n('sales_returns'),1,'tampered replay must not create new refund');
+    }finally{f.db.close();}
+  }
+});
+test('G2-O replay fails closed if immutable lot proof or stock movement has missing evidence',async()=>{
+  for(const sql of [
+    "DELETE FROM stock_movements WHERE note='SRT-IDEMP-ONE'",
+    "UPDATE stock_movements SET quantity_in=2 WHERE note='SRT-IDEMP-ONE'",
+    "UPDATE stock_movements SET quantity_out=1 WHERE note='SRT-IDEMP-ONE'"
+  ]){
+    const f=fixture();
+    try{
+      await f.refund('IDEMP-ONE');f.q.exec(sql);
+      await assert.rejects(f.refund('IDEMP-ONE'),/replay|stock|FIFO|journal|reconcil|conflict/i,sql);
+      assert.equal(f.n('sales_returns'),1);
+    }finally{f.db.close();}
+  }
+});
+test('G2-O same request races settle exactly once, including Cash, Bank, FIFO and audit',async()=>{
+  const f=fixture();
+  try{
+    const outcome=await Promise.all([f.refund('RACE-SAME'),f.refund('RACE-SAME')]);
+    assert.deepEqual(outcome.map(r=>r.alreadyPosted).sort(),[false,true]);
+    assert.equal(f.n('sales_returns'),1);
+    assert.equal(f.val("SELECT COUNT(*) n FROM cash_book WHERE reference='SRT-RACE-SAME'"),1);
+    assert.equal(f.val("SELECT COUNT(*) n FROM bank_book WHERE reference='SRT-RACE-SAME'"),1);
+    assert.equal(f.val("SELECT COUNT(*) n FROM audit_logs WHERE action='POST_PARTIAL_SPLIT_RETURN' AND entity_id='SRT-RACE-SAME'"),1);
+    assert.equal(f.val("SELECT current_stock n FROM products WHERE product_id='CB-P'"),6);
+  }finally{f.db.close();}
+});
+test('G2-O competing three-unit returns cannot together consume six of five sold units',async()=>{
+  const f=fixture();
+  try{
+    const attempts=await Promise.allSettled([f.refund('RACE-A',3),f.refund('RACE-B',3)]);
+    assert.equal(attempts.filter(r=>r.status==='fulfilled').length,1);
+    assert.equal(attempts.filter(r=>r.status==='rejected').length,1);
+    assert.equal(f.n('sales_returns'),1);
+    assert.equal(f.val("SELECT current_stock n FROM products WHERE product_id='CB-P'"),8);
+    assert.equal(f.val("SELECT remaining_quantity n FROM stock_lots WHERE lot_id='CB-L'"),8);
+    assert.equal(f.val("SELECT current_balance n FROM bank_accounts WHERE bank_account_id='CB-B'"),82);
+  }finally{f.db.close();}
+});
