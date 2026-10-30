@@ -9,6 +9,9 @@ export type PurchaseLineInput = {
   purchasePrice?: number;
   sellingPrice?: number;
   tracking?: LotTrackingInput;
+  unitQuantities?: Record<string,number>;
+  unitProfileRevision?: number;
+  priceUnit?: string;
 };
 
 export type PurchaseInput = {
@@ -37,5 +40,6 @@ export type PurchaseReturnInput = {
   refundMethod?: 'Cash' | 'Supplier Credit';
   reason?: string;
   notes?: string;
-  items?: Array<{ productId?: string; qty?: number; quantity?: number; unitPrice?: number; returnPrice?: number; name?: string; serialNumbers?: string[] }>;
+  clientRequestId?: string;
+  items?: Array<{ productId?: string; qty?: number; quantity?: number; unitPrice?: number; returnPrice?: number; name?: string; serialNumbers?: string[]; unitQuantities?: Record<string,number> }>;
 };

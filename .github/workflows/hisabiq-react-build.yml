@@ -15,6 +15,7 @@ on:
       - 'server/modules/reporting/**'
       - 'server/modules/products/**'
       - 'server/modules/sales/**'
+      - 'server/modules/purchases/**'
       - 'migrations/**'
       - 'tests/**'
       - 'scripts/prepare-hisabiq-react.mjs'
@@ -59,6 +60,7 @@ jobs:
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
+          node --test react-integration/tests/phase4-purchase-route.test.mjs
       - name: Check hosted-preview isolation (dry run, no Cloudflare credentials)
         run: |
           node scripts/preview/build-config.mjs --self-test
@@ -74,8 +76,13 @@ jobs:
           node --import tsx --test tests/reports-stock-dues-route.integration.test.ts
           node --import tsx --test tests/reports-cash-expenses.integration.test.ts
           node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
-          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts tests/pos-bank-reversal.integration.test.ts tests/pos-due-reversal.integration.test.ts
+          node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts tests/pos-bank-reversal.integration.test.ts tests/pos-due-reversal.integration.test.ts tests/phase4-purchase-supplier.integration.test.ts tests/phase4-mixed-purchase.integration.test.ts tests/phase4-mixed-return.integration.test.ts tests/phase4-supplier-settlements.integration.test.ts tests/phase4-plan-order.integration.test.ts tests/phase4-transaction-contracts.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
+      - name: Measure Phase 4F purchase/supplier function coverage with real isolated DB
+        run: |
+          set -o pipefail
+          mkdir -p d1-checks/output
+          node --import tsx --experimental-test-coverage --test-coverage-include='server/modules/purchases/**' --test tests/phase4-*.integration.test.ts | tee d1-checks/output/phase4-function-coverage.txt
       - name: Compile original HisabIQ React app with API integration overlays
         run: npm run react:build
       - name: Verify source submodule stays clean
