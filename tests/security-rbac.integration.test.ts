@@ -153,7 +153,8 @@ test('RBAC: delegated users.edit cannot reset another staff password', async () 
     assert.equal((await f.api('POST', '/api/auth/login', {
       phone: '01000002504', password: newPassword,
     })).status, 401, 'delegated actor must not install a new credential');
-    assert.equal((await f.api('GET', '/api/auth/me', undefined, loggedIn.token)).status, 200,
+    const session = await f.api('GET', '/api/auth/me', undefined, loggedIn.token);
+    assert.equal(session.user?.userId, target.id,
       'a rejected reset must not revoke the target session');
   } finally { f.db.close(); }
 });
