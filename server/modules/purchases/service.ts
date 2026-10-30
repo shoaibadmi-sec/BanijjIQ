@@ -823,6 +823,19 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
       .bind(returnId, purchaseId, productId, String(av.productName), quantity, price, lineTotal));
   }
   totalReturnAmount = Math.round(totalReturnAmount * 10000) / 10000;
+  if(refundMethod==='Supplier Credit'){
+    // A return credit is an offset against existing payable, never unposted cash income
+    // or an implicit supplier receivable. The D1 trigger repeats this check in the batch.
+    const supplierId=String(purchase.supplier_id||'');
+    const balance=await db.prepare(`SELECT s.current_due AS due,
+       (SELECT COALESCE(SUM(sl.debit-sl.credit),0) FROM supplier_ledger sl
+        WHERE sl.supplier_id=s.supplier_id AND COALESCE(sl.is_deleted,0)=0) AS ledgerDue
+      FROM suppliers s WHERE s.supplier_id=? AND COALESCE(s.is_deleted,0)=0`)
+      .bind(supplierId).first<{due:number;ledgerDue:number}>();
+    if(!balance||Math.abs(Number(balance.due)-Number(balance.ledgerDue))>0.0001||
+       Number(balance.due)+0.0001<totalReturnAmount)
+      return error('Supplier credit exceeds the reconciled payable. Record a verified refund instead.',409);
+  }
   batch.push(db.prepare(`INSERT INTO purchase_returns (return_id, return_date, purchase_id, supplier_id, supplier_name, total_return_amount, refund_method, reason, notes, processed_by, is_backdated, backdated_reason, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`).bind(returnId, returnDate, purchaseId, String(purchase.supplier_id || ''), String(purchase.supplier_name || ''), totalReturnAmount, refundMethod, reason, cleanText(input.notes), user.userId, returnDate < today ? 1 : 0, cleanText(input.backdatedReason)));
   batch.push(db.prepare(`UPDATE purchases SET returned_amount = COALESCE(returned_amount,0) + ?, updated_at=datetime('now') WHERE purchase_id=?`).bind(totalReturnAmount, purchaseId));
