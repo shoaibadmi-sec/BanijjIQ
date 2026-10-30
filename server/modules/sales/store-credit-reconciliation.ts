@@ -86,7 +86,7 @@ export async function readStoreCreditReviewFlags(db: SherDatabase):
   const groups=await Promise.all(SELECTS.map(async(sql)=>{
     const [count,rows]=await Promise.all([
       db.prepare('SELECT COUNT(*) n FROM ('+sql+')').first<{n:number}>(),
-      db.prepare(sql+' ORDER BY customer_id,reference_id LIMIT 101').all<any>()
+      db.prepare('SELECT * FROM ('+sql+') AS review_sample ORDER BY review_sample.customer_id,review_sample.reference_id LIMIT 101').all<any>()
     ]);
     return {count:Number(count?.n||0),rows:rows.results||[]};
   }));
