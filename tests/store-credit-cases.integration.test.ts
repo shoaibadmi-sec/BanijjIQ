@@ -4,6 +4,7 @@ import {resolve} from 'node:path';
 import {SqliteDatabase} from '../server/db/sqlite.ts';
 import {runMigrations} from '../server/db/migrate.ts';
 import {handleApiRequest} from '../server/core/handler.ts';
+import {getStoreCreditCasesRoute,getStoreCreditCaseDetailRoute} from '../server/modules/sales/store-credit-cases.ts';
 
 test('G2-F admin-only legacy-credit cases expose source evidence without changing any balance',async()=>{
   const db=new SqliteDatabase(':memory:');
@@ -98,6 +99,23 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
     assert.equal(detail.evidence.cashBook[0].reference,'CASE-SALE');
     assert.equal(detail.evidence.customerDue,-5);
     assert.equal(detail.evidence.customerLedger.length,1);
+    // A logged-in non-admin must not enumerate historical financial anomalies
+    // or inspect a discovered case ID. Both handlers must reject before
+    // querying source documents or returning reconciliation evidence.
+    const operator={
+      userId:'case-operator',fullName:'Case Operator',phone:'01000009886',
+      role:'operator',status:'Active'
+    } as const;
+    const forbiddenList=await getStoreCreditCasesRoute(
+      db,operator,new URL('http://credit-cases.test/api/pos/store-credit/reconciliation/cases?limit=2')
+    );
+    const forbiddenDetail=await getStoreCreditCaseDetailRoute(db,operator,legacy.caseId);
+    assert.equal(forbiddenList.status,403);
+    assert.equal(forbiddenDetail.status,403);
+    const forbiddenListBody=await forbiddenList.json() as any;
+    const forbiddenDetailBody=await forbiddenDetail.json() as any;
+    assert.equal(forbiddenListBody.cases,undefined);
+    assert.equal(forbiddenDetailBody.evidence,undefined);
     // Neither the case index nor source-level evidence may be exposed to an
     // unauthenticated caller, even when a valid case ID has been discovered.
     const adminToken=token;
