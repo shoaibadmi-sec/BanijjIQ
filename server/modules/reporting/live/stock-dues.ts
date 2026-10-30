@@ -93,9 +93,11 @@ async function stock(db:SherDatabase,q:LiveReportQuery):Promise<LiveReportPage>{
     return (q.direction==='asc'?1:-1)*Math.sign(cmp)||a.sourceId.localeCompare(b.sourceId);
   });
   const status:ReportStatus=failures.length?'incomplete':'needs-review';
-  const reason=snapshotReason(q.to,now)+(failures.length?' '+failures.slice(0,5).join(' '):'');
+  const reason=snapshotReason(q.to,now)+(q.search?' Search-filtered rows do not certify whole-shop inventory value.':'')+
+    (failures.length?' '+failures.slice(0,5).join(' '):'');
   const metrics=[
-    makeMetric('inventoryValue',failures.length?null:sum,status,reason,sources,now),
+    makeMetric('inventoryValue',failures.length||q.search?null:sum,
+      failures.length?'incomplete':q.search?'unavailable':status,reason,sources,now),
     makeMetric('stockMismatchCount',null,'unavailable','Quantity mismatch count is diagnostic, not a monetary value.',[],now)
   ];
   return page(q,filtered.slice((q.page-1)*q.pageSize,q.page*q.pageSize),
