@@ -85,6 +85,8 @@ function startMocking(context,calls){
   let planned=null;
   let order=null;
   const supplierSettlements=[];
+  const adjustedStocks=new Map();
+  const adjustedLots=[];
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -301,7 +303,36 @@ function startMocking(context,calls){
         {movementId:'UI-HIST-2',productId:'PRD-000002',date:'2026-10-30 09:00:00',type:'STOCK_OUT_ADJUSTMENT',
           quantityIn:0,quantityOut:1,balanceAfter:3,note:'Damage adjustment',lotId:null}
       ]});
-    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
+    if(path==='/api/products/inventory-lots'&&request.method()==='GET')return respond({
+      ok:true,lots:[
+        ...adjustedLots,
+        {lotId:'UI-LOT-1',productId:'PRD-000001',sourceType:'PURCHASE',sourceRef:'PURCHASE-MOCK-1',
+          receivedAt:'2026-10-29 10:00:00',originalQuantity:25,remainingQuantity:25,unitCost:80,
+          batchNumber:null,expiryDate:null,serials:[]},
+        {lotId:'UI-LOT-2',productId:'PRD-000002',sourceType:'OPENING',sourceRef:'OPENING-UI-2',
+          receivedAt:'2026-10-28 10:00:00',originalQuantity:3,remainingQuantity:3,unitCost:35,
+          batchNumber:null,expiryDate:null,serials:[]}
+      ]});
+    const adjustMatch=path.match(/^\\/api\\/products\\/([^/]+)\\/adjust-stock$/);
+    if(adjustMatch&&request.method()==='POST'){
+      const product=productData.find(p=>p.productId===decodeURIComponent(adjustMatch[1]));
+      assert.ok(product,'only a source product can be adjusted');
+      const body=request.postDataJSON();
+      assert.equal(typeof body.delta,'number');assert.ok(body.note);
+      const current=adjustedStocks.get(product.productId)??product.currentStock;
+      assert.ok(body.delta>0&&Number.isFinite(body.delta));
+      adjustedStocks.set(product.productId,current+body.delta);
+      adjustedLots.unshift({
+        lotId:'UI-ADJ-1',productId:product.productId,sourceType:'OPENING_ADJUSTMENT',
+        sourceRef:'UI-ADJ-1',receivedAt:'2026-10-30 12:00:00',
+        originalQuantity:body.delta,remainingQuantity:body.delta,unitCost:product.purchasePrice,
+        batchNumber:null,expiryDate:null,serials:[]
+      });
+      calls.push({method:'ASSERT',path:'/api/products/adjust-stock',payload:body});
+      return respond({ok:true});
+    }
+    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData.map(p=>
+      adjustedStocks.has(p.productId)?{...p,currentStock:adjustedStocks.get(p.productId),sellableStock:adjustedStocks.get(p.productId)}:p),
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
@@ -732,6 +763,22 @@ try{
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),2);
           await screenshot(page,'original-products-stock-history-390');
           await audit(page,'original-products-stock-history-390');
+          const lotsTab=page.getByRole('tab',{name:/Stock lots/i});
+          assert.equal(await lotsTab.isEnabled(),true,'source HisabIQ Stock lots tab is enabled');
+          await lotsTab.click();
+          await page.getByText('PURCHASE-MOCK-1').waitFor();
+          assert.equal(await page.locator('[data-live-products] tbody tr').count(),2);
+          assert.ok(api.some(x=>x.method==='GET'&&x.path==='/api/products/inventory-lots'));
+          await screenshot(page,'original-products-stock-lots-390');
+          await audit(page,'original-products-stock-lots-390');
+          await page.getByRole('combobox',{name:'Filter inventory by product'}).click();
+          await page.getByRole('option',{name:'Copper Cable 2.5mm'}).click();
+          await page.getByRole('button',{name:'Adjust stock',exact:true}).click();
+          await page.getByRole('dialog').getByPlaceholder('0').fill('2');
+          await page.getByRole('button',{name:'Save adjustment'}).click();
+          await page.getByText('UI-ADJ-1').first().waitFor();
+          assert.ok(api.some(x=>x.method==='ASSERT'&&x.path==='/api/products/adjust-stock'&&x.payload.delta===2),
+            'original adjustment dialog must post a single real D1 adjustment');
           await page.getByRole('tab',{name:/Product list/i}).click();
           await page.getByText('Copper Cable 2.5mm').first().waitFor();
           await page.getByRole('button',{name:/Add product/i}).click();
