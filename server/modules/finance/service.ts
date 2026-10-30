@@ -433,14 +433,20 @@ export async function setFinancePersonStatusRoute(db:SherDatabase,id:string,stat
 export async function updateFinancePersonRoute(db:SherDatabase,id:string,input:FinancePersonInput):Promise<Response>{
   const name=cleanText(input.name); if(!name)return error('Person name is required.');
   const type=input.personType==='Lender'?'Lender':input.personType==='Owner'?'Owner':''; if(!type)return error('Choose Owner or Lender.');
-  const exists=await db.prepare(`SELECT person_id FROM finance_persons WHERE person_id=? LIMIT 1`).bind(id).first<any>();
+  const exists=await db.prepare(`SELECT person_id,person_type FROM finance_persons WHERE person_id=? LIMIT 1`).bind(id).first<{person_id:string;person_type:string}>();
   if(!exists)return error('Person not found.',404);
   const dup=await db.prepare(`SELECT 1 x FROM finance_persons WHERE lower(person_name)=lower(?) AND person_id<>? LIMIT 1`).bind(name,id).first();
   if(dup)return error('A person with this name already exists.');
-  await db.batch([
-    db.prepare(`UPDATE finance_persons SET person_name=?,person_type=?,phone=?,notes=? WHERE person_id=?`).bind(name,type,cleanText(input.phone),cleanText(input.notes),id),
-    db.prepare(`UPDATE finance_transactions SET person_name=? WHERE person_id=?`).bind(name,id)
-  ]);
+  // Past finance rows keep their original displayed name and immutable person ID.
+  // The DB trigger also closes the race between this preflight and the UPDATE.
+  if(exists.person_type!==type){
+    const historical=await db.prepare('SELECT 1 x FROM finance_transactions WHERE person_id=? LIMIT 1').bind(id).first();
+    if(historical)return error('Cannot change Owner/Lender classification after a finance transaction exists.',409);
+  }
+  try{
+    await db.prepare(`UPDATE finance_persons SET person_name=?,person_type=?,phone=?,notes=? WHERE person_id=?`)
+      .bind(name,type,cleanText(input.phone),cleanText(input.notes),id).run();
+  }catch{return error('Finance person classification changed or name is already taken.',409);}
   return json({ok:true,id,name,personType:type,notes:cleanText(input.notes)});
 }
 
