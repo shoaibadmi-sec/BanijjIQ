@@ -104,7 +104,7 @@ function permissionRouteInfo(path:string,method:string):{moduleKey:string;action
   ];
   const found=rules.find(([re])=>re.test(path)); if(!found)return null;
   let action:'view'|'add'|'edit'|'delete'=method==='GET'?'view':method==='PUT'?'edit':method==='DELETE'?'delete':'add';
-  if(/\/reset-password$/.test(path)||/\/status$/.test(path)||/\/adjust-stock$/.test(path)||/\/cancel$/.test(path)||/\/reverse$/.test(path)||/\/purchases\/planner\/plans\/[^/]+\/(approve|reject)$/.test(path))action='edit';
+  if(/\/reset-password$/.test(path)||/\/status$/.test(path)||/\/adjust-stock$/.test(path)||/\/stock-counts\/[^/]+\/approve$/.test(path)||/\/cancel$/.test(path)||/\/reverse$/.test(path)||/\/purchases\/planner\/plans\/[^/]+\/(approve|reject)$/.test(path))action='edit';
   if(/^\/api\/sales-management\/[^/]+\/reverse$/.test(path)&&method==='POST')action='delete';
   if(/\/payments$/.test(path)&&method==='POST')action='edit';
   if(/^\/api\/vendors\/[^/]+\/(pay|return-products|give-products|receive-payment|receive-products)$/.test(path)&&method==='POST')action='edit';
