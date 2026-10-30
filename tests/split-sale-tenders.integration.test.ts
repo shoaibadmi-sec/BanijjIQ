@@ -256,6 +256,27 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       assert.deepEqual(retry.invoice.paymentAllocations.map((t:any)=>t.amountCents),tenders.map(t=>t.amountCents));
       assert.equal((await api('POST','/api/pos/sales',{...sale,tenders:tenders.map((x,i)=>i?x:{...x,amountCents:x.amountCents-1})})).status,409);
       assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,tenders.length);
+      const previewResponse=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+      assert.equal(previewResponse.status,200,JSON.stringify(previewResponse));
+      assert.equal(previewResponse.preview.eligible,true,JSON.stringify(previewResponse));
+      assert.equal(previewResponse.preview.invoiceId,saleId);
+      assert.equal(previewResponse.preview.totalCents,5000);
+      assert.equal(previewResponse.preview.creditReissueCents,
+        profile==='cash-credit'?3000:2000);
+      assert.deepEqual(previewResponse.preview.allocations.map((a:any)=>
+        [a.method,a.amountCents,a.bankAccountId||'']),
+        tenders.map(t=>[t.method,t.amountCents,t.bankAccountId||'']));
+      assert.equal(previewResponse.preview.refundCents,
+        profile==='cash-credit'?2000:3000);
+      // An inactive original bank account must block refund rather than
+      // redirecting funds to a different source or rewriting history.
+      if(bank){
+        db.native.prepare("UPDATE bank_accounts SET status='Inactive' WHERE bank_account_id=?").run(bank.id);
+        const blocked=await api('GET','/api/sales-management/'+saleId+'/split-reversal');
+        assert.equal(blocked.preview.eligible,false,JSON.stringify(blocked));
+        db.native.prepare("UPDATE bank_accounts SET status='Active' WHERE bank_account_id=?").run(bank.id);
+      }
+      assert.equal(row('SELECT COUNT(*) n FROM sales_returns WHERE invoice_id=?',saleId).n,0);
       // Until G2-H can reissue each source, never refund credit-funded splits
       // in Cash or delete/edit an immutable multi-source invoice.
       assert.equal((await api('POST','/api/sales-returns',{
