@@ -643,6 +643,8 @@ try{
     await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
     // Select the saved customer through the same name + blur workflow as a cashier.
     // Do not race a second phone fill against the blur handler that populates both fields.
+    // Wait for mocked POS bootstrap customers, not only the visible POS shell.
+    await page.locator('datalist#live-pos-customer-names option[value="Credit UI Buyer"]').waitFor({state:'attached',timeout:12000});
     const customerNameInput=page.getByRole('combobox',{name:'Customer name'});
     await customerNameInput.fill('Credit UI Buyer');
     await customerNameInput.press('Tab');
@@ -674,6 +676,7 @@ try{
         await page.goto(base+'/#/app/pos');
         await page.locator('[data-live-pos]').waitFor();
         await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+        await page.locator('datalist#live-pos-customer-names option[value="Credit UI Buyer"]').waitFor({state:'attached',timeout:12000});
         const name=page.getByRole('combobox',{name:'Customer name'});
         await name.fill('Credit UI Buyer');await name.press('Tab');
         // Customer auto-selection runs on blur; wait for its real account state
@@ -752,6 +755,7 @@ try{
       await page.goto(base+'/#/app/pos');
       await page.locator('[data-live-pos]').waitFor();
       await page.getByRole('button',{name:/Copper Cable 2.5mm/}).first().click();
+      await page.locator('datalist#live-pos-customer-names option[value="Credit UI Buyer"]').waitFor({state:'attached',timeout:12000});
       const name=page.getByRole('combobox',{name:'Customer name'});
       await name.fill('Credit UI Buyer');await name.press('Tab');
       await page.locator('[data-pos-previous-balance-inline]').waitFor({timeout:12000});
