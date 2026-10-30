@@ -40,6 +40,21 @@ export async function getSplitSaleReversalPreviewRoute(db:SherDatabase,id:string
   if(!totalCents||totalCents<=0||cents(sale.paid_amount)!==totalCents||
     cents(sale.due_amount)!==0||sale.payment_type!=='Cash'||sale.bank_account_id)
     return blocked('Split sale total and fully paid status cannot be reconciled.');
+  // Mirror the POST's supported source contract before the cashier confirms.
+  // The POST still rechecks these facts independently before posting money.
+  const originalLines=(await db.prepare(
+    'SELECT product_id,quantity,unit_price,line_total FROM sale_items WHERE invoice_id=?'
+  ).bind(id).all<any>()).results||[];
+  if(cents(sale.discount)!==0||cents(sale.subtotal)!==totalCents||
+    !originalLines.length||
+    new Set(originalLines.map(i=>String(i.product_id))).size!==originalLines.length||
+    originalLines.some(i=>!Number.isSafeInteger(Number(i.quantity))||Number(i.quantity)<=0||
+      cents(i.line_total)!==cents(Number(i.quantity)*Number(i.unit_price)))||
+    originalLines.reduce((sum,i)=>sum+(cents(i.line_total)||0),0)!==totalCents)
+    return blocked('Original invoice discount, quantities or line prices do not reconcile.');
+  if(await db.prepare('SELECT 1 x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1')
+      .bind(id).first())
+    return blocked('Mixed-unit split refunds need original unit-denomination restoration.');
   if(await db.prepare('SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1').bind(id).first()||
      await db.prepare('SELECT 1 x FROM sale_reversal_logs WHERE invoice_id=? LIMIT 1').bind(id).first())
     return blocked('This invoice already has a return or reversal; do not refund again.');
