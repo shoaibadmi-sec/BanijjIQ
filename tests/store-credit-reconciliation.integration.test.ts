@@ -108,5 +108,23 @@ test('G2-E read-only reconciliation highlights legacy credits, negative A/R and 
     assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,1);
     assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,1);
     assert.equal(get('SELECT COUNT(*) n FROM bank_book').n,0);
+    // A Store Credit checkout must never manufacture a cash receipt. A
+    // historical erroneous receipt is evidence for manual reconciliation,
+    // not permission to adjust liability or customer receivables automatically.
+    db.native.prepare(
+      "INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) "+
+      "VALUES ('BROKEN-CREDIT-CASH','2026-10-30','Sale','BROKEN-CREDIT-SALE',"+
+      "'Incorrect cash receipt for Store Credit',0,10,'Cash',0)"
+    ).run();
+    const falseCash=await api('GET','/api/pos/store-credit/reconciliation');
+    assert.equal(falseCash.readOnly,true);
+    assert.equal(falseCash.reviewRequired,true);
+    assert.equal(falseCash.flagsCount,5,JSON.stringify(falseCash.flags));
+    const receiptFlag=falseCash.flags.find((x:any)=>x.flagCode==='CREDIT_SALE_HAS_CASH_RECEIPT');
+    assert.equal(receiptFlag?.referenceId,'BROKEN-CREDIT-SALE');
+    assert.equal(receiptFlag?.recordedCents,1000);
+    assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,1);
+    assert.equal(get('SELECT current_due FROM customers WHERE customer_id=?','REVIEW-CUS').current_due,-5);
+    assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,2);
   }finally{db.close();}
 });
