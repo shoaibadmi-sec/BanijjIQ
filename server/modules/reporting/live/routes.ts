@@ -22,7 +22,7 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
   const count=await db.prepare(`SELECT COUNT(*) AS count FROM sales WHERE ${where}`).bind(...bind).first<{count:number}>();
   const orderColumn={date:'sale_date',amount:'grand_total',name:'customer_name',reference:'invoice_id'}[query.sort];
   const offset=(query.page-1)*query.pageSize;
-  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_name,grand_total,paid_amount,due_amount
+  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_id,customer_phone,customer_name,grand_total,paid_amount,due_amount
     FROM sales WHERE ${where} ORDER BY ${orderColumn} ${query.direction.toUpperCase()},invoice_id DESC LIMIT ? OFFSET ?`)
     .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
   const rows:LiveReportRow[]=(result.results||[]).map(row=>{
