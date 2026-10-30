@@ -90,3 +90,18 @@ test('product gross profit and Profit & Loss have distinct unavailable contracts
  assert.match(api,/\|'profit-loss'/);
  assert.match(reports,/coverage\?\.status==='unavailable'/);
 });
+
+test('5H1: production Reports route uses the pinned HisabIQ Reports component with authenticated backend data',()=>{
+ const prepare=read('scripts/prepare-hisabiq-react.mjs');
+ assert.doesNotMatch(prepare, /<Route path="reports" element=\{<LiveReports \/>\}/,
+  'Live Reports must not replace the HisabIQ UI report screen');
+ assert.match(prepare, /<Route path="reports" element=\{<Reports \/>\}/);
+ const patch=read('scripts/preview/patch-reports-two-tabs.mjs');
+ assert.match(patch, /useLiveReportResult/,
+  'original Reports must use an authenticated backend result adapter, not preview-store report totals');
+ assert.doesNotMatch(patch, /useReportData\(refresh\)/,
+  'reports must not read the original preview-store data hook');
+ const adapter=read('react-integration/overlay/src/integration/liveReportAdapter.ts');
+ assert.match(adapter, /getLiveReportRows\(/);
+ assert.doesNotMatch(adapter, /erpDemoStore|salesPreviewStore|useReportData\(/);
+});
