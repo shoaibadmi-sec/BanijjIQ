@@ -111,7 +111,7 @@ test('G2-G tender journal migration is source-unique and append-only',()=>{
   }finally{db.close();}
 });
 
-test('G2-G rejects unimplemented split checkout before invoice, receipt or FIFO posting',async()=>{
+test('G2-G refuses unlinked Store Credit in a split sale without changing any books',async()=>{
   const db=new SqliteDatabase(':memory:');
   try{
     runMigrations(db.native,resolve('migrations'));
@@ -149,7 +149,7 @@ test('G2-G rejects unimplemented split checkout before invoice, receipt or FIFO 
       items:[{productId:item.productId,qty:1,unitPrice:10}]
     });
     assert.equal(response.status,409,JSON.stringify(response));
-    assert.match(String(response.error),/split|tender|allocation/i);
+    assert.match(String(response.error),/Store Credit|customer/i);
     assert.equal(row('SELECT COUNT(*) n FROM sales').n,initial.invoices);
     assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,initial.cash);
     assert.equal(row('SELECT COUNT(*) n FROM bank_book').n,initial.bank);
