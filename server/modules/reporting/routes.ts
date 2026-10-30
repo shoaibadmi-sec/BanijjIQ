@@ -1,3 +1,4 @@
+import { handleLiveReportsRoute } from './live/routes.js';
 import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import {
@@ -9,6 +10,8 @@ import {
 export async function handleReportingRoute(db: SherDatabase, request: Request, path: string, auth: AuthUser): Promise<Response | null> {
   const url = new URL(request.url);
   if (request.method !== 'GET') return null;
+  const live = await handleLiveReportsRoute(db, request, path);
+  if (live) return live;
 
   if (path === '/api/dashboard') return getDashboardRoute(db, auth);
   if (path === '/api/reports/bootstrap') return getReportsBootstrapRoute(db);
