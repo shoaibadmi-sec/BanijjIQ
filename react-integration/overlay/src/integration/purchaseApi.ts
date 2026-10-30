@@ -59,6 +59,23 @@ export async function getRealPurchases():Promise<PurchaseRecord[]>{
   if(!Array.isArray(result.purchases))throw new BackendRequestError('Invalid purchase history.',502);
   return result.purchases;
 }
+export interface PurchaseDetailRecord extends PurchaseRecord {
+ status:string;discount:number;returnedAmount:number;paymentMethod:string;
+ bankAccountId:string;bankAccountName:string;
+}
+export async function getRealPurchaseDetail(id:string):Promise<PurchaseDetailRecord>{
+ const response=await request<{ok:true;purchase:PurchaseDetailRecord}>(
+  '/api/purchases/'+encodeURIComponent(id));
+ const purchase=response.purchase;
+ if(!purchase||purchase.purchaseId!==id||!Array.isArray(purchase.items)||
+  !purchase.supplierName||!purchase.purchaseDate||
+  !Number.isFinite(purchase.grandTotal)||!Number.isFinite(purchase.paidAmount)||
+  purchase.items.some(i=>!i.productName||!Number.isFinite(i.quantity)||
+   !Number.isFinite(i.lineTotal)||!Number.isFinite(i.unitPrice)))
+  throw new BackendRequestError('Purchase invoice source is incomplete. Refresh before viewing.',502);
+ return purchase;
+}
+
 function exact4(n:number,name:string,positive:boolean){
   if(!Number.isFinite(n)||n<0||(positive&&n===0)||n>1e9||!Number.isSafeInteger(Math.round(n*10000))||
      Math.abs(n*10000-Math.round(n*10000))>0.000001)
