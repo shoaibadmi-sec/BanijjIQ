@@ -10,7 +10,7 @@ export const emptyLiveReportData:ReportData={
  expenses:[],stock:[],lots:[],movements:[],cash:[],finance:[],warranty:[],quality:[]
 };
 const reportApi:Partial<Record<ReportKey,LiveReportBackendKey>>={
- 'sales-register':'sales',purchases:'purchase',stock:'stock',
+ 'sales-register':'sales','customer-sales':'sales',purchases:'purchase',stock:'stock',
  receivables:'receivables',payables:'payables','cash-book':'cash',
  expenses:'expenses','finance-movements':'finance',
  'product-profit':'product-profit','profit-loss':'profit-loss'
@@ -35,6 +35,53 @@ const toRow=(record:LiveReportRecord,report:LiveReportBackendKey):ReportRow=>{
   note:record.reason
  };
 };
+// Customer Performance uses the SAME authenticated invoice source as the Sales
+// Register. Never join buyers by their name: a stable customer ID or saved phone
+// is required. Cash sales lacking both remain separate invoice-level groups.
+export function groupCustomerSales(records:LiveReportRecord[]):ReportRow[]{
+ type Acc={row:ReportRow;amount:number|null;paid:number|null;due:number|null;count:number};
+ const groups=new Map<string,Acc>();
+ const add=(sum:number|null,value:number|null|undefined):number|null=>
+  sum===null||typeof value!=='number'||!Number.isSafeInteger(value)?null:
+  Number.isSafeInteger(sum+value)?sum+value:null;
+ for(const record of records){
+  const customerId=record.customerId?.trim();
+  const customerPhone=record.customerPhone?.replace(/\\s+/g,'').trim();
+  const identity=customerId?'id:'+customerId:customerPhone?'phone:'+customerPhone:'invoice:'+record.sourceId;
+  const existing=groups.get(identity);
+  const invoice=toRow(record,'sales');
+  if(!existing){
+   const row:ReportRow={
+    id:'customer-sales:'+identity,label:record.label||record.sourceId,
+    partyId:customerId||undefined,party:record.label||undefined,
+    date:record.date,status:'needs-review',
+    values:{amount:null,paid:null,due:null,count:0},
+    route:invoice.route,children:[],note:'Recorded invoices before returns; each invoice remains available as source evidence.'
+   };
+   groups.set(identity,{row,amount:0,paid:0,due:0,count:0});
+  }
+  const group=groups.get(identity)!;
+  if(record.date>=group.row.date){
+   group.row.date=record.date;
+   if(record.label)group.row.label=record.label;
+  }
+  group.count++;
+  group.amount=add(group.amount,record.amountMinor);
+  group.paid=add(group.paid,record.paidMinor);
+  group.due=add(group.due,record.dueMinor);
+  group.row.children!.push(invoice);
+ }
+ return Array.from(groups.values(),g=>{
+  g.row.values={
+   amount:g.amount===null?null:g.amount/100,
+   paid:g.paid===null?null:g.paid/100,
+   due:g.due===null?null:g.due/100,
+   count:g.count
+  };
+  return g.row;
+ });
+}
+
 type Status=LiveReportStatus|'loading';
 type State={key:string;result:ReportResult;status:Status;reason:string;loading:boolean};
 export function useLiveReportResult(key:ReportKey,filters:ReportFilters,refresh:number){
@@ -70,8 +117,10 @@ export function useLiveReportResult(key:ReportKey,filters:ReportFilters,refresh:
       p.coverage.status!==first.coverage.status)){
     throw new Error('Report source changed during pagination; totals withheld.');
    }
-   let rows=all.flatMap(p=>p.rows).map(record=>toRow(record,api));
-   if(rows.length!==first.totalRows)throw new Error('Incomplete report pages; totals withheld.');
+   const sourceRecords=all.flatMap(p=>p.rows);
+   if(sourceRecords.length!==first.totalRows)throw new Error('Incomplete report pages; totals withheld.');
+   let rows=key==='customer-sales'?groupCustomerSales(sourceRecords):
+    sourceRecords.map(record=>toRow(record,api));
    const field=(row:ReportRow)=>filters.sort==='amount'?Number(row.values.amount??0):
     filters.sort==='date'?row.date:filters.sort==='label'?row.label:row.id;
    rows=rows.sort((x,y)=>{const l=field(x),r=field(y);
