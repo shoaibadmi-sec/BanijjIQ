@@ -253,6 +253,7 @@ for(const profile of ['cash-credit','bank-mobile-credit'] as const){
       const retry=await api('POST','/api/pos/sales',sale);
       assert.equal(retry.ok,true,JSON.stringify(retry));
       assert.equal(retry.invoice.invoiceId,saleId);
+      assert.deepEqual(retry.invoice.paymentAllocations.map((t:any)=>t.amountCents),tenders.map(t=>t.amountCents));
       assert.equal((await api('POST','/api/pos/sales',{...sale,tenders:tenders.map((x,i)=>i?x:{...x,amountCents:x.amountCents-1})})).status,409);
       assert.equal(row('SELECT COUNT(*) n FROM sale_tender_allocations').n,tenders.length);
       assert.equal(row('SELECT current_stock n FROM products WHERE product_id=?',product.productId).n,15);
