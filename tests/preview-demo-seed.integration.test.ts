@@ -18,7 +18,7 @@ test('source-derived fixture preserves coherent quantity and due calculations',(
  assert.ok(plan.excluded.some(s=>s.includes('tracked serial')));
 });
 
-test('preview fixture posts real FIFO, supplier and customer dues, cash and expense, then refuses nonempty DB',async()=>{
+test('preview fixture preserves existing stock while posting real FIFO, dues, cash and expense; refuses a second seed',async()=>{
  const db=new SqliteDatabase(':memory:');
  try{
   runMigrations(db.native,resolve('migrations'));
@@ -34,19 +34,21 @@ test('preview fixture posts real FIFO, supplier and customer dues, cash and expe
    fullName:'Fixture Admin',phone:'01000009123',password:'test-only-password-not-a-secret'
   });
   assert.equal(admin.status,200,JSON.stringify(admin));token=admin.token;
+  const preexisting=await api('POST','/api/products',{productName:'Existing Store Stock',category:'Hardware',unit:'Pcs',barcode:'EXISTING-ONLY',purchasePrice:5,sellingPrice:8,currentStock:7,minimumStock:1});
+  assert.equal(preexisting.status,200,JSON.stringify(preexisting));
   const plan=buildDemoSeedPlan();
   const imported=await executeDemoSeed(api,plan);
   assert.equal(imported.products,13);
   assert.equal(imported.sales,2);
   assert.equal(imported.purchases,1);
   const one=(query:string,...args:any[])=>db.native.prepare(query).get(...args) as any;
-  assert.equal(one('SELECT COUNT(*) n FROM products').n,13);
+  assert.equal(one('SELECT COUNT(*) n FROM products').n,14);
   assert.equal(one('SELECT COUNT(*) n FROM sales').n,2);
   assert.equal(one('SELECT COUNT(*) n FROM purchases').n,1);
-  assert.equal(one('SELECT current_stock n FROM products WHERE product_name=?','MS Angle 1.5" × 1.5"').n,1240);
-  assert.equal(one('SELECT current_stock n FROM products WHERE product_name=?','Teflon Tape').n,30);
-  assert.equal(one('SELECT current_due n FROM customers WHERE customer_name=?','Rahman Hardware').n,25550);
-  assert.equal(one('SELECT current_due n FROM suppliers WHERE supplier_name=?','Bismillah Steel House').n,38400);
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_name=?','[DEMO] MS Angle 1.5" × 1.5"').n,1240);
+  assert.equal(one('SELECT current_stock n FROM products WHERE product_name=?','[DEMO] Teflon Tape').n,30);
+  assert.equal(one('SELECT current_due n FROM customers WHERE customer_name=?','[DEMO] Rahman Hardware').n,25550);
+  assert.equal(one('SELECT current_due n FROM suppliers WHERE supplier_name=?','[DEMO] Bismillah Steel House').n,38400);
   assert.equal(one("SELECT COUNT(*) n FROM cash_book WHERE type='Sale'").n,1);
   assert.equal(one('SELECT COUNT(*) n FROM expenses WHERE is_deleted=0').n,1);
   await assert.rejects(()=>executeDemoSeed(api,plan),/non-empty|already contains/i);
