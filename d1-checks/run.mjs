@@ -86,6 +86,10 @@ try{
     assert.match(out,/0028_pos_sale_idempotency|pos_sale_idempotency/);
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='pos_sale_requests'").length);
     assert.ok(query("SELECT name FROM sqlite_master WHERE type='table' AND name='sales'").length);
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='table' AND name='split_partial_refund_allocations'").length,1,
+      'isolated Cloudflare D1 must apply cumulative original-source refund ledger migration');
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_source_capacity'").length,1,
+      'D1 must enforce source caps with a database trigger, not a UI-only check');
   });
   worker=spawn(process.execPath,[cliPath,'dev',
     '--config',config,'--local','--persist-to',state,
