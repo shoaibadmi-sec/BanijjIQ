@@ -4,7 +4,8 @@ import { useUiCopy } from '../i18n/useUiCopy';
 import { canUseModule, useBackendSession } from './BackendGate';
 import {
   getBankReconciliation, getFinanceBootstrap, getBankAccounts, getBankTransfers,
-  postBankTransfer, reverseBankTransfer, BackendRequestError,
+  postBankTransfer, reverseBankTransfer, getCashSessionSummary, closeCashSession,
+  startCashSession, BackendRequestError,
   type LiveBankAccount, type LiveBankTransfer, type BankReconciliation, type FinanceBootstrap
 } from './banijjApi';
 
@@ -146,6 +147,131 @@ function LiveBankTransferTools({add,edit,onChanged, text}:{
   </section>;
 }
 
+
+function LiveCashSessionPanel({canAdd,canEdit,text,onChanged}:{
+  canAdd:boolean;canEdit:boolean;text:(en:string,bn:string)=>string;onChanged:()=>void;
+}){
+  const [summary,setSummary]=useState<Awaited<ReturnType<typeof getCashSessionSummary>>['summary']>(null);
+  const [loading,setLoading]=useState(true);
+  const [opening,setOpening]=useState('0'),[counted,setCounted]=useState('');
+  const [notes,setNotes]=useState(''),[review,setReview]=useState(false);
+  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [reload,setReload]=useState(0);
+  const startRequestId=useRef(crypto.randomUUID()),closeRequestId=useRef(crypto.randomUUID());
+  useEffect(()=>{
+    let mounted=true;setLoading(true);
+    getCashSessionSummary().then(result=>{
+      if(mounted){setSummary(result.summary);setError('');}
+    }).catch(e=>{if(mounted)setError(e instanceof Error?e.message:'Cash session could not be loaded.');})
+      .finally(()=>{if(mounted)setLoading(false);});
+    return ()=>{mounted=false;};
+  },[reload]);
+  const countedCash=Number(counted);
+  const expectedCash=summary?.expectedCash??0;
+  const validCount=counted.trim()!==''&&Number.isFinite(countedCash)&&countedCash>=0&&
+    Math.abs(countedCash*10000-Math.round(countedCash*10000))<0.00001;
+  const variance=Math.round((countedCash-expectedCash)*10000)/10000;
+  const permitted=validCount&&(variance===0||(canEdit&&notes.trim().length>=8));
+  const refresh=()=>{setReload(v=>v+1);onChanged();};
+  async function beginSession(){
+    const amount=Number(opening);
+    if(!canAdd||busy||!Number.isFinite(amount)||amount<0)return;
+    setBusy(true);setError('');setNotice('');
+    try {
+      await startCashSession(amount,startRequestId.current);
+      startRequestId.current=crypto.randomUUID();
+      setNotice(text('Cash session started.','ক্যাশ সেশন শুরু হয়েছে।'));refresh();
+    }catch(e){setError(e instanceof Error?e.message:'Opening was not confirmed; retry the same request.');}
+    finally{setBusy(false);}
+  }
+  async function finishSession(){
+    if(!canAdd||busy||!summary||!permitted)return;
+    setBusy(true);setError('');setNotice('');
+    try{
+      const result=await closeCashSession(countedCash,notes,closeRequestId.current);
+      closeRequestId.current=crypto.randomUUID();setReview(false);
+      setCounted('');setNotes('');
+      setNotice(text('Cash session closed. Variance: ','ক্যাশ সেশন বন্ধ। পার্থক্য: ')+result.variance.toLocaleString('en-BD'));
+      refresh();
+    }catch(e){
+      const unknown=e instanceof BackendRequestError&&(e.status===null||e.status>=500);
+      setError(unknown?
+        text('Close status unknown. Retry the same request; it cannot close twice.',
+          'বন্ধ হয়েছে কি না অজানা। একই অনুরোধ পুনরায় দিন।'):
+        e instanceof Error?e.message:'Cash close was not posted.');
+      if(!unknown){setReview(false);closeRequestId.current=crypto.randomUUID();refresh();}
+    }finally{setBusy(false);}
+  }
+  return <section className="space-y-3 rounded-xl border border-border bg-card p-3" data-phase6-cash-session=""
+    aria-label={text('Cash session','ক্যাশ সেশন')}>
+    <div className="flex items-center justify-between gap-2">
+      <h2 className="text-sm font-semibold text-ink">{text('Cash session','ক্যাশ সেশন')}</h2>
+      <button type="button" onClick={()=>setReload(v=>v+1)} disabled={busy}
+        className="h-9 rounded-lg border border-border px-3 text-xs text-ink">{text('Refresh','হালনাগাদ')}</button>
+    </div>
+    {loading&&<p role="status" className="text-xs text-ink-500">{text('Reading cash book…','ক্যাশ খতিয়ান পড়া হচ্ছে…')}</p>}
+    {error&&<p role="alert" className="rounded-lg border border-border p-2 text-xs text-danger">{error}</p>}
+    {notice&&<p role="status" className="rounded-lg border border-border p-2 text-xs text-success">{notice}</p>}
+    {!loading&&summary&&<>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {([
+          [text('Opening float','শুরুর নগদ'),summary.openingCash],
+          [text('Cash in','নগদ জমা'),summary.cashIn],
+          [text('Cash out','নগদ খরচ'),summary.cashOut],
+          [text('Expected cash','প্রত্যাশিত নগদ'),expectedCash]
+        ] as Array<[string,number]>).map(([name,value])=><div key={name} className="min-w-0">
+          <dt className="text-xs text-ink-500">{name}</dt>
+          <dd className="mt-1 text-sm font-semibold text-ink">{value.toLocaleString('en-BD',{maximumFractionDigits:4})}</dd>
+        </div>)}
+      </dl>
+      <p className="text-xs text-ink-500">{text('Opening cash is not income. Differences are audit-only.',
+        'শুরুর নগদ আয় নয়। গরমিল শুধু নিরীক্ষার তথ্য।')}</p>
+      {canAdd&&<div className="space-y-2 border-t border-border pt-3">
+        <label className="block text-xs text-ink-600">{text('Cash counted in drawer','হাতে গোনা নগদ টাকা')}
+          <input type="number" min="0" step="0.0001" value={counted}
+            aria-label="Counted cash" onChange={e=>{setCounted(e.target.value);setReview(false);}}
+            className="mt-1 h-9 w-full max-w-[230px] rounded-lg border border-border bg-card px-3 text-sm"/>
+        </label>
+        {validCount&&<p className="text-xs text-ink-600">
+          {text('Difference','পার্থক্য')}: <strong className={variance===0?'text-success':'text-warning'}>
+            {variance.toLocaleString('en-BD',{maximumFractionDigits:4})}</strong></p>}
+        {validCount&&variance!==0&&<label className="block text-xs text-ink-600">
+          {text('Variance reason (required)','গরমিলের কারণ (আবশ্যক)')}
+          <input aria-label="Cash variance reason" value={notes} onChange={e=>{setNotes(e.target.value);setReview(false);}}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-sm"/>
+        </label>}
+        {validCount&&variance!==0&&!canEdit&&<p role="alert" className="text-xs text-warning">
+          {text('Manager permission required for a cash discrepancy.',
+            'নগদের গরমিল বন্ধ করতে ম্যানেজারের অনুমতি দরকার।')}</p>}
+        {review&&<p role="status" className="rounded-lg border border-border bg-ink-50 p-3 text-sm">
+          {text('Review closing count','শেষ নগদ যাচাই করুন')} · {text('Expected','প্রত্যাশিত')} {expectedCash.toLocaleString('en-BD')}
+          {' · '}{text('Counted','গোনা')} {countedCash.toLocaleString('en-BD')}
+          {' · '}{text('Variance','পার্থক্য')} {variance.toLocaleString('en-BD')}
+        </p>}
+        <button type="button" disabled={busy||!permitted}
+          onClick={()=>{if(review)void finishSession();else setReview(true);}}
+          className="h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50">
+          {review?text('Confirm close','বন্ধ নিশ্চিত করুন'):'Review close'}
+        </button>
+      </div>}
+    </>}
+    {!loading&&!summary&&<div className="space-y-2">
+      <p className="text-xs text-ink-500">{text('No open cash session.','এখন কোনো ক্যাশ সেশন খোলা নেই।')}</p>
+      {canAdd&&<>
+        <label className="block text-xs text-ink-600">{text('Opening cash','শুরুর নগদ টাকা')}
+          <input type="number" step="0.0001" min="0" value={opening} aria-label="Opening cash"
+            onChange={e=>setOpening(e.target.value)}
+            className="mt-1 h-9 w-full max-w-[230px] rounded-lg border border-border bg-card px-3 text-sm"/>
+        </label>
+        <button type="button" onClick={()=>void beginSession()} disabled={busy||opening.trim()===''}
+          className="h-9 rounded-lg bg-primary px-4 text-sm font-semibold text-white disabled:opacity-50">
+          {text('Start cash session','ক্যাশ সেশন শুরু')}
+        </button>
+      </>}
+    </div>}
+  </section>;
+}
+
 export function LiveFinancePage() {
   const user = useBackendSession();
   const { text } = useUiCopy();
@@ -153,6 +279,9 @@ export function LiveFinancePage() {
   const canBank = canUseModule(user,'bank','view');
   const canBankAdd=canUseModule(user,'bank','add');
   const canBankEdit=canUseModule(user,'bank','edit');
+  const canCash=canUseModule(user,'pos','view');
+  const canCashAdd=canUseModule(user,'pos','add');
+  const canCashEdit=canUseModule(user,'pos','edit');
   const [bank,setBank] = useState<BankReconciliation|null>(null);
   const [finance,setFinance] = useState<FinanceBootstrap|null>(null);
   const [errors,setErrors] = useState<string[]>([]);
@@ -160,7 +289,7 @@ export function LiveFinancePage() {
   const [reload,setReload] = useState(0);
 
   useEffect(()=>{
-    if(!canFinance&&!canBank)return;
+    if(!canFinance&&!canBank&&!canCash)return;
     let current=true;
     setLoading(true);setErrors([]);setBank(null);setFinance(null);
     Promise.allSettled([
@@ -236,6 +365,8 @@ export function LiveFinancePage() {
           {text('No bank accounts yet.','এখনো কোনো ব্যাংক হিসাব নেই।')}</p>}
       </>}
     </section>}
+
+    {canCash&&<LiveCashSessionPanel canAdd={canCashAdd} canEdit={canCashEdit} text={text} onChanged={()=>setReload(v=>v+1)}/>}
 
     {canBank&&<LiveBankTransferTools add={canBankAdd} edit={canBankEdit} text={text} onChanged={()=>setReload(v=>v+1)}/>}
 
