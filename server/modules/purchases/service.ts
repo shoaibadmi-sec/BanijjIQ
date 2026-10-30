@@ -563,7 +563,14 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   }
   const due = money(purchase.due_amount);
   if (due > 0) {
-    batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(due, String(purchase.supplier_id || '')));
+    const supplierId = String(purchase.supplier_id || '');
+    batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(due, supplierId));
+    batch.push(db.prepare(`INSERT INTO supplier_ledger
+      (ledger_id,date,supplier_id,supplier_name,type,reference,debit,credit,balance,notes,created_by,created_at)
+      VALUES (?,datetime('now'),?,?,'Purchase Delete',?,0,?,
+        (SELECT current_due FROM suppliers WHERE supplier_id=?),?,?,datetime('now'))`)
+      .bind(crypto.randomUUID(),supplierId,String(purchase.supplier_name || ''),
+        purchaseId,due,supplierId,reason,user.userId));
   }
   batch.push(db.prepare(`UPDATE purchases SET is_deleted=1, status='Deleted', delete_reason=?, deleted_by=?, deleted_at=datetime('now'), updated_at=datetime('now') WHERE purchase_id=?`).bind(reason, user.userId, purchaseId));
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'DELETE_PURCHASE', 'PURCHASE', ?, ?)`)
