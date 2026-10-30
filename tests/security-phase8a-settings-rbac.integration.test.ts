@@ -1,0 +1,151 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import { SqliteDatabase } from '../server/db/sqlite.ts';
+import { runMigrations } from '../server/db/migrate.ts';
+import { handleApiRequest } from '../server/core/handler.ts';
+
+// Full-migration, authenticated Hono -> SQLite/D1-compatible authorization checks.
+async function fixture() {
+  const db = new SqliteDatabase(':memory:');
+  try {
+    runMigrations(db.native, resolve('migrations'));
+    const api = async (method: string, path: string, body?: unknown, token = '') => {
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (token) headers.authorization = 'Bearer ' + token;
+      const response = await handleApiRequest(new Request('http://isolated.invalid' + path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }), db);
+      return { ...await response.json() as Record<string, any>, status: response.status };
+    };
+    const setup = await api('POST', '/api/setup/admin', {
+      fullName: 'Business Owner',
+      phone: '01000002601',
+      password: 'Owner-Test-Password-2026!',
+    });
+    assert.equal(setup.status, 200, JSON.stringify(setup));
+    const admin = setup.token as string;
+    const managerRole = await api('POST', '/api/roles', {
+      name: 'DelegatedManager',
+      permissions: {
+        roles: { view: true, add: true, edit: true },
+        users: { view: true, add: true, edit: true },
+        settings: { view: true, edit: true },
+      },
+    }, admin);
+    assert.equal(managerRole.status, 200, JSON.stringify(managerRole));
+    const privilegedRole = await api('POST', '/api/roles', {
+      name: 'RestrictedReportsOwner',
+      permissions: { reports: { view: true, edit: true } },
+    }, admin);
+    assert.equal(privilegedRole.status, 200, JSON.stringify(privilegedRole));
+    const managerUser = await api('POST', '/api/users', {
+      name: 'Delegated Manager',
+      mobile: '01000002602',
+      role: 'DelegatedManager',
+      password: 'Manager-Test-Password-2026!',
+    }, admin);
+    assert.equal(managerUser.status, 200, JSON.stringify(managerUser));
+    const signedIn = await api('POST', '/api/auth/login', {
+      phone: '01000002602',
+      password: 'Manager-Test-Password-2026!',
+    });
+    assert.equal(signedIn.status, 200, JSON.stringify(signedIn));
+    return {
+      db, api, admin, manager: signedIn.token as string,
+      privilegedRoleId: privilegedRole.id as string,
+    };
+  } catch (cause) {
+    db.close();
+    throw cause;
+  }
+}
+
+test('Phase 8A: delegated roles.add/edit cannot mint permissions the actor does not possess', async () => {
+  const f = await fixture();
+  try {
+    const create = await f.api('POST', '/api/roles', {
+      name: 'EscalatedReportReader',
+      permissions: { reports: { view: true } },
+    }, f.manager);
+    assert.equal(create.status, 403, JSON.stringify(create));
+
+    const edit = await f.api('PUT', '/api/roles/' + f.privilegedRoleId, {
+      name: 'EscalatedReportWriter',
+      permissions: { reports: { view: true, add: true, edit: true } },
+    }, f.manager);
+    assert.equal(edit.status, 403, JSON.stringify(edit));
+    const stored = await f.api('GET', '/api/roles', undefined, f.admin);
+    assert.equal(stored.status, 200);
+    assert.ok(!stored.roles.some((role: any) => role.name === 'EscalatedReportReader'));
+    assert.equal(stored.roles.find((role: any) => role.id === f.privilegedRoleId)?.name,
+      'RestrictedReportsOwner');
+
+    const allowed = await f.api('POST', '/api/roles', {
+      name: 'BasicUserReader',
+      permissions: { users: { view: true } },
+    }, f.manager);
+    assert.equal(allowed.status, 200, JSON.stringify(allowed));
+  } finally { f.db.close(); }
+});
+
+test('Phase 8A: users.add/edit cannot assign an existing role more privileged than the actor', async () => {
+  const f = await fixture();
+  try {
+    const elevated = await f.api('POST', '/api/users', {
+      name: 'Unauthorized Report User',
+      mobile: '01000002603',
+      role: 'RestrictedReportsOwner',
+      password: 'Ordinary-Password-2026!',
+    }, f.manager);
+    assert.equal(elevated.status, 403, JSON.stringify(elevated));
+
+    const ordinary = await f.api('POST', '/api/users', {
+      name: 'Permitted Staff',
+      mobile: '01000002604',
+      role: 'DelegatedManager',
+      password: 'Ordinary-Password-2026!',
+    }, f.manager);
+    assert.equal(ordinary.status, 200, JSON.stringify(ordinary));
+
+    const change = await f.api('PUT', '/api/users/' + ordinary.id, {
+      name: 'Permitted Staff',
+      mobile: '01000002604',
+      role: 'RestrictedReportsOwner',
+    }, f.manager);
+    assert.equal(change.status, 403, JSON.stringify(change));
+    const users = await f.api('GET', '/api/users', undefined, f.admin);
+    assert.ok(!users.users.some((user: any) => user.mobile === '01000002603'));
+    assert.equal(users.users.find((user: any) => user.id === ordinary.id)?.role, 'DelegatedManager');
+  } finally { f.db.close(); }
+});
+
+test('Phase 8A: settings.edit cannot change session security policy or partially save a mixed request', async () => {
+  const f = await fixture();
+  try {
+    const before = await f.api('GET', '/api/settings/bootstrap', undefined, f.admin);
+    assert.equal(before.status, 200);
+    const denied = await f.api('PUT', '/api/settings', {
+      'Shop Name': 'Should Not Be Saved',
+      'Session Timeout Hours': 720,
+    }, f.manager);
+    assert.equal(denied.status, 403, JSON.stringify(denied));
+    const after = await f.api('GET', '/api/settings/bootstrap', undefined, f.admin);
+    assert.equal(after.settings['Shop Name'], before.settings['Shop Name']);
+    assert.equal(after.settings['Session Timeout Hours'], before.settings['Session Timeout Hours']);
+
+    const ordinary = await f.api('PUT', '/api/settings', {
+      'Shop Name': 'Updated Shop',
+    }, f.manager);
+    assert.equal(ordinary.status, 200, JSON.stringify(ordinary));
+    const owner = await f.api('PUT', '/api/settings', {
+      'Session Timeout Hours': 12,
+    }, f.admin);
+    assert.equal(owner.status, 200, JSON.stringify(owner));
+    const updated = await f.api('GET', '/api/settings/bootstrap', undefined, f.admin);
+    assert.equal(updated.settings['Shop Name'], 'Updated Shop');
+    assert.equal(updated.settings['Session Timeout Hours'], '12');
+  } finally { f.db.close(); }
+});
