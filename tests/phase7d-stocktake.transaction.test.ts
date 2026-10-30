@@ -111,3 +111,25 @@ test('transaction: even a no-variance approval rejects stock changed after count
   assert.equal((db.native.prepare('SELECT total_changes() n').get() as any).n,before);
  }finally{db.close();}
 });
+
+
+test('transaction: no-variance count cannot approve if master changes after validation but before atomic batch',async()=>{
+ const {db,api,login}=fixture();try{
+  await login();
+  db.native.prepare("INSERT INTO products(product_id,product_name,category,unit,current_stock) VALUES ('T-RACE','Late sale','Hardware','Pcs',2)").run();
+  db.native.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,original_quantity,remaining_quantity,unit_cost) VALUES ('T-RACE-L','T-RACE','PURCHASE',2,2,10)").run();
+  assert.equal((await api('POST','/api/products/T-RACE/stock-counts',{countId:'count-race-00001',countedQuantity:2})).status,200);
+  const batch=db.batch.bind(db);
+  (db as any).batch=async(statements:unknown[])=>{
+    // A real concurrent stock sale commits after the count preflight, before this transaction.
+    db.native.prepare("UPDATE products SET current_stock=1 WHERE product_id='T-RACE'").run();
+    db.native.prepare("UPDATE stock_lots SET remaining_quantity=1 WHERE lot_id='T-RACE-L'").run();
+    return batch(statements as Parameters<typeof batch>[0]);
+  };
+  const result=await api('POST','/api/products/T-RACE/stock-counts/count-race-00001/approve',{});
+  assert.equal(result.status,409,JSON.stringify(result));
+  assert.equal((db.native.prepare("SELECT status FROM stock_counts WHERE count_id='count-race-00001'").get() as any).status,'PENDING');
+  assert.equal((db.native.prepare("SELECT current_stock FROM products WHERE product_id='T-RACE'").get() as any).current_stock,1);
+  assert.equal((db.native.prepare("SELECT COUNT(*) n FROM stock_movements WHERE product_id='T-RACE'").get() as any).n,0);
+ }finally{db.close();}
+});
