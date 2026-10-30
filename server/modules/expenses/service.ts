@@ -228,10 +228,56 @@ export async function addExpenseRoute(db:SherDatabase,input:ExpenseInput,user:Au
   return json({ok:true,id,replayed:false});
 }
 
+/** Fail closed: the current expense amount must equal its posted cash/bank source legs. */
+async function expenseSourceMatches(db:SherDatabase,expense:any):Promise<boolean>{
+  const id=String(expense.expense_id);
+  const [cash,bank]=await Promise.all([
+    db.prepare("SELECT type,debit,credit FROM cash_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>(),
+    db.prepare("SELECT type,debit,credit,bank_account_id,status FROM bank_book WHERE reference=? AND COALESCE(is_deleted,0)=0").bind(id).all<any>()
+  ]);
+  const cashRows=cash.results||[],bankRows=bank.results||[];
+  if(cashRows.length+bankRows.length>1000)return false;
+  const amount=expenseAmount(expense.amount);
+  if(amount===null)return false;
+  const method=String(expense.payment_method);
+  if(method==='Other')return cashRows.length===0&&bankRows.length===0;
+  if(!['Cash','Bank','Mobile Banking'].includes(method))return false;
+  const rows=[...cashRows,...bankRows];
+  if(rows.filter(r=>r.type==='Expense').length!==1)return false;
+  const ticks=(v:unknown):number|null=>{
+    if(typeof v!=='number'||!Number.isFinite(v)||v<0)return null;
+    const t=Math.round(v*10000);
+    return Number.isSafeInteger(t)&&Math.abs(v*10000-t)<0.00001?t:null;
+  };
+  let cashNet=0;
+  const bankNet=new Map<string,number>();
+  for(const row of cashRows){
+    if(!['Expense','Expense Update'].includes(row.type))return false;
+    const debit=ticks(row.debit),credit=ticks(row.credit);
+    if(debit===null||credit===null||(debit>0&&credit>0))return false;
+    cashNet+=debit-credit;
+  }
+  for(const row of bankRows){
+    if(!['Expense','Expense Update'].includes(row.type)||row.status!=='Active')return false;
+    const debit=ticks(row.debit),credit=ticks(row.credit);
+    if(debit===null||credit===null||(debit>0&&credit>0))return false;
+    const account=String(row.bank_account_id);
+    bankNet.set(account,(bankNet.get(account)||0)+debit-credit);
+  }
+  const amountTicks=Math.round(amount*10000);
+  if(cashNet!==(method==='Cash'?amountTicks:0))return false;
+  const accountId=String(expense.bank_account_id||'');
+  for(const [account,total] of bankNet){
+    if(total!==(method!=='Cash'&&account===accountId?amountTicks:0))return false;
+  }
+  return method==='Cash'||bankNet.get(accountId)===amountTicks;
+}
+
 export async function updateExpenseRoute(db:SherDatabase,id:string,input:ExpenseInput):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('Start the cash session before editing an expense.');
   const old=await db.prepare("SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 AND status='Active' LIMIT 1").bind(id).first<any>();
   if(!old)return error('Active expense not found.',404);
+  if(!(await expenseSourceMatches(db,old)))return error('Original expense money postings do not reconcile. Review the source ledger before editing or cancelling.',409);
   const amount=expenseAmount(input.amount);if(amount===null)return error('Enter a valid expense amount.');
   const categoryId=cleanText(input.categoryId);
   const cat=await db.prepare("SELECT category_name,status FROM expense_categories WHERE category_id=? LIMIT 1").bind(categoryId).first<any>();
@@ -273,6 +319,7 @@ export async function cancelExpenseRoute(db:SherDatabase,id:string,reasonRaw:str
   if(reason.length<8)return error('Enter an explanation for cancellation (at least eight characters).');
   const old=await db.prepare("SELECT * FROM expenses WHERE expense_id=? AND COALESCE(is_deleted,0)=0 AND status='Active' LIMIT 1").bind(id).first<any>();
   if(!old)return error('Active expense not found.',404);
+  if(!(await expenseSourceMatches(db,old)))return error('Original expense money postings do not reconcile. Review the source ledger before editing or cancelling.',409);
   const amount=Number(old.amount),statements:SqlPreparedStatement[]=[
     db.prepare("UPDATE expenses SET status='Cancelled',is_deleted=1,deleted_by=?,deleted_at=datetime('now'),delete_reason=? WHERE expense_id=? AND status='Active' AND COALESCE(is_deleted,0)=0")
       .bind(user.fullName,reason,id)
