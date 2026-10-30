@@ -12,6 +12,7 @@ on:
       - 'wrangler.hisabiq-preview.generated.jsonc'
       - 'd1-checks/**'
       - 'wrangler.d1-ci.jsonc'
+      - 'server/modules/reporting/**'
       - 'server/modules/products/**'
       - 'server/modules/sales/**'
       - 'server/modules/purchases/**'
@@ -52,6 +53,9 @@ jobs:
         run: |
           git submodule status
           node --test react-integration/tests/contract.test.mjs
+          node --test react-integration/tests/reports-two-tabs.contract.test.mjs
+          node --test react-integration/tests/reports-live-route.test.mjs
+          node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
@@ -66,6 +70,12 @@ jobs:
         run: |
           npm ci
           npm run backend:build
+          node --import tsx --test tests/reports-v2-query.integration.test.ts tests/reports-v2-route.integration.test.ts
+          node --import tsx --test tests/reports-sales-profit.integration.test.ts
+          node --import tsx --test tests/reports-stock-dues.integration.test.ts
+          node --import tsx --test tests/reports-stock-dues-route.integration.test.ts
+          node --import tsx --test tests/reports-cash-expenses.integration.test.ts
+          node --import tsx --test tests/reports-cash-expenses-route.integration.test.ts
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts tests/phase4-purchase-supplier.integration.test.ts tests/phase4-mixed-purchase.integration.test.ts tests/phase4-mixed-return.integration.test.ts tests/phase4-supplier-settlements.integration.test.ts tests/phase4-plan-order.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Compile original HisabIQ React app with API integration overlays
