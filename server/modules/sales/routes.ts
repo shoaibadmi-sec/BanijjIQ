@@ -62,6 +62,11 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const splitReversalMatch=path.match(/^\/api\/sales-management\/([^/]+)\/split-reversal$/);
   if(splitReversalMatch&&request.method==='GET')
     return getSplitSaleReversalPreviewRoute(db,decodeURIComponent(splitReversalMatch[1]));
+  if(splitReversalMatch&&request.method==='POST')
+    return new Response(JSON.stringify({ok:false,
+      error:'Source-specific split refund posting is not yet enabled; original payment sources are locked.'}),{
+      status:409,headers:{'content-type':'application/json; charset=utf-8'}
+    });
   const reverseMatch=path.match(/^\/api\/sales-management\/([^/]+)\/reverse$/);
   if(reverseMatch && request.method==='GET')return getMixedSaleReversalPreviewRoute(db,decodeURIComponent(reverseMatch[1]));
   if(reverseMatch && request.method==='POST')return reverseMixedSaleRoute(
