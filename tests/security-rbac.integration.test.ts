@@ -15,7 +15,7 @@ async function isolatedUsersFixture() {
       const response = await handleApiRequest(new Request('http://isolated.invalid' + path, {
         method, headers, body: body === undefined ? undefined : JSON.stringify(body),
       }), db);
-      return { status: response.status, ...await response.json() as Record<string, any> };
+      return { ...await response.json() as Record<string, any>, status: response.status };
     };
     const adminPassword = 'Original-Admin-Secret-2026!';
     const created = await api('POST', '/api/setup/admin', {

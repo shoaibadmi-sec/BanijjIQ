@@ -36,8 +36,8 @@ export function sanitizePermissions(raw:any): RolePermissions {
 
 export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<RolePermissions|null>{
   if(user.role==='admin') return null;
-  const row=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`).bind(user.role).first<{permissions_json:string;status:string}>();
-  if(!row || row.status!=='Active') return {};
+  const row=await db.prepare(`SELECT permissions_json FROM app_roles WHERE role_name=? LIMIT 1`).bind(user.role).first<{permissions_json:string}>();
+  if(!row) return {};
   try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
 }
 
