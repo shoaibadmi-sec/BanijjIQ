@@ -542,9 +542,9 @@ try{
         await page.locator('[data-report-workspace]').waitFor({timeout:10000});
         await page.getByRole('button',{name:'PUR-LIVE-001'}).waitFor({timeout:10000});
         const row=page.locator('[data-report-row]').first();
-        assert.match(await row.locator('td').nth(4).innerText(),/৳\\s*0(?:\\D|$)/,
+        assert.match(await row.locator('td').nth(4).innerText(),/৳\s*0(?:\D|$)/,
           'original Paid column must display a saved zero payment, not a fabricated value');
-        assert.match(await row.locator('td').nth(5).innerText(),/৳\\s*120(?:\\D|$)/,
+        assert.match(await row.locator('td').nth(5).innerText(),/৳\s*120(?:\D|$)/,
           'original Due column must show the full purchase obligation');
         assert.ok(calls.some(x=>x.path==='/api/reports/v2/rows'&&x.method==='GET'),
           'native Purchase Register must use authenticated backend reports');
