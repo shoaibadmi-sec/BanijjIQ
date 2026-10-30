@@ -64,7 +64,9 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
       due:row("SELECT current_due FROM customers WHERE customer_id='CASE-CUS'").current_due,
       journal:row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,
       cash:row('SELECT COUNT(*) n FROM cash_book').n,
-      ledger:row('SELECT COUNT(*) n FROM customer_ledger').n
+      ledger:row('SELECT COUNT(*) n FROM customer_ledger').n,
+      reviewCases:row('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n,
+      audit:row('SELECT COUNT(*) n FROM audit_logs').n
     };
     const page=await api('GET','/api/pos/store-credit/reconciliation/cases?limit=2&offset=0');
     assert.equal(page.ok,true,JSON.stringify(page));
@@ -116,6 +118,10 @@ test('G2-F admin-only legacy-credit cases expose source evidence without changin
     assert.equal(row('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.journal);
     assert.equal(row('SELECT COUNT(*) n FROM cash_book').n,before.cash);
     assert.equal(row('SELECT COUNT(*) n FROM customer_ledger').n,before.ledger);
+    assert.equal(row('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n,before.reviewCases,
+      'GET-only case discovery must never auto-create a reconciliation decision');
+    assert.equal(row('SELECT COUNT(*) n FROM audit_logs').n,before.audit,
+      'GET-only evidence inspection must not create an audit or settlement event');
     // Two historical ledger offsets may point at the same original return.
     // They are distinct accounting anomalies and MUST have distinct case IDs.
     db.native.prepare(
