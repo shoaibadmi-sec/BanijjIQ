@@ -43,6 +43,7 @@ export function LiveReportsPage(){
   const [rows,setRows]=useState<LiveReportPageResponse|null>(null);
   const [summaryStatus,setSummaryStatus]=useState('Verified dashboard totals are not yet available.');
   const [summaryMetrics,setSummaryMetrics]=useState<LiveReportMetric[]>([]);
+  const [summaryKey,setSummaryKey]=useState('');
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const [reload,setReload]=useState(0);
@@ -71,9 +72,12 @@ export function LiveReportsPage(){
     let alive=true;
     setRows(null);setError('');
     if(tab==='overview'){
+      setSummaryMetrics([]);
+      setSummaryKey('');
+      setSummaryStatus('Loading current reporting evidence…');
       setLoading(true);
       getLiveReportSummary(from,to)
-        .then(value=>{if(alive){setSummaryStatus(value.coverage.reason);setSummaryMetrics(value.metrics);}})
+        .then(value=>{if(alive){setSummaryStatus(value.coverage.reason);setSummaryMetrics(value.metrics);setSummaryKey(from+':'+to);}})
         .catch(e=>{if(alive)setError(e instanceof Error?e.message:'Unable to load dashboard.');})
         .finally(()=>{if(alive)setLoading(false);});
     }else if(key){
@@ -92,6 +96,7 @@ export function LiveReportsPage(){
   const currentReport=key==='stock'||key==='receivables'||key==='payables';
   const unsupported=!key;
   const coverage=rows?.coverage;
+  const visibleSummary=summaryKey===from+':'+to?summaryMetrics:[];
   if(!permitted)return <main className="mx-auto max-w-4xl p-6"><h1 className="text-lg font-semibold">
     {text('Reports','রিপোর্ট')}</h1><p role="alert" className="mt-3 text-sm text-danger">
     {text('You do not have permission to view reports.','আপনার রিপোর্ট দেখার অনুমতি নেই।')}</p></main>;
@@ -131,7 +136,7 @@ export function LiveReportsPage(){
           {key:'operatingExpenses',en:'Expenses',bn:'খরচ'},
           {key:'netProfit',en:'Net profit',bn:'নিট লাভ'}
         ] as const).map(item=>{
-          const metric=summaryMetrics.find(m=>m.key===item.key);
+          const metric=visibleSummary.find(m=>m.key===item.key);
           const confirmed=metric?.status==='ready'&&metric.valueMinor!==null;
           return <div key={item.key} data-live-metric={item.key} className="rounded-xl border border-border bg-card p-4">
             <p className="text-xs text-ink-500">{text(item.en,item.bn)}</p>
@@ -152,7 +157,7 @@ export function LiveReportsPage(){
             {key:'receivablesBalance',en:'Customer dues',bn:'গ্রাহকের বাকি'},
             {key:'payablesBalance',en:'Supplier payables',bn:'সরবরাহকারীর দেনা'}
           ] as const).map(item=>{
-            const metric=summaryMetrics.find(m=>m.key===item.key);
+            const metric=visibleSummary.find(m=>m.key===item.key);
             const currentOnly=metric?.status==='needs-review'&&metric?.valueMinor!==null;
             return <div key={item.key} data-current-balance={item.key} className="rounded-xl border border-border bg-card p-4">
               <p className="text-xs text-ink-500">{text(item.en,item.bn)}</p>
