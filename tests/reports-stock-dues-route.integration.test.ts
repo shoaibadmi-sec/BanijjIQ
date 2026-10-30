@@ -37,6 +37,15 @@ test('v2 stock/customer/supplier rows are authenticated, source-linked, read-onl
     assert.match(res.coverage.reason,/current.*snapshot/i);
     assert.equal(res.pageSize,50);
   }
+  const dashboard=await api('GET','/api/reports/v2/summary?from=2026-10-01&to=2026-10-30');
+  assert.equal(dashboard.status,200,JSON.stringify(dashboard));
+  const byKey=new Map(dashboard.metrics.map((m:any)=>[m.key,m]));
+  assert.equal((byKey.get('inventoryValue') as any)?.valueMinor,5000);
+  assert.equal((byKey.get('receivablesBalance') as any)?.valueMinor,4000);
+  assert.equal((byKey.get('payablesBalance') as any)?.valueMinor,7000);
+  for(const key of ['inventoryValue','receivablesBalance','payablesBalance'])
+    assert.equal((byKey.get(key) as any)?.status,'needs-review');
+  assert.match(dashboard.coverage.reason,/current.*snapshot/i);
   const denied=await api('POST','/api/reports/v2/rows?report=stock',{});
   assert.equal(denied.status,404);
   const after=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
