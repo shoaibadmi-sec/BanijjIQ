@@ -40,6 +40,14 @@ WHEN NOT EXISTS(
     AND s.payment_method='Split' AND s.payment_type='Cash'
     AND s.paid_amount=s.grand_total AND s.due_amount=0
     AND s.grand_total>0 AND s.customer_id=sr.customer_id
+    -- Unmodified full-price source: a doctored invoice must not mint
+    -- a fresh refund budget against its old immutable payment allocations.
+    AND CAST(ROUND(s.subtotal*100) AS INTEGER)=CAST(ROUND(s.grand_total*100) AS INTEGER)
+    AND CAST(ROUND(s.discount*100) AS INTEGER)=0
+    AND (SELECT COUNT(*) FROM sale_tender_allocations t
+      WHERE t.invoice_id=s.invoice_id) BETWEEN 2 AND 8
+    AND (SELECT COALESCE(SUM(t.amount_cents),0) FROM sale_tender_allocations t
+      WHERE t.invoice_id=s.invoice_id)=CAST(ROUND(s.grand_total*100) AS INTEGER)
     AND c.customer_id=sr.customer_id AND c.is_deleted=0 AND c.status='Active'
     AND sr.customer_phone=c.phone AND s.customer_phone=c.phone
     AND original.method=NEW.method
