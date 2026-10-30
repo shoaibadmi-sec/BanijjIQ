@@ -27,7 +27,7 @@ test('Phase 7F stock alerts: authenticated, source-checked, exact thresholds, ex
     addProduct.run('A','Empty','Hardware','Pcs',0,3,'Active',0);
     addProduct.run('B','Low','Hardware','Pcs',2,5,'Active',0);addLot.run('B-LOT','B',2,2);
     addProduct.run('C','Healthy','Hardware','Pcs',8,2,'Active',0);addLot.run('C-LOT','C',8,8);
-    addProduct.run('D','Tracked','Hardware','Pcs',5,0,'Active',1);addLot.run('D-LOT','D',5,5);
+    addProduct.run('D','Tracked','Hardware','Pcs',4,0,'Active',1);addLot.run('D-LOT','D',4,4);
     addProduct.run('E','Broken Source','Hardware','Pcs',7,8,'Active',0);addLot.run('E-LOT','E',4,4);
     addProduct.run('F','Inactive','Hardware','Pcs',0,4,'Inactive',0);
     const batch=db.native.prepare("INSERT INTO stock_expiry_batches(expiry_batch_id,lot_id,product_id,batch_no,expiry_date,original_quantity,remaining_quantity) VALUES (?, 'D-LOT','D','B1',?,?,?)");
