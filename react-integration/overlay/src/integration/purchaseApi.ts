@@ -76,6 +76,9 @@ export function validateDuePurchase(supplier:PurchaseSupplier|null,lines:DuePurc
   if(l.unitQuantities!==undefined){
    if(!Number.isSafeInteger(l.unitProfileRevision)||!l.priceUnit||!Number.isSafeInteger(l.qty)||l.qty<=0)
     throw Error('Mixed-unit profile is not ready.');
+   const counts=Object.values(l.unitQuantities);
+   if(!counts.length||!counts.some(n=>n>0)||counts.some(n=>!Number.isSafeInteger(n)||n<0||n>10000000))
+    throw Error('Invalid mixed-unit quantities.');
    exact4(l.unitPrice,'Purchase unit cost',false);
   }else{
    exact4(l.qty,'Quantity',true);exact4(l.unitPrice,'Unit cost',false);
