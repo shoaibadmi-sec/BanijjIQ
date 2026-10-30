@@ -47,14 +47,14 @@ test('G2-E read-only reconciliation highlights legacy credits, negative A/R and 
       "VALUES ('REVIEW-CASH','2026-10-30','Sale','REVIEW-SALE','Paid cash sale',0,100,'Cash',0)"
     ).run();
     db.native.prepare(
-      "INSERT INTO sales_return_items (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) "+
-      "VALUES ('REVIEW-RETURN','REVIEW-SALE','REVIEW-PROD','Review Product',1,10,10)"
-    ).run();
-    db.native.prepare(
       "INSERT INTO sales_returns (return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,"+
       "refund_method,total_return_amount,reason) "+
       "VALUES ('REVIEW-RETURN','2026-10-30','REVIEW-SALE','REVIEW-CUS','Review Customer','01000009893',"+
       "'Store Credit',10,'Approved non-cash credit')"
+    ).run();
+    db.native.prepare(
+      "INSERT INTO sales_return_items (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) "+
+      "VALUES ('REVIEW-RETURN','REVIEW-SALE','REVIEW-PROD','Review Product',1,10,10)"
     ).run();
     db.native.prepare(
       "INSERT INTO customer_store_credit_entries "+
