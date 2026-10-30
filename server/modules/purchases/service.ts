@@ -543,6 +543,8 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   if (!reason) return error('Enter a reason for deleting this purchase.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if (money(purchase.paid_amount) > 0)
+    return error('Paid purchases require an audited payment reversal. Use Purchase Return instead of deleting.',409);
   if(cleanText(purchase.purchase_plan_order_id))return error('Approved-order purchases cannot be deleted; use a controlled reversal.',409);
   if(await hasMixedUnitPurchase(db,purchaseId))
     return error('Mixed-unit purchase delete is locked until cost-safe reversal is implemented (Phase 4C).',409);
