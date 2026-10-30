@@ -137,6 +137,16 @@ test('G2-E read-only reconciliation highlights legacy credits, negative A/R and 
       addLegacyDue.run('REVIEW-NEG-'+String(i).padStart(3,'0'),
         'Historical negative receivable '+i,'0100001'+String(i).padStart(6,'0'));
     }
+    // Snapshot source records before repeated read-only reconciliation.
+    // Reporting must not backfill legacy credits, consume checkout request
+    // keys, alter return items, or append synthetic audit events.
+    const beforeReport={
+      sales:get('SELECT COUNT(*) n FROM sales').n,
+      returns:get('SELECT COUNT(*) n FROM sales_returns').n,
+      returnItems:get('SELECT COUNT(*) n FROM sales_return_items').n,
+      requests:get('SELECT COUNT(*) n FROM pos_sale_requests').n,
+      audits:get('SELECT COUNT(*) n FROM audit_logs').n
+    };
     const bounded=await api('GET','/api/pos/store-credit/reconciliation');
     assert.equal(bounded.readOnly,true);
     assert.equal(bounded.reviewRequired,true);
@@ -151,5 +161,10 @@ test('G2-E read-only reconciliation highlights legacy credits, negative A/R and 
     assert.equal(get('SELECT COUNT(*) n FROM customer_ledger').n,1);
     assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,2);
     assert.equal(get('SELECT COUNT(*) n FROM bank_book').n,0);
+    assert.equal(get('SELECT COUNT(*) n FROM sales').n,beforeReport.sales);
+    assert.equal(get('SELECT COUNT(*) n FROM sales_returns').n,beforeReport.returns);
+    assert.equal(get('SELECT COUNT(*) n FROM sales_return_items').n,beforeReport.returnItems);
+    assert.equal(get('SELECT COUNT(*) n FROM pos_sale_requests').n,beforeReport.requests);
+    assert.equal(get('SELECT COUNT(*) n FROM audit_logs').n,beforeReport.audits);
   }finally{db.close();}
 });
