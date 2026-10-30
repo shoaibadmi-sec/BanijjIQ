@@ -179,6 +179,21 @@ export async function runRealD1Browser(){
           await dueProduct.click();
           await page.getByRole('spinbutton',{name:/Quantity for .*D1 CI Copper Wire/}).waitFor();
           const resetVersionBefore=await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version');
+          await page.evaluate(()=>{
+            window.__posNameTrace=[];
+            for(const selector of ['input[list="live-pos-customer-names"]','input[list="live-pos-customer-phones"]']){
+              const input=document.querySelector(selector);
+              if(!input)continue;
+              for(const type of ['input','change','blur','focus']){
+                input.addEventListener(type,()=>{
+                  window.__posNameTrace.push({type,field:input.getAttribute('list'),
+                    value:input.value,peer:document.querySelector(
+                      selector.includes('names')?'input[list="live-pos-customer-phones"]':
+                        'input[list="live-pos-customer-names"]')?.value});
+                },true);
+              }
+            }
+          });
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
           await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
@@ -191,7 +206,8 @@ export async function runRealD1Browser(){
             paid:await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),
             resetBefore:resetVersionBefore,
             resetAfter:await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version'),
-            customerCount:await page.locator('input[list="live-pos-customer-names"]').count()
+            customerCount:await page.locator('input[list="live-pos-customer-names"]').count(),
+            inputTrace:await page.evaluate(()=>window.__posNameTrace)
           };
           assert.equal(actualNext.customerName,'Real Browser Due Buyer',
             'Starting the next sale must preserve its customer name: '+JSON.stringify(actualNext));

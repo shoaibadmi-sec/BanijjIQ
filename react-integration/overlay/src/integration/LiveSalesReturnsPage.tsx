@@ -42,7 +42,7 @@ export function LiveSalesReturnsPage(){
   const [reversalPreview,setReversalPreview]=useState<MixedReversalPreview|null>(null);
   const [reversalReason,setReversalReason]=useState('');
   const [reversalLoading,setReversalLoading]=useState(false);
-  const [reversalPosted,setReversalPosted]=useState<{id:string;amount:number}|null>(null);
+  const [reversalPosted,setReversalPosted]=useState<{id:string;amount:number;method:string;account:string}|null>(null);
   const [posting,setPosting]=useState(false);
   const activeLine=sale?.items.find(x=>x.productId===picker);
   const activeItem=items.find(x=>x.productId===picker);
@@ -144,12 +144,14 @@ export function LiveSalesReturnsPage(){
   const submitFullReversal=async()=>{
     if(!canReverse||!sale||!reversalPreview?.eligible||reversalReason.trim().length<8||posting||unknown)return;
     if(!window.confirm('Complete the FULL remaining reversal for invoice '+sale.invoiceId+
-      ' and issue a real cash refund of '+money(reversalPreview.refundAmount)+
+      (reversalPreview.refundMethod==='Due Adjustment'?' and cancel customer due of ':' and issue a real '+reversalPreview.refundMethod+' refund of ')+money(reversalPreview.refundAmount)+
+      (reversalPreview.refundAccountName?' to '+reversalPreview.refundAccountName:'')+
       '? This preserves the original invoice and creates a permanent reversal journal.'))return;
     setPosting(true);setError('');
     try{
       const saved=await postMixedReversal(sale.invoiceId,reversalReason.trim());
-      setReversalPosted({id:saved.returnId,amount:saved.totalReturnAmount});
+      setReversalPosted({id:saved.returnId,amount:saved.totalReturnAmount,
+        method:reversalPreview.refundMethod,account:reversalPreview.refundAccountName});
       setReversalPreview(null);setSale(null);setItems([]);setReason('');setReversalReason('');
     }catch(e){
       const uncertain=!(e instanceof BackendRequestError)||e.status===null||e.status>=500;
@@ -190,7 +192,8 @@ export function LiveSalesReturnsPage(){
     </div>}
     {reversalPosted&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
       <CheckCircle2 className="mr-2 inline size-4 text-success"/>
-      Full invoice reversed: <strong>{reversalPosted.id}</strong> · Cash refund {money(reversalPosted.amount)}.
+      Full invoice reversed: <strong>{reversalPosted.id}</strong> · {reversalPosted.method==='Due Adjustment'?'Customer due cancelled':reversalPosted.method+' refund'} {money(reversalPosted.amount)}
+      {reversalPosted.account?' · '+reversalPosted.account:''}.
       Original invoice remains visible for audit. <Link to="/app/pos" className="ml-2 font-semibold text-teal-700 underline">Create corrected sale</Link>
     </div>}
     {success&&<div role="status" className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm">
@@ -230,11 +233,13 @@ export function LiveSalesReturnsPage(){
               {reversalLoading?'Checking…':'Check full reversal'}
             </Button>
           </div>
-          <p className="text-[11px] text-ink-500">Complete all remaining unreturned units through an audited Sales Return. Previous cash refunds stay recorded; original prices stay unchanged.</p>
+          <p className="text-[11px] text-ink-500">Complete remaining original units through an audited reversal. Fully unpaid invoices cancel only their customer due, with no cash payout. Paid refunds use their original payment account.</p>
           {reversalPreview&&!reversalPreview.eligible&&
             <p role="alert" className="rounded-md bg-warning-bg p-2 text-xs text-warning">{reversalPreview.reason}</p>}
           {reversalPreview?.eligible&&<>
-            <p className="text-xs text-ink-700">Remaining: {reversalPreview.items.length} lines · {reversalPreview.remainingBaseQuantity} base units · Cash refund <strong>{money(reversalPreview.refundAmount)}</strong></p>
+            <p className="text-xs text-ink-700">Remaining: {reversalPreview.items.length} lines · {reversalPreview.remainingBaseQuantity} base units · {reversalPreview.refundMethod==='Due Adjustment'?'Due to cancel':reversalPreview.refundMethod+' refund'} <strong>{money(reversalPreview.refundAmount)}</strong></p>
+            {reversalPreview.refundMethod==='Due Adjustment'&&<p data-reversal-due-notice className="text-[11px] text-ink-600">Customer receivable {money(reversalPreview.customerDueBefore)} → ৳0 · No cash refund · বাকি বাতিল</p>}
+            {reversalPreview.refundAccountName&&<p data-reversal-bank-account className="text-[11px] text-ink-600">Refund to original {reversalPreview.refundMethod} account: <strong>{reversalPreview.refundAccountName}</strong> · মূল হিসাবে ফেরত</p>}
             {reversalPreview.previouslyRefundedAmount>0&&<p data-prior-refunds className="text-[11px] text-ink-600">Already refunded: {money(reversalPreview.previouslyRefundedAmount)} · Prior returns stay unchanged</p>}
             <label className="block text-[11px] text-ink-600">Reversal reason · বাতিলের কারণ
               <Input className="mt-1 h-9" value={reversalReason} maxLength={500}

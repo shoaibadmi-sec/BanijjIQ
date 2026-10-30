@@ -173,6 +173,26 @@ function startMocking(context,calls){
       ],coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
     if(path==='/api/reports/v2/rows'&&request.method()==='GET'){
       const kind=url.searchParams.get('report')||'sales';
+      if(kind==='product-profit'||kind==='profit-loss'){
+        const reason=kind==='product-profit'
+          ?'Product-level FIFO allocations, line discounts and return costs are not yet reconciled.'
+          :'Full ledger balances and posted adjustments are required for a Profit & Loss statement.';
+        return respond({ok:true,report:kind,range:{from:'2026-10-01',to:'2026-10-30'},
+          page:1,pageSize:50,totalRows:0,rows:[],metrics:[],
+          coverage:{status:'unavailable',reason}});
+      }
+      if(kind==='sales'&&url.searchParams.get('search')==='CI-PAGE'){
+        const page=Number(url.searchParams.get('page')||1);
+        const pageSize=Number(url.searchParams.get('pageSize')||50);
+        const all=Array.from({length:105},(_,i)=>({
+          sourceId:'INV-CI-'+String(i+1).padStart(4,'0'),sourceModule:'sales',
+          date:'2026-10-15',label:'CI-PAGE buyer',amountMinor:12000,
+          status:'needs-review',reason:'Posted invoice source.'
+        }));
+        return respond({ok:true,report:'sales',range:{from:'2026-10-01',to:'2026-10-30'},
+          page,pageSize,totalRows:all.length,rows:all.slice((page-1)*pageSize,page*pageSize),
+          metrics:[],coverage:{status:'needs-review',reason:'Posted invoice sources.'}});
+      }
       const fixtures={
         sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
           label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
@@ -241,12 +261,64 @@ function startMocking(context,calls){
     if(path==='/api/pos/vendors'&&request.method()==='POST')
       return respond({ok:true,vendor:{id:'VEN-UI-2',name:request.postDataJSON().name,
         phone:request.postDataJSON().phone,currentDue:0,status:'Active'}});
+    if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('DUE-REV'))
+      return respond({ok:true,matches:[{invoiceId:'UI-E2E-DUE-REV',date:'2026-10-29',
+        customerName:'Due Cancellation Buyer',customerPhone:'01000000688',grandTotal:2490,
+        paymentStatus:'Due',returnStatus:'No Return'}]});
+    if(path==='/api/sales-management/UI-E2E-DUE-REV/reverse'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-DUE-REV',
+        refundMethod:'Due Adjustment',refundBankAccountId:'',refundAccountName:'',
+        refundAmount:2490,customerDueBefore:2490,previouslyRefundedAmount:0,remainingBaseQuantity:283,
+        items:[{productId:'PRD-MIXED-E2E',qty:283,unitPrice:0,
+          unitQuantities:{Carton:1,Box:2,Pcs:3}}]}});
+    if(path==='/api/sales-management/UI-E2E-DUE-REV/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,returnId:'SRT-UI-DUE-REV-1',totalReturnAmount:2490});
+    }
+    if(path==='/api/sales-returns/UI-E2E-DUE-REV/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-E2E-DUE-REV',date:'2026-10-29',
+        customerId:'CUS-DUE',customerName:'Due Cancellation Buyer',customerPhone:'01000000688',
+        grandTotal:2490,paidAmount:0,dueAmount:2490,previouslyReturnedAmount:0,netSale:2490,
+        items:[{productId:'PRD-MIXED-E2E',name:'Carton Test Cable',soldQty:283,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:283,unitPrice:2490/283,
+          trackSerial:false,trackExpiry:false,trackWarranty:false,availableSerials:[],
+          mixedUnit:{description:'1 CT 2 BOX 3 PCS',netPriceFactor:1,
+            originalQuantities:{Carton:1,Box:2,Pcs:3},availableQuantities:{Carton:1,Box:2,Pcs:3},
+            profile:posMixedProduct.unitProfilePreview}}]}} );
+    if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('BANK-REV'))
+      return respond({ok:true,matches:[{invoiceId:'UI-E2E-BANK-REV',date:'2026-10-29',
+        customerName:'Bank Refund Buyer',customerPhone:'01000000014',grandTotal:2490,
+        paymentStatus:'Paid',returnStatus:'No Return'}]});
+    if(path==='/api/sales-management/UI-E2E-BANK-REV/reverse'&&request.method()==='GET')
+      return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-BANK-REV',
+        refundMethod:'Bank',refundBankAccountId:'BNK-UI-01',refundAccountName:'Current Bank · Test',
+        refundAmount:2490,previouslyRefundedAmount:0,remainingBaseQuantity:283,
+        items:[{productId:'PRD-MIXED-E2E',qty:283,unitPrice:0,
+          unitQuantities:{Carton:1,Box:2,Pcs:3}}]}});
+    if(path==='/api/sales-management/UI-E2E-BANK-REV/reverse'&&request.method()==='POST'){
+      const payload=request.postDataJSON();
+      assert.ok(payload.reason.length>=8);
+      calls.push({method:'ASSERT',path,payload});
+      return respond({ok:true,returnId:'SRT-UI-BANK-REV-1',totalReturnAmount:2490});
+    }
+    if(path==='/api/sales-returns/UI-E2E-BANK-REV/data'&&request.method()==='GET')
+      return respond({ok:true,sale:{invoiceId:'UI-E2E-BANK-REV',date:'2026-10-29',
+        customerId:'CUS-BANK',customerName:'Bank Refund Buyer',customerPhone:'01000000014',
+        grandTotal:2490,paidAmount:2490,dueAmount:0,previouslyReturnedAmount:0,netSale:2490,
+        items:[{productId:'PRD-MIXED-E2E',name:'Carton Test Cable',soldQty:283,vendorQty:0,
+          previouslyReturnedQty:0,availableQty:283,unitPrice:2490/283,
+          trackSerial:false,trackExpiry:false,trackWarranty:false,availableSerials:[],
+          mixedUnit:{description:'1 CT 2 BOX 3 PCS',netPriceFactor:1,
+            originalQuantities:{Carton:1,Box:2,Pcs:3},availableQuantities:{Carton:1,Box:2,Pcs:3},
+            profile:posMixedProduct.unitProfilePreview}}]}} );
     if(path==='/api/sales-returns/search'&&url.searchParams.get('q')?.includes('MIXED'))
       return respond({ok:true,matches:[{invoiceId:'UI-E2E-MIXED',date:'2026-10-28',
         customerName:'Unit Return Buyer',customerPhone:'01000000011',grandTotal:2490,
         paymentStatus:'Paid',returnStatus:'No Return'}]});
     if(path==='/api/sales-management/UI-E2E-MIXED/reverse'&&request.method()==='GET')
       return respond({ok:true,preview:{eligible:true,reason:'',invoiceId:'UI-E2E-MIXED',
+        refundMethod:'Cash',refundBankAccountId:'',refundAccountName:'',
         refundAmount:2300,previouslyRefundedAmount:190,remainingBaseQuantity:262,
         items:[{productId:'PRD-MIXED-E2E',qty:262,unitPrice:0,
           unitQuantities:{Carton:1,Box:1,Pcs:2}}]}});
@@ -537,6 +609,55 @@ try{
       await ctx.close();
     });
   }
+  await withCheck('report reader without POS permission cannot open invoice details',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:900},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    await ctx.route('**/api/auth/me',route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,user:{...user,role:'staff',permissions:{
+        reports:{view:true,add:false,edit:false},pos:{view:false,add:false,edit:false}
+      }}})}));
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+    await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
+    assert.equal(await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).count(),0,
+      'report-only users must not get an invoice action without POS view');
+    assert.equal(calls.filter(x=>x.path.startsWith('/api/pos/invoices/')).length,0);
+    await ctx.close();
+  });
+  for(const width of [390,768,1440]){
+    await withCheck('report pagination honors 50/100 and direct page jump '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.getByRole('textbox',{name:'Search records'}).fill('CI-PAGE');
+      await page.getByText('INV-CI-0001').waitFor({timeout:10000});
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0051').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0101').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),5);
+      assert.equal(await page.getByRole('button',{name:'Next'}).isDisabled(),true);
+      const jump=page.getByRole('spinbutton',{name:'Go to page'});
+      await jump.fill('1');
+      await jump.press('Enter');
+      await page.getByText('INV-CI-0001').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
+      await page.getByRole('combobox',{name:'Rows per page'}).selectOption('100');
+      await page.getByText('INV-CI-0100').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),100);
+      await page.getByRole('button',{name:'Next'}).click();
+      await page.getByText('INV-CI-0101').waitFor();
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),5);
+      assert.ok(calls.every(call=>call.method!=='POST'||!call.path.startsWith('/api/reports')));
+      await screenshot(page,'reports-pagination-'+width);
+      await ctx.close();
+    });
+  }
   for(const width of [390,768,1440]){
     await withCheck('Sales Register reads original invoice without writes '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
@@ -555,6 +676,30 @@ try{
       await screenshot(page,'reports-invoice-source-'+width);
       await page.keyboard.press('Escape');
       assert.equal(await page.getByRole('dialog',{name:'Recorded invoice'}).count(),0);
+      await ctx.close();
+    });
+  }
+  for(const width of [390,1440]){
+    await withCheck('profit report destinations do not reuse invoice-cohort figures '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();const queried=[];
+      page.on('request',request=>{
+        const url=new URL(request.url());
+        if(url.pathname==='/api/reports/v2/rows')queried.push(url.searchParams.get('report'));
+      });
+      await page.goto(base+'/#/app/reports?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
+      await page.getByText(/Product-level FIFO allocations/).waitFor({timeout:10000});
+      assert.ok(queried.includes('product-profit'),'product gross profit must have its own backend report ID');
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
+      await page.getByRole('navigation',{name:'Report library'})
+        .getByRole('button',{name:'Profit & Loss statement'}).click();
+      await page.getByText(/Full ledger balances and posted adjustments/).waitFor({timeout:10000});
+      assert.ok(queried.includes('profit-loss'),'a P&L must not reuse the invoice-cohort profitability endpoint');
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
+      assert.ok(!queried.includes('profit'),'neither unsupported report may present cohort profit as its own');
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await ctx.close();
     });
   }
@@ -615,6 +760,35 @@ try{
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});
+  await withCheck('POS keeps typed name when a legacy saved phone match has an empty customer name',async()=>{
+    const ctx=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.route('**/api/pos/bootstrap',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,products:[...posProducts,posMixedProduct],
+        customers:[{id:'CUST-LEGACY-BLANK',name:'',phone:'01000000124',
+          fatherName:'',address:'',currentDue:0}],bankAccounts:[],
+        vendors:[],activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
+        invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop'},logoDataUri:''}})
+    }));
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
+    await page.locator('[data-live-pos]').waitFor({timeout:12000});
+    await page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first().click();
+    await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
+    const name=page.locator('input[list="live-pos-customer-names"]');
+    const phone=page.locator('input[list="live-pos-customer-phones"]');
+    await name.fill('Real Browser Due Buyer');
+    await phone.fill('01000000124');
+    await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+    assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+      'legacy phone records must never silently erase a cashier-entered name on blur');
+    assert.equal(await phone.inputValue(),'01000000124');
+    assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40');
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,0);
+    await ctx.close();
+  });
   for(const width of [390,768,1440]){
     await withCheck('pos '+width+' light',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:960},
@@ -830,6 +1004,54 @@ try{
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
     assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
     assert.equal(api.filter(x=>x.method==='ASSERT'&&x.path==='/api/sales-management/UI-E2E-MIXED/reverse').length,1);
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('bank full reversal shows original account and confirms one bank refund',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();page.on('dialog',d=>void d.accept());
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor();
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('BANK-REV');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-E2E-BANK-REV/}).click();
+    await page.getByRole('button',{name:'Check full reversal'}).click();
+    await page.locator('[data-reversal-bank-account]').waitFor();
+    assert.match(await page.locator('[data-reversal-bank-account]').innerText(),/Current Bank/);
+    assert.match(await page.locator('[data-mixed-full-reversal]').innerText(),/Bank refund/);
+    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Refund via original bank after full cancellation');
+    await screenshot(page,'phase3f-bank-reversal-original-account');
+    await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
+    await page.getByText('SRT-UI-BANK-REV-1').waitFor({timeout:12000});
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-BANK-REV/reverse').length,1);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
+    results.apiCalls.push(...api);await ctx.close();
+  });
+  await withCheck('unpaid mixed invoice reversal cancels customer due and never claims a cash refund',async()=>{
+    const ctx=await browser.newContext({viewport:{width:768,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    let confirmation='';
+    page.on('dialog',d=>{confirmation=d.message();void d.accept()});
+    await page.goto(base+'/#/app/live-sales-returns');
+    await page.locator('[data-live-sales-returns]').waitFor();
+    await page.getByRole('textbox',{name:'Search saved invoices'}).fill('DUE-REV');
+    await page.getByRole('button',{name:'Search',exact:true}).click();
+    await page.getByRole('button',{name:/UI-E2E-DUE-REV/}).click();
+    await page.getByRole('button',{name:'Check full reversal'}).click();
+    await page.locator('[data-reversal-due-notice]').waitFor();
+    assert.match(await page.locator('[data-reversal-due-notice]').innerText(),/No cash refund/);
+    assert.match(await page.locator('[data-mixed-full-reversal]').innerText(),/Due to cancel/);
+    await page.getByRole('textbox',{name:'Full invoice reversal reason'}).fill('Customer cancelled entire unpaid original invoice');
+    await screenshot(page,'phase3g-full-unpaid-due-cancellation');
+    await page.getByRole('button',{name:'Review and reverse entire invoice'}).click();
+    await page.getByText('SRT-UI-DUE-REV-1').waitFor({timeout:12000});
+    assert.match(confirmation,/cancel customer due/i);
+    assert.doesNotMatch(confirmation,/cash refund/i);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-management/UI-E2E-DUE-REV/reverse').length,1);
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/sales-returns').length,0);
     results.apiCalls.push(...api);await ctx.close();
   });
   await withCheck('Sales Return uses saved invoice/serial and posts one real return',async()=>{
