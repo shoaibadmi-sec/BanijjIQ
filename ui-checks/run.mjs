@@ -75,6 +75,7 @@ async function withCheck(name,fn){
     process.stderr.write('FAIL '+name+': '+String(error?.message||error)+'\n');}
 }
 function startMocking(context,calls){
+  let cashSessionOpen=true;
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -106,6 +107,27 @@ function startMocking(context,calls){
       assert.ok(payload.reason.length>=8);
       calls.push({method:'ASSERT',path,payload});
       return respond({ok:true,id:'BTR-UI-6B-001',reversed:true});
+    }
+    if(path==='/api/pos/cash-session/summary'&&request.method()==='GET')
+      return respond({ok:true,summary:cashSessionOpen?{
+        sessionId:'CS-UI-6C-001',openedAt:'2026-10-30 08:00:00',openingCash:100,
+        cashIn:200,cashOut:50,expectedCash:250
+      }:null});
+    if(path==='/api/pos/cash-session/close'&&request.method()==='POST'){
+      const body=request.postDataJSON();
+      assert.equal(body.countedCash,255);
+      assert.ok(body.notes.length>=8);
+      assert.ok(typeof body.clientRequestId==='string'&&body.clientRequestId.length>=8);
+      calls.push({method:'ASSERT',path,payload:body});
+      cashSessionOpen=false;
+      return respond({ok:true,sessionId:'CS-UI-6C-001',expected:250,counted:255,variance:5,replayed:false});
+    }
+    if(path==='/api/pos/cash-session/start'&&request.method()==='POST'){
+      const body=request.postDataJSON();
+      assert.ok(typeof body.clientRequestId==='string'&&body.clientRequestId.length>=8);
+      cashSessionOpen=true;
+      calls.push({method:'ASSERT',path,payload:body});
+      return respond({ok:true,sessionId:'CS-UI-6C-002',replayed:false});
     }
     if(path==='/api/bank/reconciliation'&&request.method()==='GET')return respond({
       ok:true,asOf:'2026-10-30T09:00:00.000Z',coverage:{status:'needs-review',reason:'One account differs from bank book.'},
@@ -359,6 +381,31 @@ try{
       await screenshot(page,'phase6b-bank-transfer-'+width);
       await inspectLayout(page,'phase6b-bank-transfer-'+width);
       await audit(page,'phase6b-bank-transfer-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6C cash count and variance review '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/finance');
+      const panel=page.locator('[data-phase6-cash-session]');
+      await panel.waitFor({timeout:12000});
+      await page.getByText('Expected cash').waitFor({timeout:12000});
+      assert.ok((await panel.innerText()).includes('250'));
+      await page.getByRole('spinbutton',{name:'Counted cash'}).fill('255');
+      await page.getByRole('textbox',{name:'Cash variance reason'}).fill('Cash difference checked by manager');
+      await page.getByRole('button',{name:'Review close'}).click();
+      await page.getByRole('button',{name:'Confirm close'}).click();
+      await page.getByText(/Cash session closed/).waitFor({timeout:12000});
+      assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/api/pos/cash-session/close').length,1);
+      assert.equal(calls.filter(x=>x.method==='ASSERT'&&x.path==='/api/pos/cash-session/close').length,1);
+      await screenshot(page,'phase6c-cash-count-'+width);
+      await inspectLayout(page,'phase6c-cash-count-'+width);
+      await audit(page,'phase6c-cash-count-'+width);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }
