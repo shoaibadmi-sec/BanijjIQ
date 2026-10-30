@@ -157,11 +157,11 @@ export async function reverseSupplierSettlement(db:SherDatabase,settlementId:str
   return error('Supplier ledger out of balance. Reconcile before reversal.',409);
  // If a source bank/cash movement has been altered manually, do not silently reverse it.
  const sourceTable=original.method==='Cash'?'cash_book':'bank_book';
- const movement=await db.prepare(`SELECT entry_id,debit,credit${original.method==='Cash'?'':',bank_account_id'} FROM ${sourceTable}
+ const movement=await db.prepare(`SELECT entry_id,type,debit,credit${original.method==='Cash'?'':',bank_account_id'} FROM ${sourceTable}
   WHERE reference=? AND COALESCE(is_deleted,0)=0`).bind(original.ledger_id).all();
- const source=movement.results[0] as {debit:number;credit:number;bank_account_id?:string}|undefined;
- if(movement.results.length!==1||Math.abs(Number(source?.debit)-amount)>0.0001||
-   Number(source?.credit)!==0||
+ const source=movement.results[0] as {type:string;debit:number;credit:number;bank_account_id?:string}|undefined;
+ if(movement.results.length!==1||source?.type!=='Supplier Payment'||
+   Math.abs(Number(source?.debit)-amount)>0.0001||Number(source?.credit)!==0||
    (original.method!=='Cash'&&source?.bank_account_id!==original.bank_account_id))
   return error('Original financial movement no longer matches. Reconcile before reversal.',409);
  const ledger=await db.prepare(`SELECT supplier_id,type,reference,debit,credit,payment_method,bank_account_id
