@@ -645,7 +645,16 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     if(v.mixedReturn)mixedNeed.set(v.productId,v.q);
     else ordinaryNeed.set(v.productId,v.q);
   }
-  const ordinaryRestore=ordinaryNeed.size?await restoreSaleLotsPlan(db,invoiceId,ordinaryNeed):new Map<string,any>();
+  // Ordinary and mixed-unit returns both require immutable original FIFO
+  // allocations; otherwise reports cannot verify which historical cost was reversed.
+  let ordinaryLots:{plan:Map<string,any>;allocations:Array<{productId:string;lotId:string;quantity:number}>}={
+    plan:new Map(),allocations:[]
+  };
+  if(ordinaryNeed.size){
+    try{ordinaryLots=await restoreMixedUnitLots(db,invoiceId,ordinaryNeed);}
+    catch(e){return error(e instanceof Error?e.message:'Invalid return lots.',409);}
+  }
+  const ordinaryRestore=ordinaryLots.plan;
   let mixedLots:{plan:Map<string,any>;allocations:Array<{productId:string;lotId:string;quantity:number}>}={
     plan:new Map(),allocations:[]
   };
@@ -698,7 +707,7 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
       stmts.push(db.prepare(`UPDATE warranty_records SET remaining_quantity=MAX(0,remaining_quantity-?),status=CASE WHEN remaining_quantity-?<=0 THEN 'Returned' ELSE status END,updated_at=datetime('now') WHERE invoice_id=? AND product_id=? AND serial_id IS NULL`).bind(v.q,v.q,invoiceId,v.productId));
     }
   }
-  for(const alloc of mixedLots.allocations)stmts.push(db.prepare(
+  for(const alloc of [...ordinaryLots.allocations,...mixedLots.allocations])stmts.push(db.prepare(
     'INSERT INTO sales_return_item_lots (return_id,invoice_id,product_id,lot_id,quantity) VALUES (?,?,?,?,?)'
   ).bind(returnId,invoiceId,alloc.productId,alloc.lotId,alloc.quantity));
   for(const x of ordinaryRestore.values()){let next=x.current+x.restore;if(x.sourceType==='OVERSOLD')next=Math.min(0,next);else next=Math.min(x.original,next);stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=?,updated_at=datetime('now'),status=CASE WHEN ?>0 THEN 'Active' WHEN source_type='OVERSOLD' AND ?<0 THEN 'Oversold' ELSE 'Depleted' END WHERE lot_id=?`).bind(next,next,next,x.lotId));}
