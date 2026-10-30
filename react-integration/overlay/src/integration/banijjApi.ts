@@ -212,3 +212,36 @@ export const postMixedReversal = (id:string,reason:string)=>
 
 export const getSalesReturnHistory = () =>
   request<{ok:true;returns:Array<{returnId:string;invoiceId:string;totalReturnAmount:number}>}>('/api/sales-returns');
+
+/** Phase 5 Reports: server-only source records; no demo report stores. */
+export type LiveReportStatus = 'ready'|'needs-review'|'incomplete'|'unavailable';
+export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'payables'|'profit'|'cash'|'expenses'|'audit';
+export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;group:string;status:LiveReportStatus;reason:string}
+export interface LiveReportRecord {
+  sourceId:string;sourceModule:string;date:string;label:string;
+  amountMinor:number|null;status:LiveReportStatus;reason:string;
+}
+export interface LiveReportPageResponse {
+  ok:true;report:LiveReportBackendKey;range:{from:string;to:string};page:number;pageSize:50|100;
+  totalRows:number;rows:LiveReportRecord[];metrics:unknown[];
+  coverage:{status:LiveReportStatus;reason:string};
+}
+export interface LiveReportRequest {
+  report:LiveReportBackendKey;from:string;to:string;page:number;pageSize:50|100;search?:string;
+}
+export const getLiveReportCatalog=()=>request<{
+  ok:true;mainTabs:Array<{id:'overview'|'library';en:string;bn:string}>;
+  reports:LiveReportEntry[];
+}>('/api/reports/v2/catalog');
+export const getLiveReportRows=(query:LiveReportRequest)=>{
+  const params=new URLSearchParams({
+    report:query.report,from:query.from,to:query.to,page:String(query.page),
+    pageSize:String(query.pageSize),search:query.search??''
+  });
+  return request<LiveReportPageResponse>('/api/reports/v2/rows?'+params.toString());
+};
+export const getLiveReportSummary=(from:string,to:string)=>{
+  const params=new URLSearchParams({from,to,report:'sales'});
+  return request<{ok:true;range:{from:string;to:string};metrics:unknown[];
+    coverage:{status:LiveReportStatus;reason:string}}>('/api/reports/v2/summary?'+params.toString());
+};
