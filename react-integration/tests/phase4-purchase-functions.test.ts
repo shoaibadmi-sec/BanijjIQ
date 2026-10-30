@@ -128,7 +128,7 @@ test('4I-B mixed-unit paid purchases stay locked; due remains valid',()=>{
 test('4I-C4 paid Cash refund posts immutable original price, available quantity, and unique receipt ID',()=>{
  const make=(purchaseApi as unknown as {validatePaidPurchaseRefund:Function}).validatePaidPurchaseRefund;
  assert.equal(typeof make,'function','C4 paid refund validator must exist');
- const purchase={purchaseId:'PUR-PAID',supplierId:'SUP-TEST',paymentMethod:'Cash',
+ const purchase={purchaseId:'PUR-PAID',supplierId:'SUP-TEST',status:'Completed',paymentMethod:'Cash',
   bankAccountId:'',paidAmount:100,grandTotal:100,dueAmount:0,discount:0,returnedAmount:0};
  const lines=[{productId:'PRD-1',productName:'Bolts',boughtQty:2,unitPrice:50,
   previouslyReturnedQty:0,availableQty:2,trackSerial:0,trackExpiry:0}];
@@ -160,7 +160,7 @@ test('4I-C4 paid Cash refund posts immutable original price, available quantity,
 });
 test('4I-C4 Bank and Mobile refund only accept matching original payment account, not arbitrary account',()=>{
  const make=(purchaseApi as unknown as {validatePaidPurchaseRefund:Function}).validatePaidPurchaseRefund;
- const base={purchaseId:'PUR-BANK',supplierId:'SUP-TEST',paymentMethod:'Bank',
+ const base={purchaseId:'PUR-BANK',supplierId:'SUP-TEST',status:'Completed',paymentMethod:'Bank',
   bankAccountId:'BANK-ORIGINAL',paidAmount:100,grandTotal:100,dueAmount:0,discount:0,returnedAmount:40};
  const lines=[{productId:'PRD-1',productName:'Bolts',boughtQty:2,unitPrice:50,
   previouslyReturnedQty:0.8,availableQty:1.2,trackSerial:0,trackExpiry:0}];
