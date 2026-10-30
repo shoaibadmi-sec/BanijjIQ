@@ -768,7 +768,7 @@ try{
       await daybook.waitFor({timeout:12000});
       await daybook.getByText('BTR-UI-6E-001').waitFor({timeout:12000});
       await daybook.getByRole('button',{name:'Actions for BTR-UI-6E-001'}).click();
-      assert.equal(await page.getByRole('button',{name:'Go to source'}).count(),1);
+      await page.getByRole('dialog',{name:'Actions for BTR-UI-6E-001'}).getByRole('button',{name:'Go to source'}).waitFor({state:'visible',timeout:5000});
       assert.equal(await page.getByRole('button',{name:'Review reversal'}).count(),0,'Daybook must not expose unsupported posting reversals');
       await daybook.getByRole('combobox',{name:'Daybook page size'}).selectOption('100');
       await daybook.getByRole('button',{name:/Created Date/}).click();
