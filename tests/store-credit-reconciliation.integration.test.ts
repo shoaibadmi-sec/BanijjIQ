@@ -126,5 +126,30 @@ test('G2-E read-only reconciliation highlights legacy credits, negative A/R and 
     assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,1);
     assert.equal(get('SELECT current_due FROM customers WHERE customer_id=?','REVIEW-CUS').current_due,-5);
     assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,2);
+    // The report is an audit aid, not a silent 100-row cap. More than 100
+    // historical anomalies must retain the exact count and a truncation
+    // indicator; repeated reads must not mutate receivables or liabilities.
+    const addLegacyDue=db.native.prepare(
+      "INSERT INTO customers (customer_id,customer_name,phone,current_due,status,is_deleted) "+
+      "VALUES (?,?,?,-1,'Active',0)"
+    );
+    for(let i=0;i<101;i++){
+      addLegacyDue.run('REVIEW-NEG-'+String(i).padStart(3,'0'),
+        'Historical negative receivable '+i,'0100001'+String(i).padStart(6,'0'));
+    }
+    const bounded=await api('GET','/api/pos/store-credit/reconciliation');
+    assert.equal(bounded.readOnly,true);
+    assert.equal(bounded.reviewRequired,true);
+    assert.equal(bounded.flagsCount,106,JSON.stringify(bounded.flags));
+    assert.equal(bounded.flagsTruncated,true);
+    assert.equal(bounded.flags.length,100);
+    const repeat=await api('GET','/api/pos/store-credit/reconciliation');
+    assert.deepEqual(repeat,bounded);
+    assert.equal(get("SELECT current_due FROM customers WHERE customer_id='REVIEW-NEG-000'").current_due,-1);
+    assert.equal(get("SELECT current_due FROM customers WHERE customer_id='REVIEW-CUS'").current_due,-5);
+    assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,1);
+    assert.equal(get('SELECT COUNT(*) n FROM customer_ledger').n,1);
+    assert.equal(get('SELECT COUNT(*) n FROM cash_book').n,2);
+    assert.equal(get('SELECT COUNT(*) n FROM bank_book').n,0);
   }finally{db.close();}
 });
