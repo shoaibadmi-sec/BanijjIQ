@@ -213,11 +213,28 @@ async function addBankBookExact(db:SherDatabase,accountId:string,fields:{type:st
 export async function addBankManualEntryRoute(db:SherDatabase,input:BankManualInput,user:AuthUser):Promise<Response>{
   if(!(await getOpenCashSession(db)))return error('No active cash session. Start your day from POS before recording a bank entry.');
   const t=BANK_MANUAL_TYPES.find(x=>x.key===cleanText(input.entryType));if(!t)return error('Choose a valid entry type.');const amount=money(input.amount);if(amount<=0)return error('Enter a valid amount greater than zero.');
-  const accountId=cleanText(input.bankAccountId);const a=await db.prepare(`SELECT bank_account_id,status FROM bank_accounts WHERE bank_account_id=? LIMIT 1`).bind(accountId).first<any>();if(!a)return error('Bank account not found.');if(a.status==='Inactive')return error('That bank account is inactive.');
+  const accountId=cleanText(input.bankAccountId);const a=await db.prepare(`SELECT bank_account_id,account_name,status FROM bank_accounts WHERE bank_account_id=? LIMIT 1`).bind(accountId).first<any>();if(!a)return error('Bank account not found.');if(a.status==='Inactive')return error('That bank account is inactive.');
   let direction=t.direction;if(direction==='either'){direction=cleanText(input.direction) as any;if(direction!=='debit'&&direction!=='credit')return error('Choose whether this adjustment adds to or subtracts from the account.');}
   const date=cleanText(input.date)||todayDate();if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return error('Enter a valid entry date (yyyy-MM-dd).');if(date>todayDate())return error('Entry date cannot be in the future.');const isBackdated=date<todayDate(),backReason=cleanText(input.backdatedReason);if(isBackdated&&!backReason)return error('A reason is required when dating this entry in the past.');
-  const description=cleanText(input.description)||t.label;const newBalance=await addBankBookExact(db,accountId,{type:t.key,reference:cleanText(input.reference),description,debit:direction==='debit'?amount:0,credit:direction==='credit'?amount:0,date,notes:cleanText(input.notes),createdBy:user.fullName,isBackdated,backdatedDays:isBackdated?dayDiff(date,todayDate()):0,backdatedReason:backReason});
-  if(t.contra==='cash')await db.prepare(`INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted,created_at) VALUES (?,?,?,?,?,?,?,'Cash',0,datetime('now'))`).bind(bankId('CB'),todayDate(),t.key,accountId,`${description} — ${accountId}`,t.key==='Cash Deposit'?amount:0,t.key==='Cash Withdrawal'?amount:0).run();
+  const description=cleanText(input.description)||t.label;
+  if(t.contra==='cash'){
+    // Deposit/withdrawal is a single internal transfer: never commit only the bank
+    // leg when the cash-book insert fails. Both use the same transaction date.
+    const debit=direction==='debit'?amount:0,credit=direction==='credit'?amount:0;
+    try{
+      await db.batch([
+        db.prepare("INSERT INTO bank_book(entry_id,bank_account_id,bank_account_name,date,type,reference,description,debit,credit,balance,notes,status,created_by,created_at,is_backdated,backdated_days,backdated_reason,is_deleted) VALUES (?,?,?,?,?,?,?,?,?,ROUND((SELECT current_balance FROM bank_accounts WHERE bank_account_id=?)+?-?,4),?,'Active',?,datetime('now'),?,?,?,0)")
+          .bind(bankId('BB'),accountId,cleanText(a.bank_account_name),date,t.key,accountId,description,debit,credit,accountId,credit,debit,cleanText(input.notes),user.fullName,isBackdated?1:0,isBackdated?dayDiff(date,todayDate()):0,backReason),
+        db.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted,created_at) VALUES (?,?,?,?,?,?,?,'Cash',0,datetime('now'))")
+          .bind(bankId('CB'),date,t.key,accountId,description+' — '+accountId,t.key==='Cash Deposit'?amount:0,t.key==='Cash Withdrawal'?amount:0),
+        db.prepare('UPDATE bank_accounts SET current_balance=ROUND(current_balance+?-?,4) WHERE bank_account_id=?')
+          .bind(credit,debit,accountId)
+      ]);
+    }catch{return error('Cash and bank books were not posted; please check account funds and retry.',409);}
+    const balance=await db.prepare('SELECT current_balance FROM bank_accounts WHERE bank_account_id=?').bind(accountId).first<{current_balance:number}>();
+    return json({ok:true,bankAccountId:accountId,newBalance:Number(balance?.current_balance||0)});
+  }
+  const newBalance=await addBankBookExact(db,accountId,{type:t.key,reference:cleanText(input.reference),description,debit:direction==='debit'?amount:0,credit:direction==='credit'?amount:0,date,notes:cleanText(input.notes),createdBy:user.fullName,isBackdated,backdatedDays:isBackdated?dayDiff(date,todayDate()):0,backdatedReason:backReason});
   return json({ok:true,bankAccountId:accountId,newBalance});
 }
 
