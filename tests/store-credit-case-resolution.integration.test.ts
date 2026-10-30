@@ -87,6 +87,22 @@ test('G2-F reviewed settlement requires real matched refund evidence, commits on
     assert.equal((await api('POST',path,payload)).status,409,
       'double cash refund against one return cannot be marked reconciled');
     db.native.prepare("DELETE FROM cash_book WHERE entry_id='SETTLE-REFUND-2'").run();
+    // A failed audit insert must roll back the reconciliation decision itself.
+    // Retrying the same reviewed source after removing the injected fault
+    // must remain possible; no liability or receivable is silently adjusted.
+    db.native.exec(
+      "CREATE TRIGGER block_credit_case_audit BEFORE INSERT ON audit_logs "+
+      "WHEN NEW.action='REVIEW_STORE_CREDIT_CASE' BEGIN "+
+      "SELECT RAISE(ABORT,'INJECTED_CREDIT_CASE_AUDIT_FAILURE'); END;"
+    );
+    const auditFailure=await api('POST',path,payload);
+    assert.equal(auditFailure.status,500,JSON.stringify(auditFailure));
+    assert.equal(get('SELECT COUNT(*) n FROM store_credit_reconciliation_cases').n,before.cases,
+      'failed audit must not leave a reviewed case without its audit event');
+    assert.equal(get("SELECT COUNT(*) n FROM audit_logs WHERE action='REVIEW_STORE_CREDIT_CASE'").n,0);
+    assert.equal(get('SELECT COUNT(*) n FROM customer_store_credit_entries').n,before.journal);
+    assert.equal(get("SELECT current_due FROM customers WHERE customer_id='SETTLE-CUS'").current_due,before.due);
+    db.native.exec('DROP TRIGGER block_credit_case_audit');
     const good=await api('POST',path,payload);
     assert.equal(good.ok,true,JSON.stringify(good));
     assert.equal(good.case.status,'verified_settled');
