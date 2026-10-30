@@ -29,8 +29,8 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
 
   if (path === '/api/pos/bootstrap' && request.method === 'GET') return getPosBootstrapRoute(db, user);
   if (path === '/api/pos/cash-session/summary' && request.method === 'GET') return getCashSessionSummaryRoute(db);
-  if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string }>(request), user);
-  if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string }>(request), user);
+  if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string; clientRequestId?: string }>(request), user);
+  if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string; clientRequestId?: string }>(request), user);
   if (path === '/api/pos/sales' && request.method === 'POST') return completeSaleRoute(db, await readBody<PosSaleInput>(request), user);
   if (path === '/api/pos/sales-by-phone' && request.method === 'GET') return getSalesByPhoneRoute(db, cleanText(url.searchParams.get('phone')));
 
