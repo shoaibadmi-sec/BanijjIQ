@@ -85,6 +85,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const soldQty=new Map<string,number>(),soldLineAmounts=new Map<string,number>();
   const lotQty=new Map<string,number>(),lotCosts=new Map<string,number>();
   const returnedQty=new Map<string,number>(),restoredQty=new Map<string,number>();
+  const returnedByDocument=new Map<string,number>(),restoredByDocument=new Map<string,number>();
   const actualRefunds=new Map<string,number>(),lineRefunds=new Map<string,number>();
 
   for(const inv of invoices){
@@ -145,6 +146,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(value===null||value<0||Number(item.return_quantity)<=0)
       reasons.add('Invalid refund line or returned quantity.');
     returnedQty.set(k,(returnedQty.get(k)||0)+Number(item.return_quantity));
+    const doc=key(item.return_id,k);
+    returnedByDocument.set(doc,(returnedByDocument.get(doc)||0)+Number(item.return_quantity));
     lineRefunds.set(item.return_id,(lineRefunds.get(item.return_id)||0)+(value??0));
   }
   for(const item of returns){
@@ -163,6 +166,8 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       else cogs-=reduction;
     }
     restoredQty.set(k,(restoredQty.get(k)||0)+qty);
+    const doc=key(item.return_id,k);
+    restoredByDocument.set(doc,(restoredByDocument.get(doc)||0)+qty);
     const prior=lotQty.get(k)||0;
     if(qty>prior)reasons.add('Return lot reversal exceeds originally allocated quantity.');
   }
@@ -171,6 +176,11 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
       reasons.add('Missing immutable return lot allocation; cannot infer original FIFO cost.');
     if(qty>(soldQty.get(k)||0))reasons.add('Return quantity exceeds original sale quantity.');
   }
+  for(const [doc,qty] of returnedByDocument)
+    if(!eq(qty,restoredByDocument.get(doc)||0))
+      reasons.add('Each return must match its original FIFO lot allocation.');
+  for(const doc of restoredByDocument.keys())if(!returnedByDocument.has(doc))
+    reasons.add('Return lot allocation has no matching return document line.');
   // Return lots with no matching line must never silently reduce COGS.
   for(const k of restoredQty.keys())if(!returnedQty.has(k))
     reasons.add('Restored lot has no matching recorded return line.');
