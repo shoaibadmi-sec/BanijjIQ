@@ -275,3 +275,35 @@ test('two return documents cannot restore the same original FIFO lot twice',asyn
     'read-only reports must not correct historical FIFO allocations');
  }finally{db.close();}
 });
+
+
+test('oversized invoice period never publishes a truncated aggregate as a complete total',async()=>{
+ const db=fixture();
+ try {
+  // Full migrated SQLite: 5002 posted headers, greater than the
+  // reporter's 5001-invoice safety sample. Historical incomplete source
+  // records must not turn a truncated sample into a shop-wide BDT figure.
+  const insert=db.native.prepare(`INSERT INTO sales
+   (invoice_id,sale_date,customer_name,customer_phone,subtotal,discount,
+    grand_total,paid_amount,due_amount,payment_type,payment_status,status)
+   VALUES (?,'2026-10-25','Bulk Customer','01000000124',
+           100,0,100,100,0,'Cash','Paid','Completed')`);
+  db.native.transaction(()=>{
+   for(let i=1;i<=5001;i++) insert.run('SALE-OVER-CAP-'+String(i).padStart(5,'0'));
+  })();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const result=await readSalesProfit(db,query('profit'));
+  assert.equal(result.totalRows,5002);
+  assert.equal(result.coverage.status,'incomplete');
+  assert.match(result.coverage.reason,/5,000|split.*date.*range/i);
+  for(const key of ['grossSales','discounts','returns','netSales','fifoCogs','grossProfit','netProfit']) {
+   assert.equal(metric(result,key).valueMinor,null,key+' cannot report a sample-only period amount');
+   assert.notEqual(metric(result,key).status,'ready',key+' must not be certified');
+  }
+  // Individual source rows can still show their original recorded values.
+  assert.ok(result.rows.length>0);
+  assert.equal(result.rows[0].amountMinor,10000);
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+   'reporting a large period must not modify D1 accounting');
+ } finally { db.close(); }
+});
