@@ -29,6 +29,8 @@ import {
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { updateProductCatalog } from './catalog.service.js';
+import { captureStockCount,readStockCount } from './stocktake.service.js';
+import { approveStockCount } from './stocktakeApproval.service.js';
 import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
@@ -105,6 +107,16 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
     const body = await readBody<{ status?: string }>(request);
     return setProductStatus(db, decodeURIComponent(statusMatch[1]), cleanText(body.status));
   }
+
+  const stockCountApproval = path.match(/^\/api\/products\/([^/]+)\/stock-counts\/([^/]+)\/approve$/);
+  if (stockCountApproval && request.method === 'POST')
+    return approveStockCount(db,decodeURIComponent(stockCountApproval[1]),decodeURIComponent(stockCountApproval[2]),user);
+  const stockCountDetail = path.match(/^\/api\/products\/([^/]+)\/stock-counts\/([^/]+)$/);
+  if (stockCountDetail && request.method === 'GET')
+    return readStockCount(db,decodeURIComponent(stockCountDetail[1]),decodeURIComponent(stockCountDetail[2]));
+  const stockCountCreate = path.match(/^\/api\/products\/([^/]+)\/stock-counts$/);
+  if (stockCountCreate && request.method === 'POST')
+    return captureStockCount(db,decodeURIComponent(stockCountCreate[1]),await readBody<any>(request),user);
 
   const adjustMatch = path.match(/^\/api\/products\/([^/]+)\/adjust-stock$/);
   if (adjustMatch && request.method === 'POST') {
