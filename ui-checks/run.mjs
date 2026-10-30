@@ -768,8 +768,8 @@ try{
       await daybook.waitFor({timeout:12000});
       await daybook.getByText('BTR-UI-6E-001').waitFor({timeout:12000});
       await daybook.getByRole('button',{name:'Actions for BTR-UI-6E-001'}).click();
-      assert.equal(await daybook.getByRole('button',{name:'Go to source'}).count(),1);
-      assert.equal(await daybook.getByRole('button',{name:'Review reversal'}).count(),0,'Daybook must not expose unsupported posting reversals');
+      assert.equal(await page.getByRole('button',{name:'Go to source'}).count(),1);
+      assert.equal(await page.getByRole('button',{name:'Review reversal'}).count(),0,'Daybook must not expose unsupported posting reversals');
       await daybook.getByRole('combobox',{name:'Daybook page size'}).selectOption('100');
       await daybook.getByRole('button',{name:/Created Date/}).click();
       await page.waitForFunction(()=>document.querySelector('[data-live-daybook]')?.textContent?.includes('1 of 1 records'),null,{timeout:12000});
