@@ -41,7 +41,7 @@ export async function runLiveBusinessSettingsChecks({browser,base,withCheck}){
       try{
         const panel=f.page.locator('[data-live-business-settings]');
         await panel.waitFor({timeout:12000});
-        const name=f.page.getByRole('textbox',{name:'Shop name',exact:true});
+        const name=f.page.getByRole('textbox',{name:'Business name',exact:true});
         await name.waitFor({timeout:12000});
         assert.equal(await name.inputValue(),'D1 Source Hardware','must load D1 value, not demo/localStorage');
         assert.equal(await f.page.getByRole('textbox',{name:'Phone number'}).inputValue(),'01700002611');
@@ -64,7 +64,7 @@ export async function runLiveBusinessSettingsChecks({browser,base,withCheck}){
     try{
       const panel=f.page.locator('[data-live-business-settings]');
       await panel.waitFor({timeout:12000});
-      const name=f.page.getByRole('textbox',{name:'Shop name',exact:true});
+      const name=f.page.getByRole('textbox',{name:'Business name',exact:true});
       await name.waitFor({timeout:12000});
       assert.equal(await name.inputValue(),'D1 Source Hardware');
       assert.equal(await name.isDisabled(),true);
@@ -79,7 +79,7 @@ export async function runLiveBusinessSettingsChecks({browser,base,withCheck}){
       const panel=f.page.locator('[data-live-business-settings]');
       await panel.waitFor({timeout:12000});
       await panel.getByRole('alert').getByText('D1 settings source unavailable').waitFor({timeout:10000});
-      assert.equal(await f.page.getByRole('textbox',{name:'Shop name',exact:true}).count(),0);
+      assert.equal(await f.page.getByRole('textbox',{name:'Business name',exact:true}).count(),0);
       assert.equal(await panel.getByText('Nawabpur Hardware House').count(),0);
       assert.equal(f.calls.filter(x=>x.method==='PUT').length,0);
     }finally{await f.context.close();}
