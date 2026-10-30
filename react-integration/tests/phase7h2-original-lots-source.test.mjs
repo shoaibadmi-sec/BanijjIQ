@@ -11,7 +11,7 @@ test('7H2 reuses pinned HisabIQ StockLotsView JSX and original stock adjustment 
   assert.ok(begin>0&&end>begin);
   assert.ok(compiled.includes(source.slice(begin,end)), 'source-exact original stock lots table and controls');
   assert.match(compiled,/import \{ StockLotsView \} from '\.\.\/components\/products\/ProductInventoryViews';/);
-  assert.match(compiled,/import \{ StockAdjustmentDialog \} from '\.\.\/components\/products\/ProductInventoryDialogs';/);
+  assert.match(compiled,/import \{ StockAdjustmentDialog, type StockAdjustmentResult \} from '\.\.\/components\/products\/ProductInventoryDialogs';/);
   assert.match(compiled,/loadInventoryLots\(/);
   assert.match(compiled,/<StockAdjustmentDialog/);
   assert.doesNotMatch(compiled,/disabled=\{id!=='list'&&id!=='history'\}/);
