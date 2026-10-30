@@ -1,6 +1,6 @@
 import type {SherDatabase} from '../../db/types.js';
 
-type LookupRow={id:string;name:string;status:string;symbol?:string};
+type LookupRow={id:string;name:string;nameBn?:string;status:string;symbol?:string};
 type ProductRow={productId:string;category:string;brand:string;unit:string};
 type ProfileRow={productId:string;profileJson:string};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{
@@ -29,8 +29,8 @@ function parseProfile(row:ProfileRow,baseUnit:string):string[] {
  */
 export async function getProductSettingsLookupsRoute(db:SherDatabase):Promise<Response>{
   const [categories,brands,units,products,profiles]=await Promise.all([
-    db.prepare("SELECT category_id AS id,category_name AS name,status FROM product_categories ORDER BY category_name COLLATE NOCASE,id").all<LookupRow>(),
-    db.prepare("SELECT brand_id AS id,brand_name AS name,status FROM product_brands ORDER BY brand_name COLLATE NOCASE,id").all<LookupRow>(),
+    db.prepare("SELECT category_id AS id,category_name AS name,category_name_bn AS nameBn,status FROM product_categories ORDER BY category_name COLLATE NOCASE,id").all<LookupRow>(),
+    db.prepare("SELECT brand_id AS id,brand_name AS name,brand_name_bn AS nameBn,status FROM product_brands ORDER BY brand_name COLLATE NOCASE,id").all<LookupRow>(),
     db.prepare("SELECT unit_id AS id,unit_name AS name,status,symbol FROM product_units ORDER BY unit_name COLLATE NOCASE,id").all<LookupRow>(),
     db.prepare("SELECT product_id AS productId,category,brand,unit FROM products WHERE is_deleted=0").all<ProductRow>(),
     db.prepare("SELECT up.product_id AS productId,up.profile_json AS profileJson FROM product_unit_profiles up JOIN products p ON p.product_id=up.product_id WHERE p.is_deleted=0").all<ProfileRow>()
@@ -55,7 +55,7 @@ export async function getProductSettingsLookupsRoute(db:SherDatabase):Promise<Re
     }
   }
   const rows=(input:LookupRow[],usage:Map<string,number>)=>input.map(item=>({
-    id:item.id,name:item.name,active:item.status==='Active',usage:usage.get(key(item.name))??0
+    id:item.id,name:item.name,...(item.nameBn?{nameBn:item.nameBn}:{}),active:item.status==='Active',usage:usage.get(key(item.name))??0
   }));
   return json({ok:true,
     categories:rows(categories.results??[],categoryUsage),

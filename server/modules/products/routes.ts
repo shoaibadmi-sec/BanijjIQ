@@ -3,6 +3,7 @@ import { getStockAlertsRoute } from './stock-alerts.service.js';
 import { getInventoryHistoryRoute } from './inventoryHistory.service.js';
 import { getInventoryLotsRoute } from './inventoryLots.service.js';
 import { getProductSettingsLookupsRoute } from './productSettingsLookups.service.js';
+import { createSettingsLookup, setSettingsLookupStatus, deleteSettingsLookup, lookupKind } from './productSettingsMutations.service.js';
 import type { ProductInput } from './types.js';
 import {
   addLookup,
@@ -54,6 +55,16 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (path === '/api/products/inventory-history' && request.method === 'GET') return getInventoryHistoryRoute(db);
   if (path === '/api/products/inventory-lots' && request.method === 'GET') return getInventoryLotsRoute(db,user);
   if (path === '/api/products/settings/lookups' && request.method === 'GET') return getProductSettingsLookupsRoute(db);
+  if (path === '/api/products/settings/lookups' && request.method === 'POST')
+    return createSettingsLookup(db,await readBody<unknown>(request));
+  const settingsLookupMatch=path.match(/^\/api\/products\/settings\/lookups\/(category|brand|unit)\/([^/]+)(\/status)?$/);
+  if(settingsLookupMatch){
+    const kind=lookupKind(settingsLookupMatch[1]),id=decodeURIComponent(settingsLookupMatch[2]);
+    if(kind&&settingsLookupMatch[3]==='/status'&&request.method==='PUT')
+      return setSettingsLookupStatus(db,kind,id,await readBody<unknown>(request));
+    if(kind&&!settingsLookupMatch[3]&&request.method==='DELETE')
+      return deleteSettingsLookup(db,kind,id);
+  }
   if (path === '/api/bootstrap' && request.method === 'GET') {
     const permissions = await getUserPermissions(db, user);
     const canView = (key: string) => permissions === null || !!permissions[key]?.view;
