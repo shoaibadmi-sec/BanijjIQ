@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { SqliteDatabase } from '../server/db/sqlite.ts';
 import { runMigrations } from '../server/db/migrate.ts';
 import { handleApiRequest } from '../server/core/handler.ts';
@@ -23,6 +24,16 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(setup.status,200);
     token = setup.token as string;
     db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES ('INV-REPORT-001','2026-10-15','Test Buyer','01000000121',120,'Cash','Paid')").run();
+    // A valid session for a non-admin without reports.view must not bypass the route guard.
+    const adminToken=token;
+    const deniedToken='local-staff-report-session-token';
+    const tokenHash=createHash('sha256').update(deniedToken).digest('base64');
+    db.native.prepare("INSERT INTO app_users (user_id,full_name,phone,password_hash,password_salt,role,status,created_by) VALUES ('report-restricted-user','Restricted User','01000008766','placeholder','placeholder','restricted-reports','Active','Fixture')").run();
+    db.native.prepare("INSERT INTO auth_sessions (session_id,user_id,token_hash,expires_at) VALUES ('report-restricted-session','report-restricted-user',?,datetime('now','+2 hours'))").run(tokenHash);
+    token=deniedToken;
+    assert.equal((await call('GET','/api/reports/v2/rows?report=sales')).status,403);
+    assert.equal((await call('GET','/api/reports/v2/catalog')).status,403);
+    token=adminToken;
     const before = (db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
     const catalog = await call('GET','/api/reports/v2/catalog');
     assert.equal(catalog.status,200,JSON.stringify(catalog));
