@@ -27,6 +27,10 @@ try{
      calls.push({path,method:route.request().method()});
      const json=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
      if(path==='/api/auth/me')return json({ok:true,user:{userId:'CI-ADMIN',fullName:'CI Admin',phone:'01700000000',role:'admin',permissions:{}}});
+     if(path==='/api/pos/bootstrap')return json({ok:true,
+       products:[],customers:[{id:'CUST-D1-001',name:'Verified Customer D1',phone:'01700111111',
+         fatherName:'',address:'Nawabpur',currentDue:450}],
+       bankAccounts:[],vendors:[],activeSession:null,invoiceDesign:{settings:{},logoDataUri:''}});
      if(path==='/api/bootstrap')return json({ok:true,products:[
        {productId:'D1-REAL-001',productName:'D1 Verified Cable',brand:'Test',category:'Electrical',unit:'Pcs',
         barcode:'D1-CB',sellingPrice:123,purchasePrice:80,currentStock:13,minimumStock:2,
@@ -45,6 +49,15 @@ try{
     'API preview must start empty, not with seeded cart lines');
    assert.ok(!((await page.locator('[data-pos-layout]').innerText()).includes('Copper Wire 1.5')));
    assert.equal(calls.filter(c=>c.path==='/api/bootstrap').length,1,'source POS must load real D1 catalog once');
+   assert.equal(calls.filter(c=>c.path==='/api/pos/bootstrap').length,1,'source customer lookup must use the D1 POS bootstrap');
+   await page.getByTestId('pos-customer-picker-trigger').click();
+   await page.getByTestId('pos-customer-picker-search').fill('Verified Customer D1');
+   await page.getByRole('button',{name:/Verified Customer D1/}).last().click();
+   assert.ok((await page.getByTestId('pos-customer-picker-trigger').innerText()).includes('Verified Customer D1'),
+     'the unchanged original CustomerPicker must select the backend customer');
+   assert.ok((await page.locator('[data-pos-previous-balance-inline]').innerText()).includes('450'),
+     'original checkout must show the authoritative existing D1 due, not demo balance');
+
    await page.getByRole('button',{name:/D1 Verified Cable/}).first().click();
    await page.locator('[data-pos-layout] [data-cart-row="sale"]').first().waitFor({timeout:12000});
    assert.ok((await page.locator('[data-pos-layout] [data-cart-row="sale"]').first().innerText()).includes('D1 Verified Cable'),

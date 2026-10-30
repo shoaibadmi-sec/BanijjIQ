@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import {patchOriginalPosApiCatalog} from './preview/patch-original-pos-api-catalog.mjs';
+import {patchOriginalPosCustomerPicker} from './preview/patch-original-pos-customers.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
 
 const root = resolve(process.cwd());
@@ -36,6 +37,8 @@ const generatedProductsPath=join(web,'src/pages/Products.tsx');
 writeFileSync(generatedProductsPath,patchLiveProducts(readFileSync(sourceProductsPath,'utf8')));
 const sourcePosPath=join(sourceWeb,'src/pages/Pos.tsx');
 writeFileSync(join(web,'src/pages/Pos.tsx'),patchOriginalPosApiCatalog(readFileSync(sourcePosPath,'utf8')));
+const sourceCustomerPicker=join(sourceWeb,'src/components/pos/CustomerPicker.tsx');
+writeFileSync(join(web,'src/components/pos/CustomerPicker.tsx'),patchOriginalPosCustomerPicker(readFileSync(sourceCustomerPicker,'utf8')));
 
 // Phase 5: simplify generated Reports navigation without touching the pinned React source.
 const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
