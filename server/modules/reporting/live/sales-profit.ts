@@ -45,6 +45,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
   const invoices=sample.results||[];
   const byId=new Map(invoices.map(x=>[x.invoice_id,x]));
   const reasons=new Set<string>();
+  if(q.search.trim())reasons.add('Search-filtered invoice profit cannot allocate whole-shop operating expenses to one customer; remove the search filter for period profit.');
   if(totalRows>5000)reasons.add('More than 5,000 invoices: split the date range before trusting aggregate profit.');
 
   const [linesR,lotsR,returnsR,returnLinesR,returnLotsR,expensesR,reversalsR,vendorR]=await Promise.all([
@@ -178,7 +179,7 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     if(amount===null||amount<0)reasons.add('Invalid recorded operating expense.');
     else expenses+=amount;
   }
-  const net=gross-refund,fullyChecked=reasons.size===0;
+  const net=gross-refund;
   if(net<0)reasons.add('Refunds exceed recorded invoice totals.');
   if(cogs<0)reasons.add('Original-cost reversals exceed recorded FIFO cost.');
   const verified=reasons.size===0;
