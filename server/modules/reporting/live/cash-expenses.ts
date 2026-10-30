@@ -208,6 +208,8 @@ export async function readCashExpenses(db:SherDatabase,q:LiveReportQuery):Promis
      warnings.push('Financing cash/bank posting does not reconcile to its source transaction.');
    if(payment==='bank_book'&&linked.some(x=>x.bank_account_id!==f.bank_account_id))
      warnings.push('Financing bank account does not reconcile.');
+   if(linked.some(x=>x.date!==f.date))
+     warnings.push('Financing money-book date does not match its source transaction.');
    if(warnings.length){
      const reason='Finance '+f.finance_id+': '+warnings.join(' ');
      problems.add(reason);financed.set(f.finance_id,reason);
