@@ -40,6 +40,7 @@ jobs:
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/phase7f2-alerts-source.test.mjs
           node --test react-integration/tests/phase7h1-original-history-source.test.mjs
+          node --test react-integration/tests/phase7h2-original-lots-source.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
           node --test react-integration/tests/pos-checkout-source-parity.test.mjs
           node --test react-integration/tests/products-live-route.test.mjs
@@ -77,6 +78,7 @@ jobs:
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
           node --import tsx --test react-integration/tests/phase7f2-alerts-client.test.ts
           node --import tsx --test tests/phase7h1-inventory-history.integration.test.ts react-integration/tests/phase7h1-original-history-client.test.ts
+          node --import tsx --test tests/phase7h2-inventory-lots.integration.test.ts react-integration/tests/phase7h2-original-lots-client.test.ts
       - name: Measure Phase 4F purchase/supplier function coverage with real isolated DB
         run: |
           set -o pipefail
