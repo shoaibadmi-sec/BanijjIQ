@@ -56,6 +56,7 @@ export function LiveReportsPage(){
   };
   const switchTab=(next:'overview'|'library')=>update({screen:next,page:null});
   const openReport=(id:string)=>{
+    setRowSearch('');
     update({screen:'library',report:id,page:null});
   };
 
