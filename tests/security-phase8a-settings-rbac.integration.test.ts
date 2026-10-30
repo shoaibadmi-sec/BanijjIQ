@@ -30,8 +30,8 @@ async function fixture() {
     const managerRole = await api('POST', '/api/roles', {
       name: 'DelegatedManager',
       permissions: {
-        roles: { view: true, add: true, edit: true },
-        users: { view: true, add: true, edit: true },
+        roles: { view: true, add: true, edit: true, delete: true },
+        users: { view: true, add: true, edit: true, delete: true },
         settings: { view: true, edit: true },
       },
     }, admin);
@@ -147,5 +147,50 @@ test('Phase 8A: settings.edit cannot change session security policy or partially
     const updated = await f.api('GET', '/api/settings/bootstrap', undefined, f.admin);
     assert.equal(updated.settings['Shop Name'], 'Updated Shop');
     assert.equal(updated.settings['Session Timeout Hours'], '12');
+  } finally { f.db.close(); }
+});
+
+test('Phase 8A: privileged role status/deletion cannot be controlled by less privileged role maintainers', async () => {
+  const f = await fixture();
+  try {
+    const status = await f.api('PUT', '/api/roles/' + f.privilegedRoleId + '/status',
+      { status: 'Inactive' }, f.manager);
+    assert.equal(status.status, 403, JSON.stringify(status));
+    const remove = await f.api('DELETE', '/api/roles/' + f.privilegedRoleId,
+      undefined, f.manager);
+    assert.equal(remove.status, 403, JSON.stringify(remove));
+    const roles = await f.api('GET', '/api/roles', undefined, f.admin);
+    assert.equal(roles.roles.find((role: any) => role.id === f.privilegedRoleId)?.status, 'Active');
+  } finally { f.db.close(); }
+});
+
+test('Phase 8A: delegated user managers cannot reset, deactivate, or delete high-privilege account', async () => {
+  const f = await fixture();
+  try {
+    const privilegedUser = await f.api('POST', '/api/users', {
+      name: 'Report Access Holder',
+      mobile: '01000002605',
+      role: 'RestrictedReportsOwner',
+      password: 'Report-Holder-Test-2026!',
+    }, f.admin);
+    assert.equal(privilegedUser.status, 200, JSON.stringify(privilegedUser));
+
+    const reset = await f.api('POST', '/api/users/' + privilegedUser.id + '/reset-password',
+      { newPassword: 'Changed-By-Manager-2026!' }, f.manager);
+    assert.equal(reset.status, 403, JSON.stringify(reset));
+    const deactivate = await f.api('PUT', '/api/users/' + privilegedUser.id + '/status',
+      { status: 'Inactive' }, f.manager);
+    assert.equal(deactivate.status, 403, JSON.stringify(deactivate));
+    const remove = await f.api('DELETE', '/api/users/' + privilegedUser.id,
+      undefined, f.manager);
+    assert.equal(remove.status, 403, JSON.stringify(remove));
+
+    const login = await f.api('POST', '/api/auth/login', {
+      phone: '01000002605',
+      password: 'Report-Holder-Test-2026!',
+    });
+    assert.equal(login.status, 200, JSON.stringify(login));
+    const listed = await f.api('GET', '/api/users', undefined, f.admin);
+    assert.equal(listed.users.find((user: any) => user.id === privilegedUser.id)?.status, 'Active');
   } finally { f.db.close(); }
 });
