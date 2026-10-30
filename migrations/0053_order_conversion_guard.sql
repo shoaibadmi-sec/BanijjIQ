@@ -28,3 +28,10 @@ CREATE TRIGGER IF NOT EXISTS guard_supplier_order_approval_once
  BEFORE INSERT ON purchase_plan_orders
  WHEN NOT EXISTS(SELECT 1 FROM purchase_plans p WHERE p.plan_id=NEW.plan_id AND p.status='Draft')
  BEGIN SELECT RAISE(ABORT,'purchase_plan_not_draft_for_order'); END;
+
+-- Native race guard: a supplier cannot be disabled between plan validation and order creation.
+CREATE TRIGGER IF NOT EXISTS guard_active_supplier_plan_order
+ BEFORE INSERT ON purchase_plan_orders
+ WHEN NOT EXISTS(SELECT 1 FROM suppliers
+   WHERE supplier_id=NEW.supplier_id AND status='Active' AND COALESCE(is_deleted,0)=0)
+ BEGIN SELECT RAISE(ABORT,'supplier_order_requires_active_supplier'); END;

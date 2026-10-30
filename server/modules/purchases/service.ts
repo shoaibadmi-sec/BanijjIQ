@@ -820,7 +820,8 @@ export async function getSupplierDetailRoute(db: SherDatabase, supplierId: strin
 }
 
 export async function setSupplierStatusRoute(db: SherDatabase, supplierId: string, status: string): Promise<Response> {
-  const next = status === 'Active' ? 'Active' : 'Inactive';
+  if (status !== 'Active' && status !== 'Inactive') return error('Supplier status must be Active or Inactive.');
+  const next = status;
   const result = await db.prepare(`UPDATE suppliers SET status=?, updated_at=datetime('now') WHERE supplier_id=? AND COALESCE(is_deleted,0)=0`).bind(next, supplierId).run();
   if (!result.meta.changes) return error('Supplier not found.', 404);
   return json({ ok: true, id: supplierId, status: next });
