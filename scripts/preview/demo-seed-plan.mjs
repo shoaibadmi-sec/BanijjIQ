@@ -45,8 +45,8 @@ export function buildDemoSeedPlan(){
   const partners=partyData.parties;
   const customers=partners.filter(p=>p.roles.includes('Customer')).map((p,index)=>({
     sourceId:p.id,name:'[DEMO] '+p.name,phone:'01099'+String(index+1).padStart(6,'0'),address:p.area}));
-  const suppliers=partners.filter(p=>p.roles.includes('Supplier')).map(p=>({
-    sourceId:p.id,name:'[DEMO] '+p.name,phone:p.phone,address:p.area}));
+  const suppliers=partners.filter(p=>p.roles.includes('Supplier')).map((p,index)=>({
+    sourceId:p.id,name:'[DEMO] '+p.name,phone:'01097'+String(index+1).padStart(6,'0'),address:p.area}));
   const vendors=partners.filter(p=>p.roles.includes('Vendor')).map((p,index)=>({
     sourceId:p.id,name:'[DEMO] '+p.name,phone:'01098'+String(index+1).padStart(6,'0')}));
   const accounts=financeData.financeAccounts.filter(a=>a.type!=='Cash').map(a=>({
@@ -61,7 +61,7 @@ export function buildDemoSeedPlan(){
     expense:{sourceId:expense.id,category:'[DEMO] '+expense.category,payee:'[DEMO] '+expense.payee,
       description:expense.note||'Demo rental expense',amount:expense.amount,accountKey:'acc-dbl'},
     financePeople:financeData.financePeople.filter(p=>p.roles.includes('Owner')||p.roles.includes('Lender'))
-      .map(p=>({sourceId:p.id,name:'[DEMO] '+p.name,phone:p.phone,personType:p.roles.includes('Owner')?'Owner':'Lender'})),
+      .map((p,index)=>({sourceId:p.id,name:'[DEMO] '+p.name,phone:'01096'+String(index+1).padStart(6,'0'),personType:p.roles.includes('Owner')?'Owner':'Lender'})),
     excluded:[
       'historical dashboard/chart totals are designed values, not journal entries',
       'tracked serial/expiry/warranty details not seeded: product records are untracked test fixtures',
