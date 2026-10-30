@@ -575,6 +575,35 @@ try{
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});
+  await withCheck('POS keeps typed name when a legacy saved phone match has an empty customer name',async()=>{
+    const ctx=await browser.newContext({viewport:{width:1440,height:960},reducedMotion:'reduce'});
+    const api=[];await startMocking(ctx,api);
+    await ctx.route('**/api/pos/bootstrap',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,products:[...posProducts,posMixedProduct],
+        customers:[{id:'CUST-LEGACY-BLANK',name:'',phone:'01000000124',
+          fatherName:'',address:'',currentDue:0}],bankAccounts:[],
+        vendors:[],activeSession:{sessionId:'UI-E2E-SESSION',openedAt:'2026-10-28 09:00:00',openingCash:500},
+        invoiceDesign:{settings:{'Shop Name':'UI Fixture Shop'},logoDataUri:''}})
+    }));
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
+    await page.locator('[data-live-pos]').waitFor({timeout:12000});
+    await page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first().click();
+    await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
+    const name=page.locator('input[list="live-pos-customer-names"]');
+    const phone=page.locator('input[list="live-pos-customer-phones"]');
+    await name.fill('Real Browser Due Buyer');
+    await phone.fill('01000000124');
+    await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+    assert.equal(await name.inputValue(),'Real Browser Due Buyer',
+      'legacy phone records must never silently erase a cashier-entered name on blur');
+    assert.equal(await phone.inputValue(),'01000000124');
+    assert.equal(await page.getByRole('spinbutton',{name:/Amount received/}).inputValue(),'40');
+    assert.equal(api.filter(x=>x.method==='POST'&&x.path==='/api/pos/sales').length,0);
+    await ctx.close();
+  });
   for(const width of [390,768,1440]){
     await withCheck('pos '+width+' light',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:960},

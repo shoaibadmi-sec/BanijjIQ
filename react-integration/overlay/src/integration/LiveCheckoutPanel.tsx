@@ -87,13 +87,13 @@ export function LiveCheckoutPanel(props: Props) {
           <label className="min-w-0 text-xs text-ink-600">Customer name *
             <Input list="live-pos-customer-names" value={props.customerName}
               onChange={event => props.onCustomerName(event.target.value)}
-              onBlur={() => props.onSelectCustomer(props.customerName, 'name')}
+              onBlur={event => props.onSelectCustomer(event.currentTarget.value, 'name')}
               aria-label="Customer name" placeholder="Name · নাম" className="mt-1 h-9" />
           </label>
           <label className="min-w-0 text-xs text-ink-600">Phone *
             <Input list="live-pos-customer-phones" inputMode="tel" value={props.customerPhone}
               onChange={event => props.onCustomerPhone(event.target.value)}
-              onBlur={() => props.onSelectCustomer(props.customerPhone, 'phone')}
+              onBlur={event => props.onSelectCustomer(event.currentTarget.value, 'phone')}
               aria-label="Customer phone" placeholder="Phone · ফোন" className="mt-1 h-9" />
           </label>
         </div>
