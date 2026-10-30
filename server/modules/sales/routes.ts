@@ -2,6 +2,7 @@ import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
 import { postBundleCashSale } from './bundleCashPost.service.js';
+import { returnFullBundleCashInvoice } from './bundleCashReturn.service.js';
 import {
   closeCashSessionRoute, completeSaleRoute, completeSalesReturnRoute, deleteSaleRoute,
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
@@ -32,6 +33,9 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnHistoryDetailMatch = path.match(/^\/api\/sales-returns\/history\/([^/]+)$/);
   if (salesReturnHistoryDetailMatch && request.method === 'GET') return getSalesReturnDetailRoute(db, decodeURIComponent(salesReturnHistoryDetailMatch[1]));
   if (path === '/api/sales-returns' && request.method === 'GET') return getSalesReturnHistoryRoute(db);
+  const fullBundleReturn=path.match(/^\/api\/sales-returns\/bundle-invoices\/([^/]+)$/);
+  if(fullBundleReturn && request.method==='POST') return returnFullBundleCashInvoice(
+    db,decodeURIComponent(fullBundleReturn[1]),await readBody<any>(request),user);
   if (path === '/api/sales-returns' && request.method === 'POST') {
     const body=await readBody<any>(request);
     if(await isUnreversibleBundleSale(db,String(body?.invoiceId||''))) return bundleLifecycleBlocked();
