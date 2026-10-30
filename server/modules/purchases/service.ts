@@ -145,6 +145,27 @@ export async function createPurchase(db: SherDatabase, input: PurchaseInput, use
     if (!sourceOrder) return error('Source supplier purchase order not found.');
     if (sourceOrder.status !== 'Open' || cleanText(sourceOrder.convertedPurchaseId)) return error('This supplier purchase order has already been converted or closed.');
     if (sourceOrder.supplierId !== supplier.supplierId) return error('Purchase supplier must match the supplier purchase order.');
+    const orderItems=await db.prepare(`SELECT product_id AS productId,quantity
+      FROM purchase_plan_order_items WHERE order_id=?`).bind(purchasePlanOrderId)
+      .all<{productId:string;quantity:number}>();
+    const requested=new Map<string,number>();
+    for(const item of items){
+      const key=cleanText(item.productId);
+      if(!key||requested.has(key))return error('An order purchase requires distinct products.');
+      if(item.unitQuantities){
+        const profile=await db.prepare(`SELECT revision,profile_json FROM product_unit_profiles
+          WHERE product_id=?`).bind(key).first<{revision:number;profile_json:string}>();
+        if(!profile||profile.revision!==item.unitProfileRevision)
+          return error('Unit profile changed: refresh the purchase order.',409);
+        try{
+          requested.set(key,quotePurchaseUnits(JSON.parse(profile.profile_json),profile.revision,
+            item.unitQuantities,cleanText(item.priceUnit),item.unitPrice as number).baseQuantity);
+        }catch{return error('Invalid order unit conversion.',409);}
+      }else requested.set(key,Number(item.qty??item.quantity));
+    }
+    if(orderItems.results.length!==requested.size||
+       orderItems.results.some(line=>requested.get(line.productId)!==Number(line.quantity)))
+      return error('Purchase quantities and products must match the approved supplier order.',409);
   }
 
   const normalized: Array<{ product: ProductRow; qty: number; unitPrice: number; lineTotal: number; sellingPrice: number | null; tracking: any; mixed:(PurchaseUnitQuote & {profileJson:string})|null }> = [];
@@ -422,6 +443,7 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (!reason) return error('Enter a reason for this update.');
   const existing = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!existing) return error('Purchase not found.');
+  if(cleanText(existing.purchase_plan_order_id))return error('Approved-order purchases cannot be edited; use a controlled reversal.',409);
   if(await hasMixedUnitPurchase(db,purchaseId))
     return error('Mixed-unit purchase edits are locked until historical cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has Purchase Return records and can no longer be updated. Use Purchase Return for further corrections.');
@@ -517,6 +539,7 @@ export async function deletePurchaseRoute(db: SherDatabase, purchaseId: string, 
   if (!reason) return error('Enter a reason for deleting this purchase.');
   const purchase = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!purchase) return error('Purchase not found.');
+  if(cleanText(purchase.purchase_plan_order_id))return error('Approved-order purchases cannot be deleted; use a controlled reversal.',409);
   if(await hasMixedUnitPurchase(db,purchaseId))
     return error('Mixed-unit purchase delete is locked until cost-safe reversal is implemented (Phase 4C).',409);
   if (await hasPurchaseReturn(db, purchaseId)) return error('This purchase has return records and cannot be deleted.');
