@@ -113,7 +113,7 @@ test('actual purchase → FIFO sale → cash return → supplier settlement reco
   assert.equal(one('SELECT total_changes() AS n').n,beforeReports,'every report must be read-only');
 
   const settlementPayload={supplierId:supplier.id,amount:50,method:'Cash',
-   clientRequestId:'phase5-supplier-settlement-00001',notes:'Partial supplier pay'};
+   clientRequestId:crypto.randomUUID(),notes:'Partial supplier pay'};
   const settled=await api('POST','/api/purchases/supplier-settlements',settlementPayload);
   ok(settled);
   assert.equal(one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,150);
