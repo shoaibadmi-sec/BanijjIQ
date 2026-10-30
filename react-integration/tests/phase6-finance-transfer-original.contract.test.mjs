@@ -19,5 +19,6 @@ test('source Finance transfer dialog awaits one real API posting before closing'
  const adapter=read('react-integration/overlay/src/integration/phase6FinancePosting.ts');
  assert.match(adapter,/toVerifiedTransferPost/);
  assert.match(adapter,/Number.isSafeInteger/);
- assert.match(adapter,/Math.round\(.*10000/);
+ assert.match(adapter,/const minor4=transfer.amount\*10000/);
+ assert.match(adapter,/const ticks=Math.round\(minor4\)/);
 });
