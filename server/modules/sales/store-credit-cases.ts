@@ -152,8 +152,10 @@ export async function resolveStoreCreditCaseRoute(
     ids.some(id=>typeof id!=='string'||id.length<3||id.length>256)||
     new Set(ids).size!==ids.length)
     return fail('Provide distinct source evidence identifiers.');
-  if(input.decision==='verified-outstanding')
-    return fail('Creating spendable historical credit needs a separate finance-approved compensation workflow.',409);
+  if(input.decision==='verified-outstanding'){
+    const {commitVerifiedOutstandingCredit}=await import('./store-credit-compensation.js');
+    return commitVerifiedOutstandingCredit(db,user,rawId,reason,ids,input.expectedVersion);
+  }
   const flag=await findStoreCreditReviewFlag(
     db,parsed.flagCode,parsed.customerId,parsed.referenceId);
   if(!flag)return fail('Credit reconciliation case not found.',404);
