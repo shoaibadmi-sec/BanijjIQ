@@ -73,6 +73,7 @@ export async function reversePaidPurchaseRefund(db:SherDatabase,returnId:string,
  const paid=originalPaymentRows.results[0];
  if(originalPaymentRows.results.length!==1||paid.type!=='Supplier Payment'||
    Number(paid.credit)!==0||Math.abs(Number(paid.debit)-Number(purchase.paid_amount))>0.0001||
+   (method==='Cash'&&paid.payment_method!=='Cash')||
    (method!=='Cash'&&paid.bank_account_id!==original.refund_bank_account_id))
    return reject('Original supplier payment book was altered.');
  let bankBalance=0;
