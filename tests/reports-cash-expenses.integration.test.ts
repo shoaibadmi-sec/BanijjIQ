@@ -118,3 +118,22 @@ test('cash deposit into bank is a matched internal movement, not new sales or ca
   assert.equal(metric(page,'bankCurrentBalance').valueMinor,39000);
  }finally{db.close();}
 });
+
+
+test('orphan active expense money-book posting withholds operating expense certification',async()=>{
+ const db=fixture();try {
+  // The live cash-book has an expense debit with no active source expense.
+  // A matching master expense must exist; a cash movement alone cannot
+  // certify the operating expense total.
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,debit,credit) VALUES ('C-EXP-ORPHAN','2026-10-19','Expense','EXP-MISSING',15,0)").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  const page=await readCashExpenses(db,query('expenses'));
+  assert.equal(page.coverage.status,'incomplete');
+  assert.match(page.coverage.reason,/expense.*(source|missing|orphan)|money.book/i);
+  assert.equal(page.totalRows,1,'orphan must not manufacture an expense header');
+  assert.equal(page.rows[0].sourceId,'EXP-001');
+  assert.equal(metric(page,'operatingExpenses').valueMinor,null,
+    'source-incomplete money-book expenses cannot certify a whole-period expense total');
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before);
+ }finally{db.close();}
+});
