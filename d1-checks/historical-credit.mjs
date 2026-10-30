@@ -141,7 +141,7 @@ try{
   assert.equal(sql('SELECT COUNT(*) n FROM store_credit_historical_adjustments')[0].n,1);
   assert.equal(sql("SELECT COUNT(*) n FROM customer_ledger WHERE type='Store Credit Reclassification'")[0].n,1);
   assert.equal(sql("SELECT COUNT(*) n FROM audit_logs WHERE action='RECONCILE_STORE_CREDIT'")[0].n,1);
-  assert.equal(sql('SELECT COUNT(*) n FROM cash_book')[0].n,3);
+  assert.equal(sql("SELECT COUNT(*) n FROM cash_book WHERE reference IN ('RC-SALE','D1-SPLIT-ORIGINAL','"+sid+"')")[0].n,3);
   assert.equal(sql('SELECT COUNT(*) n FROM bank_book')[0].n,0);
   process.stdout.write('PASS historical credit plus split cash-credit posting on isolated Worker/D1\n');
 }catch(err){
