@@ -38,7 +38,8 @@ export type PurchaseReturnInput = {
   purchaseId?: string;
   date?: string;
   backdatedReason?: string;
-  refundMethod?: 'Cash' | 'Supplier Credit';
+  refundMethod?: 'Cash' | 'Bank' | 'Mobile Banking' | 'Supplier Credit';
+  bankAccountId?: string;
   reason?: string;
   notes?: string;
   clientRequestId?: string;
