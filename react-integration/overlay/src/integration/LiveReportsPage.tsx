@@ -14,7 +14,7 @@ import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary, getPosIn
 
 const mapToBackend: Record<string,LiveReportBackendKey> = {
   'sales-register':'sales',purchases:'purchase',stock:'stock',receivables:'receivables',
-  payables:'payables','product-profit':'profit','profit-loss':'profit',
+  payables:'payables','product-profit':'product-profit','profit-loss':'profit-loss',
   'cash-book':'cash','finance-movements':'finance',expenses:'expenses','business-audit':'audit'
 };
 const money=(minor:number|null)=>minor===null?'—':'৳'+(minor/100).toLocaleString('en-BD',{minimumFractionDigits:0,maximumFractionDigits:2});
@@ -286,7 +286,9 @@ export function LiveReportsPage(){
                 </span>
               </td>
             </tr>)}</tbody></table>
-            {!rows.rows.length&&<p className="p-5 text-sm text-ink-500">{text('No recorded rows for this selection.','এই নির্বাচনে কোনো রেকর্ড নেই।')}</p>}
+            {!rows.rows.length&&<p className="p-5 text-sm text-ink-500">{coverage?.status==='unavailable'
+              ?text('Report unavailable until accounting sources are reconciled.','হিসাবের মূল রেকর্ড যাচাই না হওয়া পর্যন্ত রিপোর্ট পাওয়া যাবে না।')
+              :text('No recorded rows for this selection.','এই নির্বাচনে কোনো রেকর্ড নেই।')}</p>}
           </div>}
           {rows&&<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-600">
             <span>{text('Records','রেকর্ড')}: {rows.totalRows} · {text('Page','পৃষ্ঠা')}: {page}</span>
