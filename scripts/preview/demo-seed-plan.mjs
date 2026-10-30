@@ -56,7 +56,7 @@ export function buildDemoSeedPlan(){
   const expense=purchaseData.expenses.find(e=>e.id==='e59');
   if(!expense||expense.amount!==35000||expense.method!=='Bank')throw Error('Demo rent expense changed.');
   return {
-    sourceCommit:'9a8dc1ac4e85ac4e60f254e068bd67c2a805673f',
+    sourceCommit:'0389b179b6fa8e930f64d014c90d1a8785c00664',
     openingCash:cashAccount?.openingBalance??0,products,customers,suppliers,vendors,accounts,purchases,sales,
     expense:{sourceId:expense.id,category:'[DEMO] '+expense.category,payee:'[DEMO] '+expense.payee,
       description:expense.note||'Demo rental expense',amount:expense.amount,accountKey:'acc-dbl'},

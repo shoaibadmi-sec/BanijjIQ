@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const baselineUrl = new URL('./reference/products-baseline.json', import.meta.url);
 const sourceUrl = new URL('../../apps/hisabiq-web/src/pages/Products.tsx', import.meta.url);
 const sourceRepo = fileURLToPath(new URL('../../apps/hisabiq-web/', import.meta.url));
-const PINNED_HISABIQ_COMMIT = '9a8dc1ac4e85ac4e60f254e068bd67c2a805673f';
+const PINNED_HISABIQ_COMMIT = '0389b179b6fa8e930f64d014c90d1a8785c00664';
 const PINNED_HISABIQ_BLOB = 'ffd429f0b65eaee8146ed7089cb9412a78f0e975';
 const PINNED_MOHIM_COMMIT = 'f95be8d9bcf55b08abe8841e7502d27b23c82c4c';
 const PINNED_MOHIM_BLOB = 'b3c8fb5ba179f5eb7951dd9c66dcfb2fa0a37303';
