@@ -43,7 +43,7 @@ test('product bootstrap enforces least privilege without breaking POS', async (t
       const roleName = 'BootSecurity' + suffix;
       const role = await api('POST', '/api/roles', adminToken, { name: roleName, permissions });
       assert.equal(role.status, 200, JSON.stringify(role));
-      const phone = '010000026' + suffix.padStart(2, '0');
+      const phone = '010000027' + suffix.padStart(2, '0');
       const created = await api('POST', '/api/users', adminToken, {
         name: 'Bootstrap Staff ' + suffix, mobile: phone, role: roleName,
         password: 'Local-Staff-Test-Secret!',
