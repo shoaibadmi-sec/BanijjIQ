@@ -55,6 +55,7 @@ jobs:
           node --import tsx --test tests/reports-phase5-acceptance.integration.test.ts
           node --import tsx --test tests/reports-transaction-lifecycle.integration.test.ts
           node --import tsx --test tests/reports-combined-accounting.integration.test.ts
+          node --import tsx --test tests/reports-bank-settlement-reversal.integration.test.ts
           node --import tsx --test tests/reports-customer-payment.integration.test.ts
           node --import tsx --test tests/reports-sales-profit.integration.test.ts
           node --import tsx --test tests/reports-stock-dues.integration.test.ts
