@@ -141,122 +141,156 @@ WHEN
     ))
 BEGIN SELECT RAISE(ABORT,'STORE_CREDIT_LEDGER_CONFLICT'); END;
 
--- This narrow, source-specific trigger authorizes only a fully evidenced
--- partial return against an original Cash + Store Credit *redeemed* split
--- invoice. No cash conversion, no new entitlement, no A/R journal.
+-- Cloudflare D1 expression depth <= 100. Keep the exact same
+-- fail-closed partial proof in separate short BEFORE INSERT triggers.
+-- The original full-refund and REDEEM triggers remain unchanged.
 CREATE TRIGGER trg_store_credit_partial_issue_source
 BEFORE INSERT ON customer_store_credit_entries
-WHEN NEW.entry_type='ISSUE'
-  AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
-  AND NOT EXISTS (
+WHEN NEW.entry_type='ISSUE' AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
+  AND (NEW.source_type<>'Sales Return' OR NEW.delta_cents<=0
+  OR NOT EXISTS (
     SELECT 1 FROM sales_returns sr
     JOIN sales s ON s.invoice_id=sr.invoice_id
     JOIN customers c ON c.customer_id=s.customer_id
-    JOIN sale_tender_allocations credit ON credit.invoice_id=s.invoice_id
-      AND credit.method='Store Credit' AND credit.source_key='Store Credit'
-      AND credit.customer_id=c.customer_id
-    JOIN sale_tender_allocations cash ON cash.invoice_id=s.invoice_id
-      AND cash.method='Cash' AND cash.source_key='Cash'
-      AND cash.customer_id='' AND cash.bank_account_id=''
-    JOIN split_partial_refund_allocations refund ON refund.return_id=sr.return_id
-      AND refund.invoice_id=sr.invoice_id
-      AND refund.method='Store Credit' AND refund.source_key='Store Credit'
-      AND refund.customer_id=c.customer_id
+    JOIN sale_tender_allocations original ON original.invoice_id=s.invoice_id
+      AND original.method='Store Credit' AND original.source_key='Store Credit'
+      AND original.customer_id=c.customer_id
     JOIN customer_store_credit_entries redeemed ON redeemed.source_type='Sale'
       AND redeemed.source_id=s.invoice_id AND redeemed.entry_type='REDEEM'
-      AND redeemed.customer_id=c.customer_id
-      AND redeemed.delta_cents=-credit.amount_cents
-    WHERE sr.return_id=NEW.source_id
-      AND NEW.source_type='Sales Return' AND NEW.delta_cents>0
-      AND refund.amount_cents=NEW.delta_cents
-      AND NEW.customer_id=c.customer_id AND sr.customer_id=c.customer_id
-      AND sr.customer_phone=c.phone AND s.customer_phone=c.phone
-      AND c.is_deleted=0 AND c.status='Active' AND c.current_due>=0
+      AND redeemed.customer_id=c.customer_id AND redeemed.delta_cents=-original.amount_cents
+    WHERE sr.return_id=NEW.source_id AND NEW.customer_id=c.customer_id
+      AND sr.customer_id=c.customer_id AND sr.customer_phone=c.phone
+      AND s.customer_phone=c.phone AND c.status='Active' AND c.is_deleted=0
+      AND c.current_due>=0 AND s.status='Completed' AND s.is_deleted=0
       AND s.payment_type='Cash' AND s.payment_method='Split'
-      AND s.is_deleted=0 AND s.status='Completed'
       AND s.paid_amount=s.grand_total AND s.due_amount=0
       AND s.subtotal=s.grand_total AND s.discount=0 AND s.grand_total>0
-      AND sr.refund_method='Split Partial' AND sr.total_return_amount>0
+  ))
+BEGIN SELECT RAISE(ABORT,'SPLIT_PARTIAL_CREDIT_ISSUE_CONFLICT'); END;
+
+CREATE TRIGGER trg_store_credit_partial_issue_tender
+BEFORE INSERT ON customer_store_credit_entries
+WHEN NEW.entry_type='ISSUE' AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
+  AND (NOT EXISTS(
+    SELECT 1 FROM sales_returns sr JOIN sales s ON s.invoice_id=sr.invoice_id
+    JOIN sale_tender_allocations c ON c.invoice_id=s.invoice_id
+      AND c.method='Cash' AND c.source_key='Cash'
+      AND c.customer_id='' AND c.bank_account_id=''
+    JOIN sale_tender_allocations sc ON sc.invoice_id=s.invoice_id
+      AND sc.method='Store Credit' AND sc.source_key='Store Credit'
+      AND sc.customer_id=NEW.customer_id
+    JOIN split_partial_refund_allocations issued ON issued.return_id=sr.return_id
+      AND issued.method='Store Credit' AND issued.source_key='Store Credit'
+      AND issued.customer_id=NEW.customer_id
+      AND issued.amount_cents=NEW.delta_cents
+    WHERE sr.return_id=NEW.source_id
       AND (SELECT COUNT(*) FROM sale_tender_allocations t
         WHERE t.invoice_id=s.invoice_id)=2
-      AND cash.amount_cents+credit.amount_cents
-        =CAST(ROUND(s.grand_total*100) AS INTEGER)
+      AND sc.amount_cents+c.amount_cents=CAST(ROUND(s.grand_total*100) AS INTEGER)
       AND (SELECT COUNT(*) FROM customer_store_credit_entries e
-        WHERE e.entry_type='REDEEM' AND e.source_type='Sale'
-          AND e.source_id=s.invoice_id)=1
-      AND (SELECT COUNT(*) FROM cash_book cb
-        WHERE cb.reference=s.invoice_id)=1
-      AND (SELECT COALESCE(SUM(CAST(ROUND(cb.credit*100) AS INTEGER)),0)
-        FROM cash_book cb WHERE cb.reference=s.invoice_id AND cb.type='Sale'
-          AND cb.payment_method='Cash' AND cb.debit=0 AND cb.is_deleted=0)
-        =cash.amount_cents
+        WHERE e.source_type='Sale' AND e.source_id=s.invoice_id
+          AND e.entry_type='REDEEM')=1
       AND (SELECT COUNT(*) FROM split_partial_refund_allocations a
         WHERE a.return_id=sr.return_id)=2
       AND (SELECT COALESCE(SUM(a.amount_cents),0)
         FROM split_partial_refund_allocations a WHERE a.return_id=sr.return_id)
-        =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
+           =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
       AND (SELECT COALESCE(SUM(a.amount_cents),0)
-        FROM split_partial_refund_allocations a WHERE a.return_id=sr.return_id
-          AND a.method='Cash' AND a.source_key='Cash'
-          AND a.bank_account_id='' AND a.customer_id='')
-        >0
+        FROM split_partial_refund_allocations a
+        WHERE a.return_id=sr.return_id AND a.method='Cash'
+          AND a.source_key='Cash' AND a.bank_account_id='' AND a.customer_id='')>0
+      AND (SELECT COALESCE(SUM(a.amount_cents),0)
+        FROM split_partial_refund_allocations a
+        WHERE a.invoice_id=s.invoice_id AND a.method='Store Credit')
+           <=sc.amount_cents
+  ))
+BEGIN SELECT RAISE(ABORT,'SPLIT_PARTIAL_CREDIT_ISSUE_CONFLICT'); END;
+
+CREATE TRIGGER trg_store_credit_partial_issue_money
+BEFORE INSERT ON customer_store_credit_entries
+WHEN NEW.entry_type='ISSUE' AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
+  AND (NOT EXISTS (
+    SELECT 1 FROM sales_returns sr JOIN sales s ON s.invoice_id=sr.invoice_id
+    JOIN sale_tender_allocations c ON c.invoice_id=s.invoice_id
+      AND c.method='Cash' AND c.source_key='Cash'
+    JOIN split_partial_refund_allocations cash ON cash.return_id=sr.return_id
+      AND cash.method='Cash' AND cash.source_key='Cash'
+    WHERE sr.return_id=NEW.source_id
+      AND (SELECT COUNT(*) FROM cash_book cb WHERE cb.reference=s.invoice_id)=1
+      AND (SELECT COALESCE(SUM(CAST(ROUND(cb.credit*100) AS INTEGER)),0)
+        FROM cash_book cb WHERE cb.reference=s.invoice_id
+          AND cb.type='Sale' AND cb.payment_method='Cash'
+          AND cb.debit=0 AND cb.is_deleted=0)=c.amount_cents
       AND (SELECT COUNT(*) FROM cash_book cb WHERE cb.reference=sr.return_id)=1
       AND (SELECT COALESCE(SUM(CAST(ROUND(cb.debit*100) AS INTEGER)),0)
         FROM cash_book cb WHERE cb.reference=sr.return_id
           AND cb.type='Sales Return' AND cb.payment_method='Cash'
-          AND cb.credit=0 AND cb.is_deleted=0)
-        =(SELECT COALESCE(SUM(a.amount_cents),0)
-          FROM split_partial_refund_allocations a
-          WHERE a.return_id=sr.return_id AND a.method='Cash')
+          AND cb.credit=0 AND cb.is_deleted=0)=cash.amount_cents
       AND (SELECT COUNT(*) FROM bank_book bb WHERE bb.reference=sr.return_id)=0
-      AND (SELECT COUNT(*) FROM customer_ledger cl
-        WHERE cl.reference=sr.return_id OR
-          (cl.customer_id=c.customer_id AND cl.type='Sales Return Credit'))=0
-      AND NOT EXISTS (SELECT 1 FROM store_credit_legacy_unreconciled legacy
-        JOIN sales_returns old ON old.return_id=legacy.return_id
-        WHERE old.customer_id=c.customer_id OR old.customer_phone=c.phone)
-      AND (SELECT COUNT(*) FROM sales_return_items i
-        WHERE i.return_id=sr.return_id)=1
-      AND (SELECT COALESCE(SUM(CAST(ROUND(i.line_total*100) AS INTEGER)),0)
-        FROM sales_return_items i WHERE i.return_id=sr.return_id)
-        =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
-      AND NOT EXISTS (
-        SELECT 1 FROM sales_return_items i
-        WHERE i.return_id=sr.return_id AND (
-          i.invoice_id<>sr.invoice_id OR i.return_quantity<=0
-          OR i.return_quantity<>CAST(i.return_quantity AS INTEGER)
-          OR (SELECT COALESCE(SUM(lot.quantity),0) FROM sales_return_item_lots lot
-            WHERE lot.return_id=sr.return_id AND lot.product_id=i.product_id)
-              <>i.return_quantity
-          OR (SELECT COUNT(*) FROM stock_movements m
-            WHERE m.note=sr.return_id AND m.product_id=i.product_id
-              AND m.movement_type='Sales Return'
-              AND m.quantity_in=i.return_quantity AND m.quantity_out=0)<>1
-        )
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM sales_return_item_lots lot
-        WHERE lot.return_id=sr.return_id AND NOT EXISTS (
-          SELECT 1 FROM split_refund_lot_restorations snap
-          JOIN stock_lots sl ON sl.lot_id=snap.lot_id
-          WHERE snap.return_id=sr.return_id AND snap.invoice_id=sr.invoice_id
-            AND snap.product_id=lot.product_id AND snap.lot_id=lot.lot_id
-            AND snap.quantity=lot.quantity AND sl.source_type<>'OVERSOLD'
-            AND ABS(sl.remaining_quantity-snap.prior_remaining-snap.quantity)<0.00001
-        )
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM sales_returns old
-        WHERE old.invoice_id=s.invoice_id AND old.return_id<>sr.return_id
-          AND old.refund_method<>'Split Partial'
-      )
-      AND NOT EXISTS (SELECT 1 FROM sales_return_refund_allocations complete
-        WHERE complete.invoice_id=s.invoice_id)
-      AND NOT EXISTS (SELECT 1 FROM sale_reversal_logs rev
-        WHERE rev.invoice_id=s.invoice_id)
-      AND (SELECT COALESCE(SUM(a.amount_cents),0)
-        FROM split_partial_refund_allocations a
-        WHERE a.invoice_id=s.invoice_id AND a.method='Store Credit')
-        <=credit.amount_cents
-  )
+      AND (SELECT COUNT(*) FROM customer_ledger cl WHERE cl.reference=sr.return_id)=0
+  ))
 BEGIN SELECT RAISE(ABORT,'SPLIT_PARTIAL_CREDIT_ISSUE_CONFLICT'); END;
+
+CREATE TRIGGER trg_store_credit_partial_issue_fifo
+BEFORE INSERT ON customer_store_credit_entries
+WHEN NEW.entry_type='ISSUE' AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
+  AND (NOT EXISTS (
+    SELECT 1 FROM sales_returns sr JOIN sales_return_items i ON i.return_id=sr.return_id
+    JOIN sale_items sold ON sold.invoice_id=i.invoice_id AND sold.product_id=i.product_id
+    WHERE sr.return_id=NEW.source_id AND i.invoice_id=sr.invoice_id
+      AND (SELECT COUNT(*) FROM sales_return_items item
+        WHERE item.return_id=sr.return_id)=1
+      AND i.return_quantity>0 AND i.return_quantity=CAST(i.return_quantity AS INTEGER)
+      AND i.return_price=sold.unit_price
+      AND CAST(ROUND(i.line_total*100) AS INTEGER)
+         =CAST(ROUND(sr.total_return_amount*100) AS INTEGER)
+      AND (SELECT COALESCE(SUM(lot.quantity),0)
+        FROM sales_return_item_lots lot
+        WHERE lot.return_id=sr.return_id AND lot.product_id=i.product_id)=i.return_quantity
+      AND (SELECT COUNT(*) FROM stock_movements m
+        WHERE m.note=sr.return_id AND m.product_id=i.product_id
+          AND m.movement_type='Sales Return'
+          AND m.quantity_in=i.return_quantity AND m.quantity_out=0)=1
+  )
+  OR EXISTS (
+    SELECT 1 FROM sales_return_item_lots lot
+    WHERE lot.return_id=NEW.source_id AND NOT EXISTS (
+      SELECT 1 FROM split_refund_lot_restorations snap
+      JOIN stock_lots sl ON sl.lot_id=snap.lot_id
+      WHERE snap.return_id=NEW.source_id AND snap.invoice_id=lot.invoice_id
+        AND snap.product_id=lot.product_id AND snap.lot_id=lot.lot_id
+        AND snap.quantity=lot.quantity AND sl.source_type<>'OVERSOLD'
+        AND ABS(sl.remaining_quantity-snap.prior_remaining-snap.quantity)<0.00001
+    )
+  ))
+BEGIN SELECT RAISE(ABORT,'SPLIT_PARTIAL_CREDIT_ISSUE_CONFLICT'); END;
+
+CREATE TRIGGER trg_store_credit_partial_issue_history
+BEFORE INSERT ON customer_store_credit_entries
+WHEN NEW.entry_type='ISSUE' AND COALESCE((SELECT refund_method FROM sales_returns WHERE return_id=NEW.source_id),'')='Split Partial'
+  AND (EXISTS (
+    SELECT 1 FROM customer_ledger cl
+    WHERE cl.customer_id=NEW.customer_id AND cl.type='Sales Return Credit'
+  )
+  OR EXISTS (
+    SELECT 1 FROM store_credit_legacy_unreconciled legacy
+    JOIN sales_returns old ON old.return_id=legacy.return_id
+    JOIN customers c ON c.customer_id=NEW.customer_id
+    WHERE old.customer_id=NEW.customer_id OR old.customer_phone=c.phone
+  )
+  OR EXISTS (
+    SELECT 1 FROM sales_returns sr
+    JOIN sales_returns old ON old.invoice_id=sr.invoice_id AND old.return_id<>sr.return_id
+    WHERE sr.return_id=NEW.source_id AND old.refund_method<>'Split Partial'
+  )
+  OR EXISTS (
+    SELECT 1 FROM sales_returns sr
+    JOIN sales_return_refund_allocations complete ON complete.invoice_id=sr.invoice_id
+    WHERE sr.return_id=NEW.source_id
+  )
+  OR EXISTS (
+    SELECT 1 FROM sales_returns sr JOIN sale_reversal_logs rev ON rev.invoice_id=sr.invoice_id
+    WHERE sr.return_id=NEW.source_id
+  ))
+BEGIN SELECT RAISE(ABORT,'SPLIT_PARTIAL_CREDIT_ISSUE_CONFLICT'); END;
+
