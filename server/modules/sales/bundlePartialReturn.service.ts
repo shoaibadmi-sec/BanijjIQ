@@ -63,7 +63,7 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
      Number(sale.due_amount)!==0||Number(sale.discount)!==0||cents(sale.paid_amount)!==grand)
     throw Error('Only unchanged cash-only bundle invoices are eligible.');
  }catch(e){return fail(e instanceof Error?e.message:'Invalid sale money.',409);}
- const [lineRows,recipeRows,sourcesRows,previousRows,cashRows,existingFull,existingReturns]=await Promise.all([
+ const [lineRows,recipeRows,sourcesRows,previousRows,cashRows,existingFull,existingReturns,ordinaryRows]=await Promise.all([
   db.prepare('SELECT i.product_id,i.product_name,i.quantity,i.unit_price,i.line_total,p.product_type FROM sale_items i JOIN products p ON p.product_id=i.product_id WHERE i.invoice_id=?').bind(invoiceId).all<Line>(),
   db.prepare('SELECT bundle_id,component_id,revision,quantity_per_set,sets_sold,component_quantity FROM sale_bundle_components WHERE invoice_id=? ORDER BY id').bind(invoiceId).all<Recipe>(),
   db.prepare('SELECT id,visible_product_id,component_id,lot_id,quantity,unit_cost,cost_minor FROM bundle_sale_allocations WHERE invoice_id=? ORDER BY id').bind(invoiceId).all<Source>(),
@@ -71,7 +71,8 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
    .all<{bundle_id:string;sets_returned:number}>(),
   db.prepare("SELECT debit,credit FROM cash_book WHERE type='Sale' AND reference=? AND is_deleted=0").bind(invoiceId).all<{debit:number;credit:number}>(),
   db.prepare('SELECT 1 AS x FROM bundle_cash_return_requests WHERE invoice_id=? LIMIT 1').bind(invoiceId).first(),
-  db.prepare('SELECT return_id FROM sales_returns WHERE invoice_id=?').bind(invoiceId).all<{return_id:string}>()
+  db.prepare('SELECT return_id FROM sales_returns WHERE invoice_id=?').bind(invoiceId).all<{return_id:string}>(),
+  db.prepare('SELECT product_id,quantity FROM bundle_ordinary_return_requests WHERE invoice_id=?').bind(invoiceId).all<{product_id:string;quantity:number}>()
  ]);
  const lines=lineRows.results??[],recipes=recipeRows.results??[],sources=sourcesRows.results??[],priorSets=previousRows.results??[];
  const bundles=lines.filter(row=>row.product_type==='Bundle');
@@ -116,8 +117,10 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
   for(const [key,qty] of expectedSources)
    if(sourcedQty.get(key)!==qty)throw Error('Original physical source quantities do not match the visible invoice or saved bundle recipe.');
   totalReturned=priorSets.reduce((n,x)=>n+whole(x.sets_returned),0);
+  const oldOrdinary=ordinaryRows.results??[];
   if(priorSets.some(x=>x.bundle_id!==line.product_id)||
-     existingReturns.results?.length!==priorSets.length)throw Error('Unrecognized return history for this bundle.');
+     existingReturns.results?.length!==priorSets.length+oldOrdinary.length)
+   throw Error('Unrecognized return history for this bundle and ordinary cart.');
   if(sets>soldSets-totalReturned)throw Error('Requested bundle sets exceed unreturned complete sets.');
   for(const recipe of recipes){
    if(recipe.bundle_id!==line.product_id||!Number.isSafeInteger(recipe.quantity_per_set)||
@@ -150,7 +153,15 @@ export async function returnPartialBundleSets(db:SherDatabase,invoiceId:string,i
   // Ensure cash-book returns match the recorded previous returns, never infer cash availability.
   const cashRefunds=(await db.prepare('SELECT SUM(cb.debit) paid FROM cash_book cb JOIN sales_returns r ON r.return_id=cb.reference WHERE r.invoice_id=? AND cb.type=\'Sales Return\' AND cb.is_deleted=0')
    .bind(invoiceId).first<{paid:number}>())?.paid??0;
-  if(cents(cashRefunds)!==totalReturned*unitPrice)throw Error('Previously refunded bundle cash does not reconcile.');
+  let ordinaryRefunded=0;
+  for(const prior of oldOrdinary){
+   const original=lines.find(item=>item.product_id===prior.product_id&&item.product_type==='Standard');
+   if(!original||!Number.isSafeInteger(prior.quantity)||prior.quantity<1)
+    throw Error('Previous ordinary return lacks a valid original Standard invoice line.');
+   ordinaryRefunded+=prior.quantity*cents(original.unit_price);
+  }
+  if(cents(cashRefunds)!==totalReturned*unitPrice+ordinaryRefunded)
+   throw Error('Previously refunded bundle and ordinary cash do not reconcile.');
   const physical=new Map<string,{masterBefore:number;restored:number;lots:Map<string,Lot>}>();
   for(const pid of needs.keys()){
    const p=await db.prepare('SELECT current_stock,is_deleted,product_type FROM products WHERE product_id=?').bind(pid)
