@@ -29,6 +29,7 @@ import {
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { updateProductCatalog } from './catalog.service.js';
+import { postStockLoss } from './stockLoss.service.js';
 import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
@@ -105,6 +106,10 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
     const body = await readBody<{ status?: string }>(request);
     return setProductStatus(db, decodeURIComponent(statusMatch[1]), cleanText(body.status));
   }
+
+  const lossMatch = path.match(/^\/api\/products\/([^/]+)\/stock-loss$/);
+  if (lossMatch && request.method === 'POST')
+    return postStockLoss(db,decodeURIComponent(lossMatch[1]),await readBody<any>(request),user);
 
   const adjustMatch = path.match(/^\/api\/products\/([^/]+)\/adjust-stock$/);
   if (adjustMatch && request.method === 'POST') {
