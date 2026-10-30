@@ -110,7 +110,7 @@ test('4B isolated full-migration accounting and revision guard',async()=>{
    purchaseId:posted.purchaseId,refundMethod:'Supplier Credit',reason:'Unsafe return',
    items:[{productId:id,qty:1,unitPrice:10}]
   });
-  assert.equal(blockedReturn.status,409);
+  assert.equal(blockedReturn.status,400,'Mixed return requires an idempotency request ID');
   assert.deepEqual(snapshot(),{stock:283,purchases:1,lots:1,payable:2830});
   const updated=await api('PUT','/api/products/'+id+'/unit-profile',{
    expectedRevision:1,units:units.map(u=>u.unit==='Carton'?{...u,containsNext:10}:u)});
