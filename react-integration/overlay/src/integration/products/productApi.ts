@@ -3,7 +3,7 @@ import {
   type BasicProductInput, type ProductCatalogEdit
 } from '../banijjApi';
 import type { ProductCatalogResponse } from './productContracts';
-import type { StockMovement as HisabStockMovement, StockMovementType } from '../../types/erp';
+import type { StockLot, StockMovement as HisabStockMovement, StockMovementType } from '../../types/erp';
 
 export interface LiveLot {
   lotId: string;
@@ -98,4 +98,43 @@ export async function loadInventoryHistory():Promise<HisabStockMovement[]> {
   if(!result||result.ok!==true||!Array.isArray(result.items))
     throw new BackendRequestError('Invalid inventory history response.',502);
   return result.items.map(toHisabStockMovement);
+}
+
+/** Strictly map D1 lots to the pinned original HisabIQ StockLotsView contract. */
+function toHisabStockLot(value:unknown):StockLot {
+  if(!value||typeof value!=='object')throw new BackendRequestError('Invalid D1 stock lot.',502);
+  const row=value as Record<string,unknown>;
+  const origin=typeof row.sourceType==='string'?row.sourceType.toUpperCase():'';
+  const source:StockLot['source']|null=
+    origin==='OPENING'?'Opening':
+    origin==='PURCHASE'?'Purchase':
+    origin==='RETURN'||origin.includes('RETURN')?'Return':
+    origin==='OPENING_ADJUSTMENT'||origin.includes('ADJUSTMENT')?'Adjustment':null;
+  const qty=(v:unknown):v is number=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&
+    Number.isSafeInteger(Math.round(v*10000))&&Math.abs(v*10000-Math.round(v*10000))<0.00001;
+  const day=(v:unknown):v is string=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}/.test(v);
+  const serials=row.serials;
+  if(!source||typeof row.lotId!=='string'||!row.lotId||
+    typeof row.productId!=='string'||!row.productId||!day(row.receivedAt)||
+    !qty(row.originalQuantity)||!qty(row.remainingQuantity)||!qty(row.unitCost)||
+    Math.round((row.remainingQuantity as number)*10000)>Math.round((row.originalQuantity as number)*10000)||
+    !Array.isArray(serials)||!serials.every(s=>typeof s==='string'&&s.trim().length>0)||
+    (row.expiryDate!==null&&!day(row.expiryDate))||
+    (row.batchNumber!==null&&typeof row.batchNumber!=='string')||
+    (row.sourceRef!==null&&typeof row.sourceRef!=='string'))
+    throw new BackendRequestError('Unreconciled stock lot source. No lot data shown.',502);
+  return {
+    id:row.lotId,productId:row.productId,label:source,
+    receivedAt:row.receivedAt.slice(0,10),quantity:row.originalQuantity as number,
+    available:row.remainingQuantity as number,unitCost:row.unitCost as number,source,
+    reference:row.sourceRef||undefined,
+    batchNumber:row.batchNumber||undefined,expiryDate:row.expiryDate||undefined,
+    serials:serials.length?serials:undefined
+  } as StockLot;
+}
+export async function loadInventoryLots():Promise<StockLot[]>{
+  const result=await request<{ok:true;lots:unknown[]}>('/api/products/inventory-lots');
+  if(!result||result.ok!==true||!Array.isArray(result.lots))
+    throw new BackendRequestError('Invalid inventory lots response.',502);
+  return result.lots.map(toHisabStockLot);
 }
