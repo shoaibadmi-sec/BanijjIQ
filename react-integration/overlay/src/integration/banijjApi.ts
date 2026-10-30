@@ -94,6 +94,7 @@ export interface PosProduct {
 }
 export interface PosCustomer {
   id: string; name: string; phone: string; fatherName: string; address: string; currentDue: number;
+  storeCreditCents: number; storeCreditBlocked: boolean;
 }
 export interface PosBankAccount { id: string; name: string; accountType: string }
 export interface PosVendor { id: string; name: string; phone: string; currentDue: number; status: string }
@@ -115,7 +116,7 @@ export interface PosSalePayload {
   clientRequestId: string;
   customerId?: string; customerName: string; customerPhone: string; customerAddress?: string;
   customerFatherName?: string; discount: number; paymentType: 'Cash' | 'Due' | 'Partial';
-  paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking'; bankAccountId?: string;
+  paidAmount: number; paymentMethod: 'Cash' | 'Bank' | 'Mobile Banking' | 'Store Credit'; bankAccountId?: string;
   items: PosSaleLine[];
 }
 export interface PosInvoice {
@@ -126,6 +127,15 @@ export interface PosInvoice {
     unitDescription?:string;unitSnapshot?:{revision:number;profile:PosUnitProfile;quantities:Record<string,number>}}>;
   grandTotal: number; paidAmount: number; dueAmount: number; paymentStatus: string;
 }
+export interface StoreCreditAccount {
+  ok: true; customerId: string; customerName: string;
+  due: number; availableCents: number; blocked: boolean;
+  history: Array<{entryId:string;type:'ISSUE'|'REDEEM';sourceType:string;sourceId:string;
+    deltaCents:number;balanceAfterCents:number;createdAt:string}>;
+}
+export const getStoreCreditAccount = (customerId:string) =>
+  request<StoreCreditAccount>('/api/pos/store-credit/'+encodeURIComponent(customerId));
+
 export const getPosBootstrap = () => request<PosBootstrap>('/api/pos/bootstrap');
 export const startCashSession = (openingCash: number) =>
   request<{ ok: true; sessionId: string }>('/api/pos/cash-session/start', {
@@ -181,7 +191,7 @@ export interface ReturnableLine {
 }
 export interface ReturnableInvoice {
   invoiceId:string;date:string;customerId:string;customerName:string;customerPhone:string;
-  grandTotal:number;paidAmount:number;dueAmount:number;previouslyReturnedAmount:number;
+  grandTotal:number;subtotal:number;paidAmount:number;dueAmount:number;paymentMethod:string;previouslyReturnedAmount:number;
   netSale:number;items:ReturnableLine[];
 }
 export interface SalesReturnPayload {

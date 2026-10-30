@@ -2,6 +2,7 @@ import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import { daysSince, hasModulePermission } from '../auth/permissions.js';
 import type { PosSaleInput } from './types.js';
+import { readStoreCreditReviewFlags } from './store-credit-reconciliation.js';
 import {quoteUnitQuantities, type UnitProfile} from '../products/unitProfile.js';
 import { aggregateSaleTrackingDraws, getAvailabilityMap, planTrackedSale, trackingEnabled, warrantyEndDate } from '../products/tracking.service.js';
 
@@ -67,7 +68,18 @@ export async function closeCashSessionRoute(db: SherDatabase, input: { countedCa
 export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Promise<Response> {
   const [pr, cr, br, vr, session, settingsRows, profileRows] = await Promise.all([
     db.prepare(`SELECT product_id,product_name,COALESCE(brand,'') brand,category,unit,barcode,purchase_price,selling_price,current_stock,minimum_stock,track_serial,track_expiry,track_warranty,warranty_period_value,warranty_period_unit FROM products WHERE is_deleted=0 AND status<>'Inactive' ORDER BY product_name COLLATE NOCASE`).all<any>(),
-    db.prepare(`SELECT customer_id,customer_name,phone,father_name,address,current_due FROM customers WHERE is_deleted=0 AND status='Active' ORDER BY customer_name COLLATE NOCASE`).all<any>(),
+    db.prepare(`SELECT c.customer_id,c.customer_name,c.phone,c.father_name,c.address,c.current_due,
+      COALESCE((SELECT SUM(e.delta_cents) FROM customer_store_credit_entries e
+        WHERE e.customer_id=c.customer_id),0) AS store_credit_cents,
+      CASE WHEN c.current_due<0
+        OR EXISTS (SELECT 1 FROM customer_ledger cl
+          WHERE cl.customer_id=c.customer_id AND cl.type='Sales Return Credit')
+        OR EXISTS (SELECT 1 FROM store_credit_legacy_unreconciled old
+          JOIN sales_returns sr ON sr.return_id=old.return_id
+          WHERE sr.customer_id=c.customer_id OR sr.customer_phone=c.phone)
+      THEN 1 ELSE 0 END AS store_credit_blocked
+      FROM customers c WHERE c.is_deleted=0 AND c.status='Active'
+      ORDER BY c.customer_name COLLATE NOCASE`).all<any>(),
     db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE status='Active' ORDER BY account_name`).all<any>(),
     db.prepare(`SELECT vendor_id,vendor_name,phone,current_due,status FROM vendors ORDER BY vendor_name COLLATE NOCASE`).all<any>(),
     getOpenCashSession(db),
@@ -89,7 +101,7 @@ export async function getPosBootstrapRoute(db: SherDatabase, user: AuthUser): Pr
       trackSerial:!!p.track_serial,trackExpiry:!!p.track_expiry,trackWarranty:!!p.track_warranty,warrantyPeriodValue:Number(p.warranty_period_value||0),warrantyPeriodUnit:p.warranty_period_unit||'Months',
       unitProfilePreview:profiles.get(p.product_id)??null
     })),
-    customers:(cr.results||[]).map((c:any)=>({id:c.customer_id,name:c.customer_name,phone:c.phone,fatherName:c.father_name||'',address:c.address||'',currentDue:Number(c.current_due||0)})),
+    customers:(cr.results||[]).map((c:any)=>({id:c.customer_id,name:c.customer_name,phone:c.phone,fatherName:c.father_name||'',address:c.address||'',currentDue:Number(c.current_due||0),storeCreditCents:Number(c.store_credit_cents||0),storeCreditBlocked:Boolean(c.store_credit_blocked)})),
     bankAccounts:(br.results||[]).map((b:any)=>({id:b.bank_account_id,name:b.account_name,accountType:b.account_type||'Bank'})),
     vendors:vendorsAll.filter((v:any)=>v.status!=='Inactive'), vendorsAll,
     activeSession:session?{sessionId:session.session_id,openedAt:session.opened_at,openingCash:Number(session.opening_cash||0)}:null,
@@ -161,12 +173,55 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
     lines.push({product,q,price:unitSnapshot?lineTotal/q:price,lineTotal,unitSnapshot,draws,trackingDraws,shortfall:need,vendor,vendorQty,vendorUnitCost,ownQty:q-vendorQty,isTracked}); subtotal+=lineTotal;
   }
   const discount=Math.max(0,Number(input.discount||0)), grandTotal=Math.max(0,subtotal-discount); let paidAmount=0,dueAmount=0;
+  if(cleanText(input.paymentMethod)==='Store Credit'&&input.paymentType!=='Cash')
+    return error('Store Credit cannot be combined with due or partial payment.',409);
   if(input.paymentType==='Cash') paidAmount=grandTotal; else if(input.paymentType==='Due') dueAmount=grandTotal; else if(input.paymentType==='Partial'){paidAmount=Number(input.paidAmount||0);if(paidAmount<=0||paidAmount>=grandTotal)return error('Partial payment must be more than 0 and less than the grand total.');dueAmount=grandTotal-paidAmount;} else return error('Choose a payment type.');
   const paymentStatus=dueAmount<=0?'Paid':paidAmount>0?'Partial':'Due', paymentMethod=paidAmount>0?(cleanText(input.paymentMethod)||'Cash'):''; let bankId='',bankName='';
+  if(paidAmount>0&&!['Cash','Bank','Mobile Banking','Store Credit'].includes(paymentMethod))
+    return error('Choose a supported payment method.',409);
+  const isCreditTender=paymentMethod==='Store Credit';
+  let creditBeforeCents=0,creditSpentCents=0;
+  if(isCreditTender){
+    if(!requestId)return error('Store Credit payment requires a unique request ID.',409);
+    if(input.paymentType!=='Cash'||dueAmount!==0||!cleanText(input.customerId)||
+       cleanText(input.bankAccountId)||paidAmount<=0)
+      return error('Store Credit requires a linked customer and one full non-cash payment. Split and due settlements are not enabled.',409);
+    creditSpentCents=Math.round(grandTotal*100);
+    if(!Number.isSafeInteger(creditSpentCents)||creditSpentCents<=0)
+      return error('Invalid Store Credit amount.',409);
+    const customer=await db.prepare('SELECT customer_id,phone,status,is_deleted,current_due FROM customers WHERE customer_id=?')
+      .bind(cleanText(input.customerId)).first<any>();
+    if(!customer||customer.phone!==customerPhone||customer.status!=='Active'||
+       Number(customer.is_deleted)!==0||Number(customer.current_due)<0)
+      return error('Store Credit customer is unavailable or does not match this invoice.',409);
+    if(await db.prepare(
+      "SELECT 1 x FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' LIMIT 1"
+    ).bind(customer.customer_id).first())return error('Legacy customer credit must be reconciled before redemption.',409);
+    if(await db.prepare(
+      "SELECT 1 x FROM store_credit_legacy_unreconciled old "+
+      "JOIN sales_returns sr ON sr.return_id=old.return_id "+
+      "WHERE sr.customer_id=? OR sr.customer_phone=? LIMIT 1"
+    ).bind(customer.customer_id,customer.phone).first())
+      return error('Historical Store Credit is not reconciled.',409);
+    const balance=await db.prepare('SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?')
+      .bind(customer.customer_id).first<any>();
+    creditBeforeCents=Number(balance?.available_cents||0);
+    if(!Number.isSafeInteger(creditBeforeCents)||creditBeforeCents<creditSpentCents)
+      return error('Insufficient Store Credit balance. Reload customer credit before payment.',409);
+  }
   if(paidAmount>0&&(paymentMethod==='Bank'||paymentMethod==='Mobile Banking')){bankId=cleanText(input.bankAccountId);if(!bankId)return error(paymentMethod==='Mobile Banking'?'Select a mobile banking account.':'Select a bank account.');const b=await db.prepare(`SELECT bank_account_id,account_name,account_type FROM bank_accounts WHERE bank_account_id=? AND status='Active'`).bind(bankId).first<any>();if(!b)return error('Bank/mobile banking account not found.');const wantType=paymentMethod==='Mobile Banking'?'Mobile Banking':'Bank',actualType=cleanText(b.account_type)||'Bank';if(actualType!==wantType)return error(`Selected account is not a ${wantType} account.`);bankName=b.account_name;}
   const invoiceId=`INV-${Date.now().toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`, stmts:SqlPreparedStatement[]=[];
   // Customer creation and contact edits must not escape a failed invoice batch.
   let customerId=cleanText(input.customerId);
+  if(dueAmount===0&&customerId){
+    // A fully-paid sale may reference an explicitly selected, existing ledger
+    // customer without creating any receivable or changing customer balances.
+    const selected=await db.prepare(
+      'SELECT customer_id,phone,status,is_deleted FROM customers WHERE customer_id=?'
+    ).bind(customerId).first<any>();
+    if(!selected||selected.phone!==customerPhone||selected.status!=='Active'||Number(selected.is_deleted)!==0)
+      return error('Selected customer must be active and match the sale phone.',409);
+  }
   if(dueAmount>0){
     const existing=await db.prepare('SELECT customer_id,current_due FROM customers WHERE phone=? AND is_deleted=0 LIMIT 1')
       .bind(customerPhone).first<{customer_id:string;current_due:number}>();
@@ -217,6 +272,16 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
         "VALUES (?,?,?,?, 'Sale',?,?,0,?,(SELECT current_balance FROM bank_accounts WHERE bank_account_id=?),'Active',?,0)"
       ).bind(`BB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,bankId,bankName,date,invoiceId,
         `POS sale to ${customerName}`,paidAmount,bankId,user.fullName));
+    }else if(isCreditTender){
+      // Not a cash receipt. Strict journal balance equality fails atomically
+      // if another checkout spent the same credit after the preflight read.
+      stmts.push(db.prepare(
+        "INSERT INTO customer_store_credit_entries "+
+        "(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,note,created_by) "+
+        "VALUES (?,?,'REDEEM','Sale',?,?,?,?,?)"
+      ).bind('SC-'+crypto.randomUUID().slice(0,12).toUpperCase(),customerId,invoiceId,
+        -creditSpentCents,creditBeforeCents-creditSpentCents,
+        'Non-cash credit tender for '+invoiceId,user.userId));
     }else stmts.push(db.prepare(`INSERT INTO cash_book (entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,?, 'Sale',?,?,0,?,'Cash',0)`).bind(`CB-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,invoiceId,`POS sale to ${customerName}`,paidAmount));
   }
   if(dueAmount>0){stmts.push(db.prepare(`UPDATE customers SET current_due=current_due+?,updated_at=datetime('now') WHERE customer_id=?`).bind(dueAmount,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sale',?,?,0,(SELECT current_due FROM customers WHERE customer_id=?),'')`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,date,customerId,customerName,invoiceId,dueAmount,customerId));}
@@ -224,6 +289,10 @@ export async function completeSaleRoute(db:SherDatabase,input:PosSaleInput,user:
   try{await db.batch(stmts);}catch(err){
     // A concurrent duplicate request can lose the unique-index race.
     // The losing batch rolls back: return the committed invoice when available.
+    if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||
+       String(err).includes('STORE_CREDIT_REDEMPTION_REQUIRED')||
+       String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))
+      return error('Store Credit changed or the redemption was already posted. Reload and verify before retrying.',409);
     if(requestId){
       const prior=await db.prepare('SELECT payload_sha256,invoice_id FROM pos_sale_requests WHERE request_id=?')
         .bind(requestId).first<{payload_sha256:string;invoice_id:string}>();
@@ -584,7 +653,74 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
     })():null;
     mapped.push({productId:i.product_id,name:i.product_name,soldQty:sold,vendorQty:vendor,previouslyReturnedQty:already,availableQty,unitPrice:Number(i.unit_price||0),...p,availableSerials,mixedUnit});
   }
-  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
+  return json({ok:true,sale:{invoiceId:s.invoice_id,date:s.sale_date,customerId:s.customer_id||'',customerName:s.customer_name||'',customerPhone:s.customer_phone||'',grandTotal:Number(s.grand_total||0),subtotal:Number(s.subtotal||0),paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentMethod:s.payment_method||'',previouslyReturnedAmount:prev,netSale:Number(s.grand_total||0)-prev,items:mapped}});
+}
+
+/**
+ * Internal, administrator-only read-only evidence. A flag blocks approval:
+ * never convert historical negative receivables into current spendable credit.
+ * No POST/PUT/DELETE reconciliation action is intentionally exposed.
+ */
+export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
+  if(user.role!=='admin')return error('Administrator permission is required for Store Credit reconciliation.',403);
+  const [review,entries,customers,historical]=await Promise.all([
+    readStoreCreditReviewFlags(db),
+    db.prepare(
+      "SELECT COALESCE(SUM(CASE WHEN entry_type='ISSUE' THEN delta_cents ELSE 0 END),0) issued_cents, "+
+      "COALESCE(SUM(CASE WHEN entry_type='REDEEM' THEN -delta_cents ELSE 0 END),0) redeemed_cents, "+
+      "COALESCE(SUM(delta_cents),0) outstanding_cents,COUNT(*) entries "+
+      "FROM customer_store_credit_entries"
+    ).first<any>(),
+    db.prepare(
+      "SELECT COUNT(*) n FROM (SELECT customer_id FROM customer_store_credit_entries "+
+      "UNION SELECT customer_id FROM store_credit_historical_adjustments)"
+    ).first<{n:number}>(),
+    db.prepare(
+      "SELECT COALESCE(SUM(delta_cents),0) cents,COUNT(*) entries "+
+      "FROM store_credit_historical_adjustments"
+    ).first<{cents:number;entries:number}>()
+  ]);
+  return json({ok:true,readOnly:true,reviewRequired:review.flagsCount>0,
+    ...review,
+    issuedCents:Number(entries?.issued_cents||0)+Number(historical?.cents||0),
+    redeemedCents:Number(entries?.redeemed_cents||0),
+    outstandingCents:Number(entries?.outstanding_cents||0)+Number(historical?.cents||0),
+    journalEntries:Number(entries?.entries||0)+Number(historical?.entries||0),
+    customerAccounts:Number(customers?.n||0)});
+}
+
+export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string,user:AuthUser):Promise<Response>{
+  if(!(await hasModulePermission(db,user,'pos','view'))&&
+     !(await hasModulePermission(db,user,'returns','view')))
+    return error('Store Credit viewing permission is required.',403);
+  const customer=await db.prepare(
+    'SELECT customer_id,customer_name,phone,current_due,status,is_deleted FROM customers WHERE customer_id=?'
+  ).bind(customerId).first<any>();
+  if(!customer||customer.status!=='Active'||Number(customer.is_deleted)!==0)
+    return error('Store Credit customer not found.',404);
+  const balance=await db.prepare(
+    'SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?'
+  ).bind(customerId).first<any>();
+  const journal=await db.prepare(
+    "SELECT entry_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,created_at "+
+    "FROM customer_store_credit_entries WHERE customer_id=? ORDER BY created_at DESC,entry_id DESC LIMIT 20"
+  ).bind(customerId).all<any>();
+  const historic=await db.prepare(
+    "SELECT COUNT(*) n FROM store_credit_legacy_unreconciled l "+
+    "JOIN sales_returns sr ON sr.return_id=l.return_id "+
+    "WHERE sr.customer_id=? OR sr.customer_phone=?"
+  ).bind(customerId,customer.phone).first<{n:number}>();
+  const ledger=await db.prepare(
+    "SELECT COUNT(*) n FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit'"
+  ).bind(customerId).first<{n:number}>();
+  return json({ok:true,customerId,customerName:customer.customer_name,
+    due:Number(customer.current_due||0),availableCents:Number(balance?.available_cents||0),
+    blocked:Number(customer.current_due)<0||Number(historic?.n||0)>0||Number(ledger?.n||0)>0,
+    history:(journal.results||[]).map((e:any)=>({
+      entryId:e.entry_id,type:e.entry_type,sourceType:e.source_type,
+      sourceId:e.source_id,deltaCents:Number(e.delta_cents),
+      balanceAfterCents:Number(e.balance_after_cents),createdAt:e.created_at
+    }))});
 }
 
 export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:AuthUser,authorizedReversal=false):Promise<Response>{
@@ -593,6 +729,8 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   if(!invoiceId)return error('No invoice selected.');
   const isBankRefund=refundMethod==='Bank'||refundMethod==='Mobile Banking';
   const isDueAdjustment=refundMethod==='Due Adjustment';
+  const isStoreCredit=refundMethod==='Store Credit';
+  if(isStoreCredit&&authorizedReversal)return error('Store Credit is not an audited full-sale reversal method.',409);
   if(!['Cash','Store Credit','Bank','Mobile Banking','Due Adjustment'].includes(refundMethod))
     return error('Choose a refund method.');
   if((isBankRefund||isDueAdjustment)&&!authorizedReversal)
@@ -602,6 +740,10 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   const backdatedDays=backdated?Math.max(0,daysSince(returnDate)):0;
   const dataResp=await getSaleReturnDataRoute(db,invoiceId),data:any=await dataResp.clone().json();if(!data.ok)return dataResp;
   const sale=data.sale,requested=Array.isArray(input.items)?input.items:[];if(!requested.length)return error('Select at least one product to return.');
+  const sourceTender=await db.prepare('SELECT payment_method FROM sales WHERE invoice_id=?')
+    .bind(invoiceId).first<{payment_method:string}>();
+  if(sourceTender?.payment_method==='Store Credit')
+    return error('Store Credit-funded invoices require a dedicated non-cash return reconciliation. Cash refunds are prohibited.',409);
   let total=0;const byId=new Map((sale.items||[]).map((i:any)=>[i.productId,i])),valid:any[]=[];
   for(const it of requested){
     const productId=cleanText(it.productId),q=Math.max(0,Math.round(Number(it.qty||0))),price=Number(it.unitPrice||0),av:any=byId.get(productId);
@@ -630,6 +772,13 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     const serialNumbers=Array.from(new Set((Array.isArray(it.serialNumbers)?it.serialNumbers:[]).map((x:any)=>cleanText(x)).filter(Boolean)));
     if(Number(av.trackSerial||0)&&serialNumbers.length!==q)return error(`${av.name}: select exactly ${q} Serial / IMEI number(s) being returned.`);
     const amount=mixedReturn?mixedReturn.amount:Math.round(q*price*100)/100;
+    if(isStoreCredit&&!mixedReturn){
+      // Do not mint arbitrary spendable credit via an editable return price.
+      const subtotal=Number(sale.subtotal||0),grand=Number(sale.grandTotal||0);
+      const historicalCents=subtotal>0?Math.round(q*Number(av.unitPrice||0)*grand/subtotal*100):0;
+      if(!Number.isSafeInteger(historicalCents)||Math.round(amount*100)!==historicalCents)
+        return error('Store Credit must use the original discounted net refund price.',409);
+    }
     valid.push({productId,name:av.name,q,price:mixedReturn?amount/q:price,amount,mixedReturn,serialNumbers,
       trackSerial:!!av.trackSerial,trackExpiry:!!av.trackExpiry,trackWarranty:!!av.trackWarranty});
     total+=amount;
@@ -637,8 +786,77 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
   total=Math.round(total*100)/100;
   if(total<=0)return error('Return amount must be greater than zero.');
   if(total>Number(sale.netSale||0)+0.000001)return error('Refund exceeds the remaining net invoice amount.',409);
-  let customerId=cleanText(sale.customerId);
-  if(refundMethod==='Store Credit'&&!customerId){const phone=cleanText(sale.customerPhone);if(!phone)return error('Store Credit requires a customer phone number.');const existing=await db.prepare(`SELECT customer_id FROM customers WHERE phone=? AND is_deleted=0 LIMIT 1`).bind(phone).first<any>();if(existing)customerId=existing.customer_id;else{customerId=`CUS-${crypto.randomUUID().slice(0,8).toUpperCase()}`;await db.prepare(`INSERT INTO customers (customer_id,customer_name,phone,current_due,status,is_deleted) VALUES (?,?,?,0,'Active',0)`).bind(customerId,cleanText(sale.customerName)||'Customer',phone).run();}}
+  const customerId=cleanText(sale.customerId);
+  let creditBalanceCents=0;
+  if(isStoreCredit){
+    // First supported issue path: existing linked customer, original fully-paid
+    // CASH sale and reconciled money books. Never turn A/R into store credit.
+    const original=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND status=\'Completed\' AND is_deleted=0')
+      .bind(invoiceId).first<any>();
+    const customer=customerId?await db.prepare(
+      'SELECT customer_id,phone,status,is_deleted,current_due FROM customers WHERE customer_id=?'
+    ).bind(customerId).first<any>():null;
+    const paidCents=Math.round(Number(original?.paid_amount||0)*100);
+    if(!original||!customer||original.customer_id!==customerId||
+       customer.phone!==cleanText(sale.customerPhone)||customer.status!=='Active'||
+       Number(customer.is_deleted)!==0||Number(customer.current_due)<0||
+       original.payment_type!=='Cash'||original.payment_method!=='Cash'||
+       Number(original.due_amount)!==0||paidCents<=0||
+       paidCents!==Math.round(Number(original.grand_total)*100))
+      return error('Store Credit requires a linked active customer and an original fully paid cash sale.',409);
+    const receipt=await db.prepare(
+      "SELECT COUNT(*) n,COALESCE(SUM(credit),0) amount,COALESCE(SUM(debit),0) debit "+
+      "FROM cash_book WHERE reference=? AND type='Sale' AND is_deleted=0"
+    ).bind(invoiceId).first<any>();
+    if(Number(receipt?.n)!==1||Number(receipt?.debit)!==0||
+       Math.round(Number(receipt?.amount||0)*100)!==paidCents)
+      return error('Original sale cash settlement cannot be reconciled.',409);
+    const historicCredit=await db.prepare(
+      "SELECT 1 x FROM customer_ledger WHERE customer_id=? AND type='Sales Return Credit' LIMIT 1"
+    ).bind(customerId).first();
+    const unjournaled=await db.prepare(
+      "SELECT 1 x FROM store_credit_legacy_unreconciled l "+
+      "JOIN sales_returns sr ON sr.return_id=l.return_id "+
+      "WHERE sr.customer_id=? OR sr.customer_phone=? LIMIT 1"
+    ).bind(customerId,customer.phone).first();
+    if(historicCredit||unjournaled)
+      return error('Historical Store Credit requires explicit account reconciliation.',409);
+    const previous=await db.prepare(
+      'SELECT return_id,refund_method,total_return_amount FROM sales_returns WHERE invoice_id=?'
+    ).bind(invoiceId).all<any>();
+    let priorCents=0;
+    for(const row of previous.results||[]){
+      const cents=Math.round(Number(row.total_return_amount||0)*100);
+      if(cents<=0||!Number.isSafeInteger(cents))
+        return error('Previous refund amount is invalid.',409);
+      if(row.refund_method==='Cash'){
+        const booked=await db.prepare(
+          "SELECT COUNT(*) n,COALESCE(SUM(debit),0) amount,COALESCE(SUM(credit),0) credit "+
+          "FROM cash_book WHERE reference=? AND type='Sales Return' AND is_deleted=0"
+        ).bind(row.return_id).first<any>();
+        if(Number(booked?.n)!==1||Number(booked?.credit)!==0||
+           Math.round(Number(booked?.amount||0)*100)!==cents)
+          return error('Earlier cash refund is not reconciled.',409);
+      }else if(row.refund_method==='Store Credit'){
+        const issued=await db.prepare(
+          "SELECT customer_id,delta_cents FROM customer_store_credit_entries "+
+          "WHERE entry_type='ISSUE' AND source_type='Sales Return' AND source_id=?"
+        ).bind(row.return_id).first<any>();
+        if(!issued||issued.customer_id!==customerId||Number(issued.delta_cents)!==cents)
+          return error('Earlier Store Credit issuance cannot be reconciled.',409);
+      }else return error('Prior return payment method requires separate reconciliation.',409);
+      priorCents+=cents;
+    }
+    const newCents=Math.round(total*100);
+    if(!Number.isSafeInteger(newCents)||newCents<=0||priorCents+newCents>paidCents)
+      return error('Store Credit exceeds the original verified paid amount.',409);
+    const balance=await db.prepare(
+      'SELECT available_cents FROM customer_store_credit_balance WHERE customer_id=?'
+    ).bind(customerId).first<any>();
+    creditBalanceCents=Number(balance?.available_cents||0);
+    if(!Number.isSafeInteger(creditBalanceCents)||creditBalanceCents<0)
+      return error('Customer Store Credit balance requires reconciliation.',409);
+  }
   const returnId='SRT-'+crypto.randomUUID().slice(0,10).toUpperCase();
   const ordinaryNeed=new Map<string,number>(),mixedNeed=new Map<string,number>();
   for(const v of valid)if(!v.trackSerial&&!v.trackExpiry) {
@@ -738,7 +956,17 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
       returnDate,customerId,customer.customer_name,returnId,total,
       'Cancelled unpaid invoice '+invoiceId+'; '+reason));
   }
-  else{const c=await db.prepare(`SELECT customer_name,current_due FROM customers WHERE customer_id=?`).bind(customerId).first<any>(),newDue=Number(c?.current_due||0)-total;stmts.push(db.prepare(`UPDATE customers SET current_due=?,updated_at=datetime('now') WHERE customer_id=?`).bind(newDue,customerId));stmts.push(db.prepare(`INSERT INTO customer_ledger (ledger_id,date,customer_id,customer_name,type,reference,debit,credit,balance,notes) VALUES (?,?,?,?, 'Sales Return Credit',?,0,?,?,?)`).bind(`CL-${crypto.randomUUID().slice(0,10).toUpperCase()}`,returnDate,customerId,c?.customer_name||sale.customerName,returnId,total,newDue,`Store credit for return ${returnId}`));}
+  else if(isStoreCredit){
+    // One D1 batch contains the return header, stock/lot restores, liability
+    // issuance and audit. No A/R, cash-book or bank-book movement is made.
+    stmts.push(db.prepare(
+      "INSERT INTO customer_store_credit_entries "+
+      "(entry_id,customer_id,entry_type,source_type,source_id,delta_cents,balance_after_cents,note,created_by) "+
+      "VALUES (?,?,'ISSUE','Sales Return',?,?,?,?,?)"
+    ).bind('SC-'+crypto.randomUUID().slice(0,12).toUpperCase(),customerId,returnId,
+      Math.round(total*100),creditBalanceCents+Math.round(total*100),
+      'Store credit for returned invoice '+invoiceId+'; '+reason,user.userId));
+  }
   stmts.push(db.prepare(`INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'CREATE_SALES_RETURN','SALES_RETURN',?,?)`).bind(user.userId,returnId,`Invoice ${invoiceId}; amount ${total}${backdated?`; backdated ${returnDate}`:''}`));
   if(authorizedReversal){
     stmts.push(db.prepare('INSERT INTO sale_reversal_logs (invoice_id,return_id,refund_amount_cents,reason,reversed_by,refund_method,refund_bank_account_id) VALUES (?,?,?,?,?,?,?)')
@@ -747,7 +975,7 @@ export async function completeSalesReturnRoute(db:SherDatabase,input:any,user:Au
     stmts.push(db.prepare("INSERT INTO audit_logs (user_id,action,entity_type,entity_id,note) VALUES (?,'REVERSE_MIXED_SALE','SALE',?,?)")
       .bind(user.userId,invoiceId,'Return '+returnId+'; '+(isDueAdjustment?'due cancelled ':refundMethod+' refund ')+total+'; reason '+reason));
   }
-try{await db.batch(stmts);}catch(err){if(String(err).includes('DUE_REVERSAL_CONFLICT'))return error('Customer due or ledger changed. Reload before trying to cancel.',409);if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund or due-settlement ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
+try{await db.batch(stmts);}catch(err){if(String(err).includes('STORE_CREDIT_LEDGER_CONFLICT')||String(err).includes('STORE_CREDIT_SOURCE_CONFLICT')||String(err).includes('UNIQUE constraint failed: customer_store_credit_entries'))return error('Customer Store Credit or original settlement changed. Reload and reconcile before retrying.',409);if(String(err).includes('DUE_REVERSAL_CONFLICT'))return error('Customer due or ledger changed. Reload before trying to cancel.',409);if(String(err).includes('SALE_REVERSAL_REFUND_ACCOUNT_CONFLICT'))return error('Refund or due-settlement ledger did not reconcile. Review before retry.',409);if(String(err).includes('SALE_REVERSAL_CONFLICT')||String(err).includes('UNIQUE constraint failed: sale_reversal_logs'))return error('Invoice was already reversed or changed.',409);if(String(err).includes('MIXED_RETURN_CONFLICT'))return error('Original unit quantities changed during return. Reload this invoice.',409);if(String(err).includes('SALES_RETURN_QUANTITY_CONFLICT'))return error('Return quantity changed during checkout. Refresh this invoice before retrying.',409);throw err;}return json({ok:true,returnId,totalReturnAmount:total});
 }
 
 export async function getSalesReturnHistoryRoute(db:SherDatabase):Promise<Response>{
@@ -788,7 +1016,8 @@ export async function getSalesReturnDetailRoute(db:SherDatabase,returnId:string)
   }});
 }
 export async function deleteSaleRoute(db:SherDatabase,id:string,reason:string,user:AuthUser):Promise<Response>{
-  if(!reason)return error('Enter a reason for deleting this invoice.');if(!(await getOpenCashSession(db)))return error('Start your cash session first before deleting a sales invoice.');const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be deleted. Use Sales Return so serial and expiry history remains intact.');const hasReturn=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(hasReturn)return error('This invoice has a Sales Return against it. Delete the return first, then delete the invoice.');
+  if(!reason)return error('Enter a reason for deleting this invoice.');if(!(await getOpenCashSession(db)))return error('Start your cash session first before deleting a sales invoice.');const s=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!s)return error('Invoice not found.',404);if(s.payment_method==='Store Credit')
+    return error('Store Credit-funded invoices cannot be deleted before audited credit reissue is implemented.',409);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be deleted. Use Sales Return so serial and expiry history remains intact.');const hasReturn=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(hasReturn)return error('This invoice has a Sales Return against it. Delete the return first, then delete the invoice.');
   const vendorRows=await db.prepare(`SELECT * FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>();const vendorQty=new Map<string,number>();for(const v of vendorRows.results||[])vendorQty.set(v.product_id,(vendorQty.get(v.product_id)||0)+Number(v.quantity||0));const items=await db.prepare(`SELECT product_id,product_name,SUM(quantity) qty FROM sale_items WHERE invoice_id=? GROUP BY product_id,product_name`).bind(id).all<any>();const ownNeed=new Map<string,number>();for(const i of items.results||[])ownNeed.set(i.product_id,Math.max(0,Number(i.qty||0)-Number(vendorQty.get(i.product_id)||0)));const restore=await restoreSaleLotsPlan(db,id,ownNeed),stmts:SqlPreparedStatement[]=[];
   for(const i of items.results||[]){const own=Math.max(0,Number(i.qty||0)-Number(vendorQty.get(i.product_id)||0));if(own<=0)continue;const p=await db.prepare(`SELECT current_stock FROM products WHERE product_id=?`).bind(i.product_id).first<any>(),newStock=Number(p?.current_stock||0)+own;stmts.push(db.prepare(`UPDATE products SET current_stock=?,updated_at=datetime('now') WHERE product_id=?`).bind(newStock,i.product_id));stmts.push(db.prepare(`INSERT INTO stock_movements (movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?, 'Sale Deleted',?,0,?,?,NULL)`).bind(`SM-${crypto.randomUUID().slice(0,10).toUpperCase()}`,i.product_id,own,newStock,`Invoice ${id} deleted`));}
   for(const x of restore.values()){let next=x.current+x.restore;if(x.sourceType==='OVERSOLD')next=Math.min(0,next);else next=Math.min(x.original,next);stmts.push(db.prepare(`UPDATE stock_lots SET remaining_quantity=?,updated_at=datetime('now'),status=CASE WHEN ?>0 THEN 'Active' WHEN source_type='OVERSOLD' AND ?<0 THEN 'Oversold' ELSE 'Depleted' END WHERE lot_id=?`).bind(next,next,next,x.lotId));}
@@ -798,7 +1027,8 @@ export async function deleteSaleRoute(db:SherDatabase,id:string,reason:string,us
 }
 
 export async function updateSaleRoute(db:SherDatabase,id:string,input:any,user:AuthUser):Promise<Response>{
-  const reason=cleanText(input.reason);if(!reason)return error('Enter a reason for this update.');if(!(await getOpenCashSession(db)))return error('Start your cash session first.');const old=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!old)return error('Invoice not found.',404);if(await db.prepare('SELECT 1 AS x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1').bind(id).first())return error('Mixed-unit invoice editing requires unit-aware history. Reverse the full invoice until editing is enabled.',409);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be edited. Use Sales Return and create a corrected sale.');const ret=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(ret)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');const open=await getOpenCashSession(db);if(!open||String(old.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited.');
+  const reason=cleanText(input.reason);if(!reason)return error('Enter a reason for this update.');if(!(await getOpenCashSession(db)))return error('Start your cash session first.');const old=await db.prepare(`SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0`).bind(id).first<any>();if(!old)return error('Invoice not found.',404);if(old.payment_method==='Store Credit')
+    return error('Store Credit-funded invoices cannot be edited without auditing the original credit redemption.',409);if(await db.prepare('SELECT 1 AS x FROM sale_item_unit_snapshots WHERE invoice_id=? LIMIT 1').bind(id).first())return error('Mixed-unit invoice editing requires unit-aware history. Reverse the full invoice until editing is enabled.',409);const tracked=await db.prepare(`SELECT 1 x FROM sale_items si JOIN products p ON p.product_id=si.product_id WHERE si.invoice_id=? AND (p.track_serial=1 OR p.track_expiry=1) LIMIT 1`).bind(id).first();if(tracked)return error('Invoices containing Serial / Expiry tracked products cannot be edited. Use Sales Return and create a corrected sale.');const ret=await db.prepare(`SELECT 1 x FROM sales_returns WHERE invoice_id=? LIMIT 1`).bind(id).first();if(ret)return error('This invoice has Sales Return records and can no longer be updated. Use Sales Return for further corrections.');const open=await getOpenCashSession(db);if(!open||String(old.created_at||'')<String(open.opened_at||''))return error('This invoice belongs to a closed Cash Session and can no longer be edited.');
   const customerName=cleanText(input.customerName),customerPhone=cleanText(input.customerPhone);if(!customerName||!customerPhone)return error('Customer name and phone are required for every sale.');if(!Array.isArray(input.items)||!input.items.length)return error('Cart is empty.');
   const oldVendor=await db.prepare(`SELECT * FROM vendor_sourcing WHERE invoice_id=?`).bind(id).all<any>(),oldItems=await db.prepare(`SELECT product_id,SUM(quantity) qty FROM sale_items WHERE invoice_id=? GROUP BY product_id`).bind(id).all<any>();const oldVendorQty=new Map<string,number>();for(const v of oldVendor.results||[])oldVendorQty.set(v.product_id,(oldVendorQty.get(v.product_id)||0)+Number(v.quantity||0));const oldOwn=new Map<string,number>();for(const i of oldItems.results||[])oldOwn.set(i.product_id,Math.max(0,Number(i.qty||0)-Number(oldVendorQty.get(i.product_id)||0)));const restored=await restoreSaleLotsPlan(db,id,oldOwn);
   const lotRows=await db.prepare(`SELECT id,lot_id,product_id,original_quantity,remaining_quantity,unit_cost,supplier_id,source_type FROM stock_lots ORDER BY id`).all<any>();const lotsByProduct=new Map<string,any[]>();for(const l of lotRows.results||[]){const x={...l,balance:Number(l.remaining_quantity||0)};const r=restored.get(l.lot_id);if(r){x.balance=r.sourceType==='OVERSOLD'?Math.min(0,r.current+r.restore):Math.min(r.original,r.current+r.restore);}if(!lotsByProduct.has(l.product_id))lotsByProduct.set(l.product_id,[]);lotsByProduct.get(l.product_id)!.push(x);}

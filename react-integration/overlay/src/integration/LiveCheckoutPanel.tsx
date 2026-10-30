@@ -10,8 +10,8 @@ import type { PosBankAccount, PosBootstrap, PosCustomer, PosSalePayload } from '
  * Keep the genuine Worker/D1 POS model rather than importing the original
  * CustomerPicker/usePosCart, which are backed by demonstration stores.
  *
- * Phase 2 deliberately supports one payment only. No pretend split tender,
- * installment, store credit, rounding or cash change is recorded.
+ * One verified tender: cash, bank, mobile, or full-balance Store Credit.
+ * Split tender and cash change remain unsupported.
  */
 type PaymentMethod = PosSalePayload['paymentMethod'];
 type DiscountMode = 'amount' | 'percent';
@@ -109,6 +109,13 @@ export function LiveCheckoutPanel(props: Props) {
         <span>Previous due · আগের বাকি</span>
         <strong>{taka(props.selectedCustomer.currentDue)}</strong>
       </div>}
+      {props.selectedCustomer && <div data-pos-store-credit-balance
+        className="flex justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50/50 px-3 py-2 text-xs text-ink-700">
+        <span>Store Credit · জমা ক্রেডিট</span>
+        <strong>{taka(props.selectedCustomer.storeCreditCents/100)}</strong>
+      </div>}
+      {props.selectedCustomer?.storeCreditBlocked && <p role="status"
+        className="text-xs text-warning">Old credit needs reconciliation · পুরোনো ক্রেডিট যাচাই দরকার</p>}
 
       <section className="rounded-lg border border-border bg-ink-50/50 dark:bg-ink-100/5">
         <button type="button" data-testid="pos-invoice-details-toggle"
@@ -188,6 +195,7 @@ export function LiveCheckoutPanel(props: Props) {
               <option value="Cash">Cash · নগদ</option>
               <option value="Bank">Bank · ব্যাংক</option>
               <option value="Mobile Banking">Mobile Banking · মোবাইল</option>
+              <option value="Store Credit">Store Credit · জমা ক্রেডিট</option>
             </select>
           </label>
           {props.requiresAccount && <label className="text-xs text-ink-600">Payment account *
@@ -202,24 +210,31 @@ export function LiveCheckoutPanel(props: Props) {
           </label>}
         </div>
         <div className="mt-2 flex items-end gap-1.5">
-          <label className="min-w-0 flex-1 text-xs text-ink-600">Amount received · কত টাকা পেলেন
+          <label className="min-w-0 flex-1 text-xs text-ink-600">
+            {props.paymentMethod==='Store Credit'?'Credit to use · ক্রেডিট খরচ':'Amount received · কত টাকা পেলেন'}
             <div className="relative mt-1">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-ink-400">৳</span>
               <Input ref={props.paidRef} type="number" min="0" step="0.01" inputMode="decimal"
-                aria-label="Amount received" value={props.paid}
+                aria-label={props.paymentMethod==='Store Credit'?'Store Credit used':'Amount received'} value={props.paymentMethod==='Store Credit'?String(props.total):props.paid}
+                disabled={props.disabled||props.paymentMethod==='Store Credit'}
                 onChange={event => props.onPaid(event.target.value)}
                 placeholder="0 — full due" className="h-9 w-full pl-7 text-right" />
             </div>
           </label>
           <button type="button" onClick={() => props.onPaid(String(props.total))}
-            disabled={props.total <= 0 || props.disabled}
+            disabled={props.total <= 0 || props.disabled || props.paymentMethod==='Store Credit'}
             className="h-9 rounded-md border border-border bg-card px-2 text-xs font-medium text-teal-700 hover:bg-teal-50 disabled:opacity-40">
             Exact · পুরো
           </button>
         </div>
       </div>
+      {props.paymentMethod==='Store Credit' && <p data-credit-non-cash-notice
+        className="rounded-md bg-teal-50 p-2 text-xs text-teal-800">
+        Uses saved customer credit only. No cash is received · নগদ আসবে না।
+        Whole payment only · সম্পূর্ণ টাকা ক্রেডিট থেকে।
+      </p>}
       <div className="space-y-1.5 rounded-lg bg-ink-50 p-3">
-        <Row label="Paid · জমা" value={taka(props.paidAmount)} />
+        <Row label={props.paymentMethod==='Store Credit'?'Credit used · ক্রেডিট খরচ':'Paid · জমা'} value={taka(props.paidAmount)} />
         <div className="flex items-center justify-between gap-2 text-sm">
           <span className="text-ink-700">Due · বাকি</span>
           <strong className={props.due > 0 ? 'text-danger' : 'text-ink'}>{taka(props.due)}</strong>

@@ -56,7 +56,7 @@ export function LivePosPage() {
   const [discount, setDiscount] = useState('');
   const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>('amount');
   const [paid, setPaid] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Bank' | 'Mobile Banking'>('Cash');
+  const [paymentMethod, setPaymentMethod] = useState<PosSalePayload['paymentMethod']>('Cash');
   const [bankAccountId, setBankAccountId] = useState('');
   const [openingCash, setOpeningCash] = useState('0');
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -108,13 +108,13 @@ export function LivePosPage() {
   const subtotal = useMemo(() => Math.round(lines.reduce((sum, l) => sum + lineTotal(l), 0) * 100)/100, [lines]);
   const rawDiscount = discount.trim() ? Number(discount) : 0;
   const discountAmount = discountMode === 'percent' ? Math.round(subtotal * rawDiscount) / 100 : rawDiscount;
-  const paidAmount = paid.trim() ? Number(paid) : 0;
   const total = Number.isFinite(discountAmount) ? Math.max(0, subtotal - discountAmount) : 0;
+  const paidAmount = paymentMethod==='Store Credit'?total:(paid.trim()?Number(paid):0);
   const due = Math.max(0, total - paidAmount);
   const selectedCustomer = bootstrap?.customers.find(p => p.phone === customerPhone.trim());
   const matchingAccounts = (bootstrap?.bankAccounts || []).filter(a =>
     (a.accountType || 'Bank') === (paymentMethod === 'Mobile Banking' ? 'Mobile Banking' : 'Bank'));
-  const requiresAccount = paidAmount > 0 && paymentMethod !== 'Cash';
+  const requiresAccount = paidAmount > 0 && (paymentMethod === 'Bank' || paymentMethod === 'Mobile Banking');
   const errors = useMemo(() => {
     const found: string[] = [];
     if (!canPost) found.push('Your account cannot post POS sales.');
@@ -125,6 +125,13 @@ export function LivePosPage() {
     if (!Number.isFinite(discountAmount) || discountAmount < 0 || discountAmount > subtotal) found.push('Enter a valid discount.');
     if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > total) found.push('Received amount cannot exceed the payable total.');
     if (requiresAccount && !matchingAccounts.some(a => a.id === bankAccountId)) found.push('Select an active payment account.');
+    if(paymentMethod==='Store Credit'){
+      if(!selectedCustomer)found.push('Select a saved customer with Store Credit · ক্রেতা নির্বাচন করুন।');
+      else if(selectedCustomer.storeCreditBlocked)found.push('Historical Store Credit needs reconciliation · পুরোনো হিসাব যাচাই দরকার।');
+      else if(Math.round(total*100)>selectedCustomer.storeCreditCents)
+        found.push('Not enough Store Credit · জমা ক্রেডিট যথেষ্ট নয়।');
+      if(total<=0)found.push('Store Credit requires a positive payable total.');
+    }
     for (const line of lines) {
       if (!Number.isSafeInteger(line.qty) || line.qty <= 0) found.push(line.product.name + ': enter a whole-number quantity.');
       if(line.unitQuantities){
@@ -151,7 +158,8 @@ export function LivePosPage() {
     }
     return found;
   }, [canPost, bootstrap, lines, customerName, customerPhone, discountAmount, subtotal,
-      paidAmount, total, requiresAccount, matchingAccounts, bankAccountId, outcomeUnknown]);
+      paidAmount, total, requiresAccount, matchingAccounts, bankAccountId, outcomeUnknown,
+      paymentMethod, selectedCustomer]);
   const addProduct = (p: Product) => {
     const record = bootstrap?.products.find(item => item.id === p.id);
     if (!record || !supported(record)) {
@@ -494,7 +502,7 @@ export function LivePosPage() {
           paymentMethod={paymentMethod} bankAccountId={bankAccountId}
           matchingAccounts={matchingAccounts} requiresAccount={requiresAccount}
           onPaid={setPaid}
-          onPaymentMethod={method => { setPaymentMethod(method); setBankAccountId(''); }}
+          onPaymentMethod={method => { setPaymentMethod(method); setBankAccountId(''); setPaid(method==='Store Credit'?String(total):''); }}
           onBankAccountId={setBankAccountId} paidRef={paidRef}
           errors={errors} disabled={saving} completed={!!finished}
           onClear={clearDraft}
@@ -526,7 +534,10 @@ export function LivePosPage() {
           <p className="flex justify-between"><span>Customer</span><strong>{customerName}</strong></p>
           <p className="flex justify-between"><span>Products</span><strong>{lines.length}</strong></p>
           <p className="flex justify-between"><span>Grand total</span><strong>{taka(total)}</strong></p>
-          <p className="flex justify-between"><span>Paid</span><strong>{taka(paidAmount)}</strong></p>
+          <p className="flex justify-between"><span>{paymentMethod==='Store Credit'?'Credit used · ক্রেডিট খরচ':'Paid'}</span><strong>{taka(paidAmount)}</strong></p>
+          {paymentMethod==='Store Credit'&&<p data-credit-review-notice className="text-xs text-teal-700">
+            No cash/bank receipt · নগদ বা ব্যাংকে টাকা যোগ হবে না
+          </p>}
           <p className="flex justify-between"><span>Due</span><strong>{taka(due)}</strong></p>
         </div>
         <DialogFooter><Button variant="outline" disabled={saving} onClick={()=>setReviewOpen(false)}>Cancel</Button>
