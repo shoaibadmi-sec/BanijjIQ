@@ -740,8 +740,8 @@ export async function completePurchaseReturnRoute(db: SherDatabase, input: Purch
   if (refundMethod === 'Supplier Credit') {
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due - ?, updated_at=datetime('now') WHERE supplier_id=?`).bind(totalReturnAmount, String(purchase.supplier_id || '')));
     batch.push(db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, ?, ?, ?, 'Purchase Return Credit', ?, 0, ?, (SELECT current_due - ? FROM suppliers WHERE supplier_id=?), ?, ?, datetime('now'))`)
-      .bind(crypto.randomUUID(), returnDate, String(purchase.supplier_id || ''), String(purchase.supplier_name || ''), returnId, totalReturnAmount, totalReturnAmount, String(purchase.supplier_id || ''), reason, user.userId));
+      VALUES (?, ?, ?, ?, 'Purchase Return Credit', ?, 0, ?, (SELECT current_due FROM suppliers WHERE supplier_id=?), ?, ?, datetime('now'))`)
+      .bind(crypto.randomUUID(), returnDate, String(purchase.supplier_id || ''), String(purchase.supplier_name || ''), returnId, totalReturnAmount, String(purchase.supplier_id || ''), reason, user.userId));
   }
   batch.push(db.prepare(`INSERT INTO audit_logs (user_id, action, entity_type, entity_id, note) VALUES (?, 'PURCHASE_RETURN', 'PURCHASE_RETURN', ?, ?)`)
     .bind(user.userId, returnId, reason));
