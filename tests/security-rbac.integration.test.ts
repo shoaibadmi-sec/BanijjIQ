@@ -93,3 +93,37 @@ test('RBAC: inactive roles stop granting reporting permissions to existing sessi
       'reactivation may restore the role according to current session policy');
   } finally { f.db.close(); }
 });
+
+test('RBAC: users.edit cannot disable another administrator even if two admins exist', async () => {
+  const f = await isolatedUsersFixture();
+  try {
+    const other = await f.api('POST', '/api/users', {
+      name: 'Second Administrator', mobile: '01000002503',
+      role: 'admin', password: 'Second-Admin-Secret-2026!',
+    }, f.adminToken);
+    assert.equal(other.status, 200, JSON.stringify(other));
+    const attempt = await f.api('PUT', '/api/users/' + other.id + '/status',
+      { status: 'Inactive' }, f.staffToken);
+    assert.equal(attempt.status, 403, JSON.stringify(attempt));
+    assert.equal((await f.api('POST', '/api/auth/login', {
+      phone: '01000002503', password: 'Second-Admin-Secret-2026!',
+    })).status, 200);
+  } finally { f.db.close(); }
+});
+
+test('RBAC: users.delete cannot delete another administrator even with two admins', async () => {
+  const f = await isolatedUsersFixture();
+  try {
+    const other = await f.api('POST', '/api/users', {
+      name: 'Second Administrator', mobile: '01000002503',
+      role: 'admin', password: 'Second-Admin-Secret-2026!',
+    }, f.adminToken);
+    assert.equal(other.status, 200, JSON.stringify(other));
+    const attempt = await f.api('DELETE', '/api/users/' + other.id,
+      undefined, f.staffToken);
+    assert.equal(attempt.status, 403, JSON.stringify(attempt));
+    assert.equal((await f.api('POST', '/api/auth/login', {
+      phone: '01000002503', password: 'Second-Admin-Secret-2026!',
+    })).status, 200);
+  } finally { f.db.close(); }
+});
