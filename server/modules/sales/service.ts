@@ -2,6 +2,7 @@ import type { SherDatabase, SqlPreparedStatement } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import { daysSince, hasModulePermission } from '../auth/permissions.js';
 import type { PosSaleInput } from './types.js';
+import { readStoreCreditReviewFlags } from './store-credit-reconciliation.js';
 import {quoteUnitQuantities, type UnitProfile} from '../products/unitProfile.js';
 import { aggregateSaleTrackingDraws, getAvailabilityMap, planTrackedSale, trackingEnabled, warrantyEndDate } from '../products/tracking.service.js';
 
@@ -662,8 +663,8 @@ export async function getSaleReturnDataRoute(db:SherDatabase,id:string):Promise<
  */
 export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   if(user.role!=='admin')return error('Administrator permission is required for Store Credit reconciliation.',403);
-  const [flagsCount,entries,customers,flagRows]=await Promise.all([
-    db.prepare('SELECT COUNT(*) n FROM store_credit_reconciliation_flags').first<{n:number}>(),
+  const [review,entries,customers]=await Promise.all([
+    readStoreCreditReviewFlags(db),
     db.prepare(
       "SELECT COALESCE(SUM(CASE WHEN entry_type='ISSUE' THEN delta_cents ELSE 0 END),0) issued_cents, "+
       "COALESCE(SUM(CASE WHEN entry_type='REDEEM' THEN -delta_cents ELSE 0 END),0) redeemed_cents, "+
@@ -672,23 +673,15 @@ export async function getStoreCreditReconciliationRoute(db:SherDatabase,user:Aut
     ).first<any>(),
     db.prepare(
       "SELECT COUNT(*) n FROM (SELECT customer_id FROM customer_store_credit_entries GROUP BY customer_id)"
-    ).first<{n:number}>(),
-    db.prepare(
-      "SELECT flag_code,customer_id,reference_id,expected_cents,recorded_cents "+
-      "FROM store_credit_reconciliation_flags ORDER BY flag_code,customer_id,reference_id LIMIT 100"
-    ).all<any>()
+    ).first<{n:number}>()
   ]);
-  return json({ok:true,readOnly:true,reviewRequired:Number(flagsCount?.n||0)>0,
-    flagsCount:Number(flagsCount?.n||0),flagsTruncated:Number(flagsCount?.n||0)>100,
+  return json({ok:true,readOnly:true,reviewRequired:review.flagsCount>0,
+    ...review,
     issuedCents:Number(entries?.issued_cents||0),
     redeemedCents:Number(entries?.redeemed_cents||0),
     outstandingCents:Number(entries?.outstanding_cents||0),
     journalEntries:Number(entries?.entries||0),
-    customerAccounts:Number(customers?.n||0),
-    flags:(flagRows.results||[]).map((v:any)=>({
-      flagCode:v.flag_code,customerId:v.customer_id,referenceId:v.reference_id,
-      expectedCents:Number(v.expected_cents||0),recordedCents:Number(v.recorded_cents||0)
-    }))});
+    customerAccounts:Number(customers?.n||0)});
 }
 
 export async function getStoreCreditAccountRoute(db:SherDatabase,customerId:string,user:AuthUser):Promise<Response>{
