@@ -249,3 +249,31 @@ export const getLiveReportSummary=(from:string,to:string)=>{
   return request<{ok:true;range:{from:string;to:string};metrics:LiveReportMetric[];
     coverage:{status:LiveReportStatus;reason:string}}>('/api/reports/v2/summary?'+params.toString());
 };
+
+export interface BankReconciliationAccount {
+  id: string;
+  name: string;
+  accountType: 'Bank' | 'Mobile Banking';
+  openingBalance: number;
+  recordedBalance: number;
+  bookBalance: number | null;
+  status: 'ready' | 'needs-review';
+  reason: string;
+}
+export interface BankReconciliation {
+  ok: true;
+  asOf: string;
+  accounts: BankReconciliationAccount[];
+  coverage: { status:'ready'|'needs-review'; reason:string };
+}
+export interface FinanceBootstrap {
+  ok: true;
+  currencySymbol: string;
+  activeCashSession: boolean;
+  personsAll: Array<{id:string;name:string;type:'Owner'|'Lender';status:string;phone:string}>;
+}
+export const getBankReconciliation = () =>
+  request<BankReconciliation>('/api/bank/reconciliation');
+export const getFinanceBootstrap = () =>
+  request<FinanceBootstrap>('/api/finance/bootstrap');
+
