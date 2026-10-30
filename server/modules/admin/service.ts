@@ -4,6 +4,7 @@ import { hashPassword } from '../auth/service.js';
 import {
   DELETE_WINDOW_OPTIONS,
   PERMISSION_MODULES,
+  canDelegatePermissions,
   requireManagementDelete,
   requireModulePermission,
   sanitizePermissions
@@ -28,6 +29,17 @@ async function validAssignableRole(db:SherDatabase,role:string):Promise<boolean>
   if(role==='admin')return true;
   return !!(await db.prepare(`SELECT 1 ok FROM app_roles WHERE role_name=? LIMIT 1`).bind(role).first<any>());
 }
+async function requireDelegatedPermissions(db:SherDatabase,actor:AuthUser,permissions:RolePermissions):Promise<Response|null>{
+  return await canDelegatePermissions(db,actor,permissions)?null:error('Cannot manage permissions beyond your own role.',403);
+}
+async function requireDelegatedRole(db:SherDatabase,actor:AuthUser,role:string):Promise<Response|null>{
+  if(actor.role==='admin')return null;
+  if(role==='admin')return error('Only an Administrator can manage an Administrator account.',403);
+  const row=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`).bind(role).first<{permissions_json:string;status:string}>();
+  if(!row||row.status!=='Active')return error('Role is not available for delegated management.',403);
+  try{return requireDelegatedPermissions(db,actor,sanitizePermissions(JSON.parse(row.permissions_json||'{}')))}
+  catch{return error('Role permissions could not be verified.',403)}
+}
 export async function getUsersBootstrapRoute(db:SherDatabase,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'users','view');if(denied)return denied;
   const [ur,rr]=await Promise.all([
@@ -47,6 +59,7 @@ export async function createManagedUserRoute(db:SherDatabase,input:any,actor:Aut
   if(role==='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(password.length<6)return error('Password must be at least 6 characters.');
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const scopeDenied=await requireDelegatedRole(db,actor,role);if(scopeDenied)return scopeDenied;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? LIMIT 1`).bind(mobile).first<any>())return error('A user with this mobile number already exists.');
   const id=crypto.randomUUID(),hashed=await hashPassword(password);
   await db.prepare(`INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,'Active',datetime('now'),datetime('now'),?)`)
@@ -58,10 +71,12 @@ export async function updateManagedUserRoute(db:SherDatabase,id:string,input:any
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const existing=await db.prepare(`SELECT user_id,full_name,phone,role,status FROM app_users WHERE user_id=? LIMIT 1`).bind(id).first<any>();if(!existing)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,existing.role);if(adminDenied)return adminDenied;
+  const currentDenied=await requireDelegatedRole(db,actor,existing.role);if(currentDenied)return currentDenied;
   const name=cleanText(input.name),mobile=cleanText(input.mobile),role=cleanText(input.role);
   if(!name)return error('Full name is required.');if(!mobile)return error('Mobile number is required.');if(!role)return error('Choose a role.');
   if(role==='admin'&&existing.role!=='admin'&&actor.role!=='admin')return error('Only an Administrator can assign the Administrator role.',403);
   if(!(await validAssignableRole(db,role)))return error('Role not found.');
+  const scopeDenied=await requireDelegatedRole(db,actor,role);if(scopeDenied)return scopeDenied;
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE phone=? AND user_id<>? LIMIT 1`).bind(mobile,id).first<any>())return error('A user with this mobile number already exists.');
   if(existing.role==='admin'&&role!=='admin'&&existing.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain — make someone else an Administrator before changing this one’s role.');
   await db.prepare(`UPDATE app_users SET full_name=?,phone=?,role=?,updated_at=datetime('now') WHERE user_id=?`).bind(name,mobile,role,id).run();
@@ -72,6 +87,7 @@ export async function resetManagedUserPasswordRoute(db:SherDatabase,id:string,in
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const target=await db.prepare(`SELECT role FROM app_users WHERE user_id=?`).bind(id).first<{role:string}>();if(!target)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,target.role);if(adminDenied)return adminDenied;
+  const scopeDenied=await requireDelegatedRole(db,actor,target.role);if(scopeDenied)return scopeDenied;
   const password=String(input.newPassword||'');if(password.length<6)return error('Password must be at least 6 characters.');
   const hashed=await hashPassword(password);
   await db.prepare(`UPDATE app_users SET password_hash=?,password_salt=?,updated_at=datetime('now') WHERE user_id=?`).bind(hashed.hash,hashed.salt,id).run();
@@ -82,6 +98,7 @@ export async function setManagedUserStatusRoute(db:SherDatabase,id:string,status
   const denied=await requireModulePermission(db,actor,'users','edit');if(denied)return denied;
   const row=await db.prepare(`SELECT role,status FROM app_users WHERE user_id=?`).bind(id).first<any>();if(!row)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,row.role);if(adminDenied)return adminDenied;
+  const scopeDenied=await requireDelegatedRole(db,actor,row.role);if(scopeDenied)return scopeDenied;
   const status=statusRaw==='Active'?'Active':'Inactive';
   if(status==='Inactive'&&row.role==='admin'&&row.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain.');
   await db.prepare(`UPDATE app_users SET status=?,updated_at=datetime('now') WHERE user_id=?`).bind(status,id).run();
@@ -93,6 +110,7 @@ export async function deleteManagedUserRoute(db:SherDatabase,id:string,actor:Aut
   if(actor.userId===id)return error('You cannot delete your own account while logged in.');
   const row=await db.prepare(`SELECT role,status FROM app_users WHERE user_id=?`).bind(id).first<any>();if(!row)return error('User not found.',404);
   const adminDenied=requireAdministratorForAdminTarget(actor,row.role);if(adminDenied)return adminDenied;
+  const scopeDenied=await requireDelegatedRole(db,actor,row.role);if(scopeDenied)return scopeDenied;
   if(row.role==='admin'&&row.status==='Active'&&await countActiveAdmins(db)<=1)return error('At least one active Administrator account must remain and cannot be deleted.');
   await db.batch([
     db.prepare(`DELETE FROM auth_sessions WHERE user_id=?`).bind(id),
@@ -110,16 +128,24 @@ export async function createManagedRoleRoute(db:SherDatabase,input:any,user:Auth
   const denied=await requireModulePermission(db,user,'roles','add');if(denied)return denied;
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be created here.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) LIMIT 1`).bind(name).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
+  const permissions=sanitizePermissions(input.permissions);
+  const scopeDenied=await requireDelegatedPermissions(db,user,permissions);if(scopeDenied)return scopeDenied;
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),id=crypto.randomUUID();
   await db.prepare(`INSERT INTO app_roles(role_id,role_name,allowed_modules,permissions_json,status,created_at,updated_at) VALUES (?,?,?,?,'Active',datetime('now'),datetime('now'))`).bind(id,name,allowed.join(','),JSON.stringify(permissions)).run();
   return json({ok:true,id});
 }
 export async function updateManagedRoleRoute(db:SherDatabase,id:string,input:any,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'roles','edit');if(denied)return denied;
-  const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
+  const row=await db.prepare(`SELECT role_name,permissions_json FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
+  if(user.role!=='admin'){
+    let existing:RolePermissions;try{existing=sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return error('Role permissions could not be verified.',403)}
+    const currentDenied=await requireDelegatedPermissions(db,user,existing);if(currentDenied)return currentDenied;
+  }
   const name=cleanText(input.name);if(!name)return error('Role name is required.');if(name.toLowerCase()==='administrator'||name.toLowerCase()==='admin')return error('"Administrator" is a built-in role and can’t be renamed to that.');
   if(await db.prepare(`SELECT 1 ok FROM app_roles WHERE lower(role_name)=lower(?) AND role_id<>? LIMIT 1`).bind(name,id).first<any>())return error('A role with this name already exists.');
-  const permissions=sanitizePermissions(input.permissions),allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
+  const permissions=sanitizePermissions(input.permissions);
+  const scopeDenied=await requireDelegatedPermissions(db,user,permissions);if(scopeDenied)return scopeDenied;
+  const allowed=Object.keys(permissions).filter(k=>permissions[k]?.view),oldName=String(row.role_name);
   await db.batch([
     db.prepare(`UPDATE app_roles SET role_name=?,allowed_modules=?,permissions_json=?,updated_at=datetime('now') WHERE role_id=?`).bind(name,allowed.join(','),JSON.stringify(permissions),id),
     db.prepare(`UPDATE app_users SET role=?,updated_at=datetime('now') WHERE role=?`).bind(name,oldName),
@@ -129,12 +155,20 @@ export async function updateManagedRoleRoute(db:SherDatabase,id:string,input:any
 }
 export async function setManagedRoleStatusRoute(db:SherDatabase,id:string,statusRaw:string,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'roles','edit');if(denied)return denied;
-  if(!(await db.prepare(`SELECT 1 ok FROM app_roles WHERE role_id=?`).bind(id).first<any>()))return error('Role not found.',404);
+  const row=await db.prepare(`SELECT permissions_json FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
+  if(user.role!=='admin'){
+    let permissions:RolePermissions;try{permissions=sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return error('Role permissions could not be verified.',403)}
+    const scopeDenied=await requireDelegatedPermissions(db,user,permissions);if(scopeDenied)return scopeDenied;
+  }
   const status=statusRaw==='Active'?'Active':'Inactive';await db.prepare(`UPDATE app_roles SET status=?,updated_at=datetime('now') WHERE role_id=?`).bind(status,id).run();return json({ok:true,id,status});
 }
 export async function deleteManagedRoleRoute(db:SherDatabase,id:string,user:AuthUser):Promise<Response>{
   const denied=await requireManagementDelete(db,user,'roles');if(denied)return denied;
-  const row=await db.prepare(`SELECT role_name FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
+  const row=await db.prepare(`SELECT role_name,permissions_json FROM app_roles WHERE role_id=?`).bind(id).first<any>();if(!row)return error('Role not found.',404);
+  if(user.role!=='admin'){
+    let permissions:RolePermissions;try{permissions=sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return error('Role permissions could not be verified.',403)}
+    const scopeDenied=await requireDelegatedPermissions(db,user,permissions);if(scopeDenied)return scopeDenied;
+  }
   if(await db.prepare(`SELECT 1 ok FROM app_users WHERE role=? LIMIT 1`).bind(row.role_name).first<any>())return error('This role is assigned to one or more users and can’t be deleted. Deactivate it instead, or reassign those users first.');
   await db.prepare(`DELETE FROM app_roles WHERE role_id=?`).bind(id).run();return json({ok:true,id});
 }
@@ -225,7 +259,8 @@ export async function getSettingsBootstrapRoute(db:SherDatabase,user:AuthUser):P
 }
 export async function updateSettingsRoute(db:SherDatabase,input:Record<string,unknown>,user:AuthUser):Promise<Response>{
   const denied=await requireModulePermission(db,user,'settings','edit');if(denied)return denied;
-  if(!input||typeof input!=='object')return error('No settings data received.');if(input['Shop Name']!==undefined&&!cleanText(input['Shop Name']))return error('Shop Name is required.');if(input['Shop Name Bangla']!==undefined&&!cleanText(input['Shop Name Bangla']))return error('Shop Name (Bangla) is required.');
+  if(!input||typeof input!=='object')return error('No settings data received.');
+  if(user.role!=='admin'&&Object.prototype.hasOwnProperty.call(input,'Session Timeout Hours'))return error('Only an Administrator can change session timeout policy.',403);if(input['Shop Name']!==undefined&&!cleanText(input['Shop Name']))return error('Shop Name is required.');if(input['Shop Name Bangla']!==undefined&&!cleanText(input['Shop Name Bangla']))return error('Shop Name (Bangla) is required.');
   const stmts:SqlPreparedStatement[]=[];
   for(const [key,raw] of Object.entries(input)){
     if(!SETTINGS_EDITABLE_KEYS.has(key))continue;let value='';
