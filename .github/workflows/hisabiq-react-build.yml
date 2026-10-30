@@ -81,6 +81,7 @@ jobs:
           npm run test:phase4
           npm run test:phase7f
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
+          node --import tsx --test react-integration/tests/phase4-party-sources.test.ts
           node --import tsx --test react-integration/tests/phase7f2-alerts-client.test.ts
           node --import tsx --test tests/phase7h1-inventory-history.integration.test.ts react-integration/tests/phase7h1-original-history-client.test.ts
           node --import tsx --test tests/phase7h2-inventory-lots.integration.test.ts react-integration/tests/phase7h2-original-lots-client.test.ts
