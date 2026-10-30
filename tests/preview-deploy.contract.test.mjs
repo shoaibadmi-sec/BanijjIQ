@@ -217,8 +217,8 @@ test('real demo data seeding requires an explicit isolated-preview approval and 
     'node --import tsx scripts/preview/demo-seed-remote.mjs --apply',
     'Recheck exact current main immediately before preview writes'
   ])assert.ok(workflow.includes(marker),marker);
-  assert.ok(!workflow.includes('\\n  push:'));
-  assert.ok(!workflow.includes('\\n  pull_request:'));
+  assert.ok(!workflow.includes(String.fromCharCode(10)+'  push:'));
+  assert.ok(!workflow.includes(String.fromCharCode(10)+'  pull_request:'));
   assert.ok(!workflow.includes('wrangler d1 migrations apply DB --remote'));
   assert.ok(!workflow.includes('wrangler deploy'));
   assert.ok(client.includes('https://banijjiq-hisabiq-react-preview.shoaibadmisec.workers.dev'));
