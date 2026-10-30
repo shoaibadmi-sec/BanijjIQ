@@ -255,8 +255,11 @@ test('two return documents cannot restore the same original FIFO lot twice',asyn
     (return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total)
     VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110),
            ('RETURN-LOT-2','SALE-PROFIT-001','PROD-FIFO-001','Demo Copper Wire',1,110,110)`).run();
-  // Each document balances on its own, and the invoice-wide quantities
-  // balance, but both illegally restore the same 1-unit historical lot.
+  // Simulate corrupted historical data imported before migration 0035's
+  // posting-time capacity trigger existed. Live inserts remain protected.
+  db.native.exec('DROP TRIGGER trg_mixed_return_lot_capacity');
+  // Each document and invoice-wide quantity balances, but one original lot
+  // is restored twice. Read-only reports must audit historical evidence.
   db.native.prepare(`INSERT INTO sales_return_item_lots
     (return_id,invoice_id,product_id,lot_id,quantity)
     VALUES ('RETURN-LOT-1','SALE-PROFIT-001','PROD-FIFO-001','LOT-FIFO-001',1),
