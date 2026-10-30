@@ -294,6 +294,13 @@ function startMocking(context,calls){
         grandTotal:amount,paidAmount:0,dueAmount:amount,paymentStatus:'Due',items:[]};
       return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:amount,dueAmount:amount});
     }
+    if(path==='/api/products/inventory-history'&&request.method()==='GET')return respond({
+      ok:true,items:[
+        {movementId:'UI-HIST-1',productId:'PRD-000001',date:'2026-10-29 09:00:00',type:'STOCK_IN_ADJUSTMENT',
+          quantityIn:2,quantityOut:0,balanceAfter:25,note:'Counted adjustment',lotId:'LOT-UI-001'},
+        {movementId:'UI-HIST-2',productId:'PRD-000002',date:'2026-10-30 09:00:00',type:'STOCK_OUT_ADJUSTMENT',
+          quantityIn:0,quantityOut:1,balanceAfter:3,note:'Damage adjustment',lotId:null}
+      ]});
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
@@ -716,6 +723,17 @@ try{
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
           await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),3);
+          const originalHistoryTab=page.getByRole('tab',{name:/Stock history/i});
+          assert.equal(await originalHistoryTab.isEnabled(),true,
+            'existing HisabIQ Stock history must be restored, not redesigned');
+          await originalHistoryTab.click();
+          await page.getByText('Counted adjustment').waitFor();
+          assert.ok(api.some(call=>call.method==='GET'&&call.path==='/api/products/inventory-history'));
+          assert.equal(await page.locator('[data-live-products] tbody tr').count(),2);
+          await screenshot(page,'original-products-stock-history-390');
+          await audit(page,'original-products-stock-history-390');
+          await page.getByRole('tab',{name:/Product list/i}).click();
+          await page.getByText('Copper Cable 2.5mm').first().waitFor();
           await page.getByRole('button',{name:/Add product/i}).click();
           await page.locator('[data-live-product-editor]').waitFor();
           await screenshot(page,'product-editor-390');
