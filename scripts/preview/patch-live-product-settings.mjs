@@ -39,7 +39,7 @@ export function patchLiveProductSettings(source){
  for(const [from,to] of changes)output=exact(output,from,to,'original lookup action');
  output=exact(output,
   '<Button size="sm" onClick={addNamed} disabled={!newName.trim()}>',
-  '<Button size="sm" onClick={addNamed} disabled={!newName.trim()||(tab==='units'&&!newSymbol.trim())||pending||loading}>',
+  "<Button size=\"sm\" onClick={addNamed} disabled={!newName.trim()||(tab==='units'&&!newSymbol.trim())||pending||loading}>",
   'wait for server before write');
  for(const forbidden of ['initialCategories','initialUnits','initialBrands','availableProductCategories','createPreviewProductCategory','createPreviewProductBrand','createPreviewProductUnit'])
   if(output.includes(forbidden))throw new Error('Unsafe preview settings remain: '+forbidden);
