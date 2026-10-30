@@ -218,7 +218,7 @@ try{
       'summary must have one authoritative operating expense');
     assert.equal(summary.metrics.find(x=>x.key==='receivablesBalance')?.valueMinor,
       Math.round(Number(dueSource.current_due)*100));
-    const audit=await request('GET','/api/reports/v2/audit'+range,undefined,{token});
+    const audit=await request('GET','/api/reports/v2/audit?'+range.slice(1),undefined,{token});
     assert.equal(audit.status,200);
     assert.equal(audit.readiness,'unavailable','Business Audit is explicitly deferred');
     assert.deepEqual(audit.sections,[]);
