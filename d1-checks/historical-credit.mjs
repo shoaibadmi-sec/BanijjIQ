@@ -127,6 +127,18 @@ try{
   assert.equal((await api('POST','/api/pos/sales',{
     ...splitInput,tenders:[{method:'Cash',amountCents:2001},{method:'Store Credit',amountCents:2999}]
   },token)).status,409);
+  const sourcePreview=await api('GET',
+    '/api/sales-management/'+encodeURIComponent(mixed.invoice.invoiceId)+'/split-reversal',
+    undefined,token);
+  assert.equal(sourcePreview.ok,true,JSON.stringify(sourcePreview));
+  assert.equal(sourcePreview.preview.eligible,true,JSON.stringify(sourcePreview));
+  assert.equal(sourcePreview.preview.refundCents,2000);
+  assert.equal(sourcePreview.preview.creditReissueCents,3000);
+  assert.deepEqual(sourcePreview.preview.allocations.map(a=>a.amountCents),[2000,3000]);
+  const held=await api('POST',
+    '/api/sales-management/'+encodeURIComponent(mixed.invoice.invoiceId)+'/split-reversal',
+    {reason:'G2-H posting not yet released'},token);
+  assert.equal(held.status,409);
   const remaining=await api('GET','/api/pos/store-credit/D1-SPLIT-CUS',undefined,token);
   assert.equal(remaining.availableCents,0,JSON.stringify(remaining));
   await stop();
