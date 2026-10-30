@@ -22,20 +22,60 @@ async function salesRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveRepo
   const count=await db.prepare(`SELECT COUNT(*) AS count FROM sales WHERE ${where}`).bind(...bind).first<{count:number}>();
   const orderColumn={date:'sale_date',amount:'grand_total',name:'customer_name',reference:'invoice_id'}[query.sort];
   const offset=(query.page-1)*query.pageSize;
-  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_name,grand_total
+  const result=await db.prepare(`SELECT invoice_id,sale_date,customer_name,grand_total,paid_amount,due_amount
     FROM sales WHERE ${where} ORDER BY ${orderColumn} ${query.direction.toUpperCase()},invoice_id DESC LIMIT ? OFFSET ?`)
-    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_name:string;grand_total:number}>();
+    .bind(...bind,query.pageSize,offset).all<{invoice_id:string;sale_date:string;customer_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
   const rows:LiveReportRow[]=(result.results||[]).map(row=>{
     const amountMinor=toMinor(row.grand_total);
+    const rawPaid=row.paid_amount===null?null:toMinor(row.paid_amount);
+    const rawDue=row.due_amount===null?null:toMinor(row.due_amount);
+    const splitValid=amountMinor!==null&&rawPaid!==null&&rawDue!==null&&
+      Math.abs(rawPaid+rawDue-amountMinor)<=1;
     return {sourceId:row.invoice_id,sourceModule:'sales',date:row.sale_date,label:row.customer_name,
-      amountMinor,status:amountMinor===null?'incomplete':'needs-review',
-      reason:amountMinor===null?'Invalid recorded amount.':'Recorded invoice amount, not reconciled net sales or profit.'};
+      amountMinor,paidMinor:splitValid?rawPaid:null,dueMinor:splitValid?rawDue:null,
+      status:amountMinor===null?'incomplete':'needs-review',
+      reason:amountMinor===null?'Invalid recorded amount.':
+        splitValid?'Recorded invoice amount and payment split; returns/profit not yet reconciled.':
+          'Recorded invoice amount. Paid/due split is missing or inconsistent and is withheld.'};
   });
   return {ok:true,report:query.report,range:{from:query.from,to:query.to},
     page:query.page,pageSize:query.pageSize,totalRows:Number(count?.count??0),rows,metrics:[],
     coverage:{status:rows.some(x=>x.amountMinor===null)?'incomplete':'needs-review',
       reason:'Recorded sales only. Returns, reversals, FIFO COGS and Store Credit are not yet reconciled.'}};
 }
+/** Source-backed Purchase Register: original invoice totals, never invented net
+ * expenditure after returns/settlements or historical cash balances. */
+async function purchaseRows(db:SherDatabase,query:LiveReportQuery):Promise<LiveReportPage>{
+  const where="COALESCE(is_deleted,0)=0 AND status='Completed' AND purchase_date BETWEEN ? AND ? "+
+    "AND (instr(lower(purchase_id),lower(?))>0 OR instr(lower(supplier_name),lower(?))>0)";
+  const bind=[query.from,query.to,query.search,query.search] as const;
+  const count=await db.prepare('SELECT COUNT(*) AS n FROM purchases WHERE '+where)
+    .bind(...bind).first<{n:number}>();
+  const order={date:'purchase_date',amount:'grand_total',name:'supplier_name',reference:'purchase_id'}[query.sort];
+  const result=await db.prepare(
+    'SELECT purchase_id,purchase_date,supplier_name,grand_total,paid_amount,due_amount '+
+    'FROM purchases WHERE '+where+' ORDER BY '+order+' '+query.direction.toUpperCase()+
+    ',purchase_id DESC LIMIT ? OFFSET ?'
+  ).bind(...bind,query.pageSize,(query.page-1)*query.pageSize)
+    .all<{purchase_id:string;purchase_date:string;supplier_name:string;grand_total:number;paid_amount:number|null;due_amount:number|null}>();
+  const rows:LiveReportRow[]=(result.results||[]).map(x=>{
+    const amount=toMinor(x.grand_total);
+    const paid=x.paid_amount===null?null:toMinor(x.paid_amount);
+    const due=x.due_amount===null?null:toMinor(x.due_amount);
+    const split=amount!==null&&paid!==null&&due!==null&&Math.abs(paid+due-amount)<=1;
+    return {sourceId:x.purchase_id,sourceModule:'purchases',date:x.purchase_date,label:x.supplier_name,
+      amountMinor:amount,paidMinor:split?paid:null,dueMinor:split?due:null,
+      status:amount===null?'incomplete':'needs-review',
+      reason:amount===null?'Invalid recorded purchase amount.':
+        split?'Recorded purchase total and payment split; returns and settlements are not netted.':
+          'Original purchase total only; payment split is inconsistent and withheld.'};
+  });
+  return {ok:true,report:query.report,range:{from:query.from,to:query.to},
+    page:query.page,pageSize:query.pageSize,totalRows:Number(count?.n??0),rows,metrics:[],
+    coverage:{status:rows.some(x=>x.status==='incomplete')?'incomplete':'needs-review',
+      reason:'Recorded completed purchase invoices only; returns and supplier settlements are not netted.'}};
+}
+
 function unavailable(query:LiveReportQuery):LiveReportPage {
   const item=liveReportCatalog.find(x=>x.id===query.report);
   return {ok:true,report:query.report,range:{from:query.from,to:query.to},
@@ -55,6 +95,7 @@ export async function handleLiveReportsRoute(db:SherDatabase,request:Request,pat
     if(path==='/api/reports/v2/rows') {
       const query=parseLiveReportQuery(url);
       return json(query.report==='sales'?await salesRows(db,query):
+        query.report==='purchase'?await purchaseRows(db,query):
         query.report==='profit'?await readSalesProfit(db,query):
         (query.report==='stock'||query.report==='receivables'||query.report==='payables')?
           await readStockDues(db,query):

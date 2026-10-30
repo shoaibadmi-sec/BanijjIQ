@@ -27,6 +27,15 @@ export function runMigrations(db: Database.Database, migrationsDir: string): Mig
     .filter((name) => /^\d+.*\.sql$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
 
+  // Do not let independent feature branches reuse a migration number with different filenames.
+  const versions = new Map<string,string>();
+  for (const file of files) {
+    const version = BigInt(file.match(/^\d+/)![0]).toString();
+    const previous = versions.get(version);
+    if (previous) throw new Error(`Duplicate migration version ${version.padStart(4, '0')}: ${previous} and ${file}`);
+    versions.set(version, file);
+  }
+
   const lookup = db.prepare(`SELECT checksum FROM ${MIGRATION_TABLE} WHERE migration = ?`);
   const record = db.prepare(`INSERT INTO ${MIGRATION_TABLE} (migration, checksum) VALUES (?, ?)`);
   const applied: string[] = [];

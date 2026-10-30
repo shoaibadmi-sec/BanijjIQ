@@ -4,6 +4,14 @@
 - What behavior or invariant is changed:
 - Existing source/contract reviewed:
 
+## Original HisabIQ frontend → backend only (mandatory for UI-related PRs)
+
+- [ ] Identified exact original apps/hisabiq-web screen and shared UI; **no newly authored replacement page or design**.
+- [ ] Wired existing controls to typed BanijjIQ APIs; implemented missing server business logic first with tests.
+- [ ] Verified unchanged original layout/JSX/styles/responsive and keyboard behavior by source-parity, Playwright screenshots and a11y tests.
+- [ ] Documented pre-existing Live*Page substitutions as migration debt, not patterns; separately approved any truly new UI before coding.
+- Screen-to-API parity table (source component, original actions, endpoint/handler, tests, remaining gap):
+
 ## Mandatory RED → GREEN → full CI evidence
 
 - [ ] **TEST FIRST:** executable regression/function/business test added before production code, or documented docs/config-only exception.

@@ -10,6 +10,7 @@ import {runLiveTeamChecks} from './phase8a3-team.mjs';
 import {runAdminEmployeeCreateChecks} from './phase8a3b1-admin-user-create.mjs';
 import { runFinalProductChecks } from './products-final.mjs';
 import {runPaidRefundChecks} from './phase4-paid-refunds.mjs';
+import {runPurchaseInvoiceSourceChecks} from './phase4-purchase-source-preview.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -85,6 +86,8 @@ function startMocking(context,calls){
   let planned=null;
   let order=null;
   const supplierSettlements=[];
+  const adjustedStocks=new Map();
+  const adjustedLots=[];
   return context.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
@@ -122,8 +125,12 @@ function startMocking(context,calls){
           metrics:[],coverage:{status:'needs-review',reason:'Posted invoice sources.'}});
       }
       const fixtures={
+        purchase:{sourceId:'PUR-LIVE-001',sourceModule:'purchases',date:'2026-10-18',
+          label:'Real Hardware Supplier',amountMinor:12000,paidMinor:0,dueMinor:12000,
+          status:'needs-review',reason:'Recorded purchase; returns and settlements are not netted.'},
         sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
-          label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
+          label:'Real API Mock Buyer',amountMinor:12000,paidMinor:4500,dueMinor:7500,
+          status:'needs-review',reason:'Recorded invoice amount.'},
         stock:{sourceId:'STK-LIVE-001',sourceModule:'products',date:'2026-10-30',
           label:'Verified Cable Roll',amountMinor:5000,status:'needs-review',reason:'Current FIFO snapshot only.'},
         receivables:{sourceId:'CUS-LIVE-001',sourceModule:'customers',date:'2026-10-30',
@@ -294,7 +301,43 @@ function startMocking(context,calls){
         grandTotal:amount,paidAmount:0,dueAmount:amount,paymentStatus:'Due',items:[]};
       return respond({ok:true,purchaseId:postedPurchase.purchaseId,grandTotal:amount,dueAmount:amount});
     }
-    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
+    if(path==='/api/products/inventory-history'&&request.method()==='GET')return respond({
+      ok:true,items:[
+        {movementId:'UI-HIST-1',productId:'PRD-000001',date:'2026-10-29 09:00:00',type:'STOCK_IN_ADJUSTMENT',
+          quantityIn:2,quantityOut:0,balanceAfter:25,note:'Counted adjustment',lotId:'LOT-UI-001'},
+        {movementId:'UI-HIST-2',productId:'PRD-000002',date:'2026-10-30 09:00:00',type:'STOCK_OUT_ADJUSTMENT',
+          quantityIn:0,quantityOut:1,balanceAfter:3,note:'Damage adjustment',lotId:null}
+      ]});
+    if(path==='/api/products/inventory-lots'&&request.method()==='GET')return respond({
+      ok:true,lots:[
+        ...adjustedLots,
+        {lotId:'UI-LOT-1',productId:'PRD-000001',sourceType:'PURCHASE',sourceRef:'PURCHASE-MOCK-1',
+          receivedAt:'2026-10-29 10:00:00',originalQuantity:25,remainingQuantity:25,unitCost:80,
+          batchNumber:null,expiryDate:null,serials:[]},
+        {lotId:'UI-LOT-2',productId:'PRD-000002',sourceType:'OPENING',sourceRef:'OPENING-UI-2',
+          receivedAt:'2026-10-28 10:00:00',originalQuantity:3,remainingQuantity:3,unitCost:35,
+          batchNumber:null,expiryDate:null,serials:[]}
+      ]});
+    const adjustMatch=path.match(/^\/api\/products\/([^/]+)\/adjust-stock$/);
+    if(adjustMatch&&request.method()==='POST'){
+      const product=productData.find(p=>p.productId===decodeURIComponent(adjustMatch[1]));
+      assert.ok(product,'only a source product can be adjusted');
+      const body=request.postDataJSON();
+      assert.equal(typeof body.delta,'number');assert.ok(body.note);
+      const current=adjustedStocks.get(product.productId)??product.currentStock;
+      assert.ok(body.delta>0&&Number.isFinite(body.delta));
+      adjustedStocks.set(product.productId,current+body.delta);
+      adjustedLots.unshift({
+        lotId:'UI-ADJ-1',productId:product.productId,sourceType:'OPENING_ADJUSTMENT',
+        sourceRef:'UI-ADJ-1',receivedAt:'2026-10-30 12:00:00',
+        originalQuantity:body.delta,remainingQuantity:body.delta,unitCost:product.purchasePrice,
+        batchNumber:null,expiryDate:null,serials:[]
+      });
+      calls.push({method:'ASSERT',path:'/api/products/adjust-stock',payload:body});
+      return respond({ok:true});
+    }
+    if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData.map(p=>
+      adjustedStocks.has(p.productId)?{...p,currentStock:adjustedStocks.get(p.productId),sellableStock:adjustedStocks.get(p.productId)}:p),
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
       brands:[{id:'BRAND-DEMO',name:'Demo Brand'}],units:[{id:'UNIT-PCS',name:'Pcs'}]});
     if(path==='/api/pos/bootstrap'&&request.method()==='GET')return respond({
@@ -446,7 +489,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-report-workspace]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -460,7 +503,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-live-purchases], [data-live-purchase-editor]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports], [data-report-workspace], [data-live-purchases], [data-live-purchase-editor]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -494,6 +537,64 @@ try{
     await ctx.close();
   });
 
+  // Phase 5H1: the production Reports URL must preserve the pinned HisabIQ
+  // layout. All money shown here comes from the authenticated v2 API.
+  for(const width of [390,768,1440]){
+    await withCheck('original HisabIQ Reports UI with live D1 adapter '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try {
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        await page.getByText('INV-LIVE-REPORT-001').first().waitFor({timeout:10000});
+        assert.equal(await page.locator('[data-live-reports]').count(),0,
+          'production Reports must not render the custom live Reports layout');
+        assert.ok(await page.locator('[data-report-workspace] table').count()>0,
+          'native HisabIQ ReportResults table remains visible');
+        const savedInvoiceRow=page.locator('[data-report-workspace] tbody tr').first();
+        const savedInvoiceText=await savedInvoiceRow.innerText();
+        assert.match(savedInvoiceText,/৳\s*45(?:\D|$)/,
+          'existing Paid column must show ৳45 from the saved invoice API');
+        assert.match(savedInvoiceText,/৳\s*75(?:\D|$)/,
+          'existing Due column must show ৳75 from the saved invoice API');
+        assert.ok(calls.some(call=>call.method==='GET'&&call.path==='/api/reports/v2/rows'),
+          'native report must use real backend API');
+        assert.ok(!calls.some(call=>call.method==='POST'&&call.path.startsWith('/api/reports')));
+        assert.equal(await page.getByText('Demo data',{exact:true}).count(),0,
+          'never label live source rows as demo or display preview-store totals');
+        await inspectLayout(page,'native-reports-'+width);
+        await screenshot(page,'native-reports-'+width);
+        await audit(page,'native-reports-'+width);
+      }finally{await ctx.close();}
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('native HisabIQ Purchase Register reads posted backend purchase '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      try{
+        const page=await ctx.newPage();
+        await page.goto(base+'/#/app/reports?screen=library&report=purchases&from=2026-10-01&to=2026-10-30');
+        await page.locator('[data-report-workspace]').waitFor({timeout:10000});
+        await page.getByRole('button',{name:'PUR-LIVE-001'}).waitFor({timeout:10000});
+        const row=page.locator('[data-report-row]').first();
+        assert.match(await row.locator('td').nth(4).innerText(),/৳\s*0(?:\D|$)/,
+          'original Paid column must display a saved zero payment, not a fabricated value');
+        assert.match(await row.locator('td').nth(5).innerText(),/৳\s*120(?:\D|$)/,
+          'original Due column must show the full purchase obligation');
+        assert.ok(calls.some(x=>x.path==='/api/reports/v2/rows'&&x.method==='GET'),
+          'native Purchase Register must use authenticated backend reports');
+        assert.equal(await page.locator('[data-live-reports]').count(),0,
+          'purchase report must not use the custom Reports layout');
+        await inspectLayout(page,'native-purchase-report-'+width);
+        await screenshot(page,'native-purchase-report-'+width);
+        await audit(page,'native-purchase-report-'+width);
+      }finally{await ctx.close();}
+    });
+  }
   for(const width of [390,768,1440]){
     await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
@@ -501,7 +602,7 @@ try{
       await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.locator('[data-live-reports]').waitFor({timeout:10000});
       await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
       const nav=page.locator('[data-live-reports] [role="tab"]');
@@ -526,12 +627,12 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
       await page.getByText('STK-LIVE-001').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Current FIFO value'}).waitFor();
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await screenshot(page,'reports-stock-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
       await page.getByText('SUP-LIVE-001').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Current due'}).waitFor();
       await page.getByText('Needs checking').first().waitFor();
@@ -552,18 +653,18 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
       await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
       await page.getByRole('columnheader',{name:'Money in'}).waitFor();
       await page.getByRole('columnheader',{name:'Money out'}).waitFor();
       await page.locator('[data-report-metric="externalNetMovement"]').getByText('৳450').waitFor();
       assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
       await screenshot(page,'reports-money-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
       await page.getByText('FIN-LIVE-001').waitFor({timeout:10000});
       await page.locator('[data-report-metric="ownerCapitalIn"]').getByText('৳300').waitFor();
       await screenshot(page,'reports-finance-'+width);
-      await page.goto(base+'/#/app/reports?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
       await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
       await page.locator('[data-report-metric="operatingExpenses"]').getByText('৳50').waitFor();
       await inspectLayout(page,'reports-expense-'+width);
@@ -583,7 +684,7 @@ try{
       }}})}));
     await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
     const page=await ctx.newPage();
-    await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+    await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
     await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
     assert.equal(await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).count(),0,
       'report-only users must not get an invoice action without POS view');
@@ -596,7 +697,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.getByRole('textbox',{name:'Search records'}).fill('CI-PAGE');
       await page.getByText('INV-CI-0001').waitFor({timeout:10000});
       assert.equal(await page.locator('[data-live-reports] tbody tr').count(),50);
@@ -629,7 +730,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
       await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).click();
       const modal=page.getByRole('dialog',{name:'Recorded invoice'});
       await modal.getByText('Real API Mock Buyer').waitFor({timeout:10000});
@@ -654,7 +755,7 @@ try{
         const url=new URL(request.url());
         if(url.pathname==='/api/reports/v2/rows')queried.push(url.searchParams.get('report'));
       });
-      await page.goto(base+'/#/app/reports?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=product-profit&from=2026-10-01&to=2026-10-30');
       await page.getByText(/Product-level FIFO allocations/).waitFor({timeout:10000});
       assert.ok(queried.includes('product-profit'),'product gross profit must have its own backend report ID');
       assert.equal(await page.locator('[data-live-reports] tbody tr').count(),0);
@@ -674,7 +775,7 @@ try{
       const calls=[];await startMocking(ctx,calls);
       await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
       const page=await ctx.newPage();
-      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.goto(base+'/#/app/reports-live-legacy?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
       await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
       const search=page.getByRole('textbox',{name:'Search records'});
       await search.fill('Investment');
@@ -708,12 +809,49 @@ try{
         await inspectLayout(page,'products-'+width+'-'+theme);
         await screenshot(page,'products-'+width+'-'+theme);
         await audit(page,'products-'+width+'-'+theme);
+        if(width!==390||theme!=='light'){
+          await page.getByRole('tab',{name:/Stock lots/i}).click();
+          await page.getByText('PURCHASE-MOCK-1').waitFor();
+          await inspectLayout(page,'stock-lots-'+width+'-'+theme);
+          await screenshot(page,'original-stock-lots-'+width+'-'+theme);
+          await audit(page,'original-stock-lots-'+width+'-'+theme);
+          await page.getByRole('tab',{name:/Product list/i}).click();
+        }
         if(width===390&&theme==='light'){
+          assert.equal(await page.getByRole('region',{name:'Live stock alerts'}).count(),0,
+            'Pinned Products must not gain unapproved alert panels');
           const search=page.getByRole('textbox',{name:'Search products'});
           await search.fill('Copper');
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),1);
           await page.getByRole('button',{name:'Clear Search products',exact:true}).click();
           assert.equal(await page.locator('[data-live-products] tbody tr').count(),3);
+          const originalHistoryTab=page.getByRole('tab',{name:/Stock history/i});
+          assert.equal(await originalHistoryTab.isEnabled(),true,
+            'existing HisabIQ Stock history must be restored, not redesigned');
+          await originalHistoryTab.click();
+          await page.getByText('Counted adjustment').waitFor();
+          assert.ok(api.some(call=>call.method==='GET'&&call.path==='/api/products/inventory-history'));
+          assert.equal(await page.locator('[data-live-products] tbody tr').count(),2);
+          await screenshot(page,'original-products-stock-history-390');
+          await audit(page,'original-products-stock-history-390');
+          const lotsTab=page.getByRole('tab',{name:/Stock lots/i});
+          assert.equal(await lotsTab.isEnabled(),true,'source HisabIQ Stock lots tab is enabled');
+          await lotsTab.click();
+          await page.getByText('PURCHASE-MOCK-1').waitFor();
+          assert.equal(await page.locator('[data-live-products] tbody tr').count(),2);
+          assert.ok(api.some(x=>x.method==='GET'&&x.path==='/api/products/inventory-lots'));
+          await screenshot(page,'original-products-stock-lots-390');
+          await audit(page,'original-products-stock-lots-390');
+          await page.getByRole('combobox',{name:'Filter inventory by product'}).click();
+          await page.getByRole('option',{name:'Copper Cable 2.5mm'}).click();
+          await page.getByRole('button',{name:'Adjust stock',exact:true}).click();
+          await page.getByRole('dialog').getByPlaceholder('0').fill('2');
+          await page.getByRole('button',{name:'Save adjustment'}).click();
+          await page.getByText('UI-ADJ-1').first().waitFor();
+          assert.ok(api.some(x=>x.method==='ASSERT'&&x.path==='/api/products/adjust-stock'&&x.payload.delta===2),
+            'original adjustment dialog must post a single real D1 adjustment');
+          await page.getByRole('tab',{name:/Product list/i}).click();
+          await page.getByText('Copper Cable 2.5mm').first().waitFor();
           await page.getByRole('button',{name:/Add product/i}).click();
           await page.locator('[data-live-product-editor]').waitFor();
           await screenshot(page,'product-editor-390');
@@ -726,6 +864,7 @@ try{
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});
   await runPaidRefundChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
+  await runPurchaseInvoiceSourceChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
   for(const width of [390,768,1440]){
     await withCheck('Phase 4A supplier search + due purchase '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
