@@ -60,36 +60,8 @@ export async function approveStockCount(db:SherDatabase,productId:string,id:stri
   db.prepare("UPDATE stock_counts SET status=CASE WHEN status='PENDING' THEN 'APPROVED' ELSE json_extract('STALE_COUNT','$') END,approved_by=?,approved_at=datetime('now'),cost_minor=? WHERE product_id=? AND count_id=?")
    .bind(user.userId,Number(total),productId,id)
  ];
- // CAS even on a no-variance count: approval cannot certify a stock snapshot that changed after preflight.
- statements.push(db.prepare("UPDATE products SET current_stock=CASE WHEN current_stock=? AND is_deleted=0 AND ABS(COALESCE((SELECT SUM(remaining_quantity) FROM stock_lots WHERE product_id=?),0)-?)<0.00000001 THEN ? ELSE json_extract('STALE_STOCK','
- for(const d of draws){
-  const q=units(d.take),c=units(d.cost);
-  statements.push(db.prepare("UPDATE stock_lots SET remaining_quantity=CASE WHEN remaining_quantity=? THEN ? ELSE json_extract('STALE_LOT','$') END,updated_at=datetime('now') WHERE lot_id=? AND product_id=?")
-   .bind(units(d.old),units(d.old-d.take),d.lotId,productId));
-  statements.push(db.prepare('INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?,?,0,?,?,?,?)')
-   .bind(d.moveId,productId,'STOCKTAKE_OUT',q,units(counted),'Physical count '+id,d.lotId));
-  statements.push(db.prepare('INSERT INTO stock_count_lots(count_id,lot_id,movement_id,quantity,unit_cost,cost_minor) VALUES (?,?,?,?,?,?)')
-   .bind(id,d.lotId,d.moveId,q,c,Number(costMinor(d.take,d.cost))));
- }
- if(delta>0&&verified!==null){
-  const lotId=crypto.randomUUID(),moveId=crypto.randomUUID(),q=units(delta),c=units(verified);
-  statements.push(db.prepare("INSERT INTO stock_lots(lot_id,product_id,source_type,source_ref,original_quantity,remaining_quantity,unit_cost) VALUES (?,?,'OPENING_ADJUSTMENT',?,?,?,?)")
-   .bind(lotId,productId,'STOCKTAKE:'+id,q,q,c));
-  statements.push(db.prepare('INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,?,?, ?,0,?,?,?)')
-   .bind(moveId,productId,'STOCKTAKE_IN',q,units(counted),'Physical count '+id,lotId));
-  statements.push(db.prepare('INSERT INTO stock_count_lots(count_id,lot_id,movement_id,quantity,unit_cost,cost_minor) VALUES (?,?,?,?,?,?)')
-   .bind(id,lotId,moveId,q,c,Number(total)));
- }
- try{await db.batch(statements);}
- catch{
-  const latest=await findCount(db,productId,id);
-  if(latest?.status==='APPROVED')return replay(latest);
-  return fail('Stock changed or a journal write failed; count stays pending.',409);
- }
- return Response.json({ok:true,countId:id,statusValue:'APPROVED',replayed:false,
-  costMinor:Number(total),remainingStock:units(counted)});
-}
-) END,updated_at=CASE WHEN ?=0 THEN updated_at ELSE datetime('now') END WHERE product_id=?")
+ // CAS even on a no-variance count: verify live product and FIFO sum inside the same D1 batch.
+ statements.push(db.prepare("UPDATE products SET current_stock=CASE WHEN current_stock=? AND is_deleted=0 AND ABS(COALESCE((SELECT SUM(remaining_quantity) FROM stock_lots WHERE product_id=?),0)-?)<0.00000001 THEN ? ELSE json_extract('STALE_STOCK','$') END,updated_at=CASE WHEN ?=0 THEN updated_at ELSE datetime('now') END WHERE product_id=?")
   .bind(units(expected),productId,units(expected),units(counted),delta,productId));
  for(const d of draws){
   const q=units(d.take),c=units(d.cost);
