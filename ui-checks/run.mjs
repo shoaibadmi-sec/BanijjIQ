@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { runProductsHybridChecks } from './products-hybrid.mjs';
 import { runFinalProductChecks } from './products-final.mjs';
+import {runPaidRefundChecks} from './phase4-paid-refunds.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -718,6 +719,7 @@ try{
   }
   await runProductsHybridChecks({browser,base,withCheck,results});
   await runFinalProductChecks({browser,base,withCheck,results});
+  await runPaidRefundChecks({browser,base,withCheck,results,startMocking,screenshot,audit});
   for(const width of [390,768,1440]){
     await withCheck('Phase 4A supplier search + due purchase '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:940},reducedMotion:'reduce'});
