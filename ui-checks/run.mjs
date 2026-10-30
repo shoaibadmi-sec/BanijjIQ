@@ -1282,7 +1282,7 @@ try{
     await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
     await page.locator('[data-live-pos]').waitFor({timeout:12000});
     await page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
+    await page.getByRole('textbox',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
     const name=page.locator('input[list="live-pos-customer-names"]');
     const phone=page.locator('input[list="live-pos-customer-phones"]');
     await name.fill('Real Browser Due Buyer');
@@ -1331,8 +1331,8 @@ try{
       await page.keyboard.press('Escape'); // Close open source-authentic combobox before tapping quick item.
       const quick=page.locator('[data-live-pos] button').filter({hasText:'Copper Cable 2.5mm'}).first();
       await quick.click();
-      await page.getByRole('spinbutton',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
-      assert.equal(await page.locator('[data-testid="pos-cart"] [data-pos-line]').count(),1,
+      await page.getByRole('textbox',{name:'Quantity for Copper Cable 2.5mm'}).waitFor();
+      assert.equal(await page.locator('[data-testid="pos-cart"] [data-testid="pos-cart-row"]').count(),1,
         'Live selected product renders in the original HisabIQ cart grid');
       await screenshot(page,'pos-cart-'+width);
       if(width===1440){
@@ -1365,7 +1365,7 @@ try{
       await page.goto(base+'/#/app/pos',{waitUntil:'domcontentloaded'});
       await page.locator('[data-live-pos]').waitFor();
       await page.locator('[data-live-pos] button').filter({hasText:'Carton Test Cable'}).first().click();
-      const line=page.locator('[data-pos-line]').filter({hasText:'Carton Test Cable'});
+      const line=page.locator('[data-testid="pos-cart-row"]').filter({hasText:'Carton Test Cable'});
       const inputs=line.locator('[data-multi-quantity] input');
       await inputs.first().waitFor();
       assert.equal(await inputs.count(),3);
@@ -1396,7 +1396,7 @@ try{
     await page.goto(base+'/#/app/pos');
     await page.locator('[data-live-pos]').waitFor();
     await page.locator('[data-live-pos] button').filter({hasText:'Serial Tracked Motor'}).first().click();
-    await page.getByRole('button',{name:/Serial \/ IMEI/}).click();
+    await page.getByRole('button',{name:/Serials?\s+0\/1/i}).click();
     await page.getByRole('button',{name:/SN-UI-001/}).click();
     await page.getByRole('button',{name:'Use serials'}).click();
     await page.locator('input[list="live-pos-customer-names"]').fill('UI Tracking Buyer');
@@ -1417,8 +1417,8 @@ try{
     const page=await ctx.newPage();
     await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
     await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
-    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+    await page.getByRole('textbox',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
+    await page.getByRole('button',{name:/short.*choose source/i}).click();
     await page.getByRole('radio',{name:/Negative Sale/}).click();
     await page.getByRole('button',{name:'Allow negative sale'}).click();
     await page.locator('input[list="live-pos-customer-names"]').fill('UI Shortage Buyer');
@@ -1440,8 +1440,8 @@ try{
     const page=await ctx.newPage();
     await page.goto(base+'/#/app/pos');await page.locator('[data-live-pos]').waitFor();
     await page.locator('[data-live-pos] button').filter({hasText:'PVC Pipe 20mm'}).first().click();
-    await page.getByRole('spinbutton',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
-    await page.getByRole('button',{name:'Resolve stock shortage'}).click();
+    await page.getByRole('textbox',{name:'Quantity for PVC Pipe 20mm'}).fill('5');
+    await page.getByRole('button',{name:/short.*choose source/i}).click();
     await page.getByRole('radio',{name:/Vendor/}).click();
     await page.getByRole('textbox',{name:'New vendor name'}).fill('UI Quick Vendor');
     await page.getByRole('textbox',{name:'New vendor phone'}).fill('01000000222');

@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Keyboard, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { CheckCircle2, Keyboard, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '../components/Dialog';
 import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
-import { ProductCombobox } from '../components/pos/ProductCombobox';
+import { CartTable } from '../components/pos/CartTable';
+import type { CartLine } from '../hooks/usePosCart';
+import {toSourceProduct,toSourceCartLine,patchLiveLineFromSource} from './sourcePosCartBridge';
 import { StatusBadge } from '../components/StatusBadge';
 import { ReceiptPreview } from '../components/brand/ReceiptPreview';
 import { SerialPickerDialog } from '../components/pos/SerialPickerDialog';
 import { LiveStockShortageDialog, type ShortageSelection } from './LiveStockShortageDialog';
 import { LiveCheckoutPanel } from './LiveCheckoutPanel';
-import { LiveMultiUnitQuantity } from './LiveMultiUnitQuantity';
 import { quoteLiveUnits } from './posUnitMath';
 import { Link } from 'react-router-dom';
 import './liveReceiptPrint.css';
@@ -76,7 +77,7 @@ export function LivePosPage() {
   const startSessionRequestId = useRef(crypto.randomUUID());
   const productRef = useRef<HTMLInputElement>(null);
   const paidRef = useRef<HTMLInputElement>(null);
-  const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [lastAddedId,setLastAddedId] = useState<string|null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!canView) { setBusy(false); return; }
@@ -96,11 +97,9 @@ export function LivePosPage() {
     return () => window.removeEventListener('keydown', shortcut);
   }, []);
 
-  const selectable = useMemo(() => (bootstrap?.products || []).filter(supported).map(p => ({
-    id: p.id, name: p.name, nameBn: '', sku: p.barcode || p.id, category: p.category,
-    brand: p.brand, unit: p.unit || 'Pcs', stock: p.stock, minStock: p.minimumStock,
-    sellPrice: p.sellingPrice, purchasePrice: 0, active: true
-  } satisfies Product)), [bootstrap]);
+  const selectable = useMemo(() => (bootstrap?.products || []).filter(supported).map(toSourceProduct), [bootstrap]);
+  const sourceLines = useMemo(() => lines.map(l=>toSourceCartLine(l,bootstrap?.vendors)), [lines,bootstrap]);
+  const liveSymbols=useMemo(()=>Object.fromEntries((bootstrap?.products||[]).map(p=>[p.id,Object.fromEntries((p.unitProfilePreview?.units||[]).map(u=>[u.unit,u.symbol]))])),[bootstrap]);
   const simpleCount = selectable.length;
   const excludedCount = (bootstrap?.products.length || 0) - simpleCount;
   const serialLine = lines.find(l=>l.product.id===serialId);
@@ -145,7 +144,7 @@ export function LivePosPage() {
         else if (line.source.mode==='own')
           found.push(line.product.name + ': review the stock shortage before checkout.');
         else if (line.source.mode==='vendor' &&
-          (!(bootstrap?.vendors||[]).some(v=>v.id===line.source.vendorId) ||
+          (!(bootstrap?.vendors||[]).some(v=>v.id===(line.source.mode==='vendor'?line.source.vendorId:'')) ||
            !Number.isFinite(line.source.vendorUnitCost) || line.source.vendorUnitCost<0))
           found.push(line.product.name + ': select an active vendor and valid unit cost.');
       }
@@ -177,25 +176,27 @@ export function LivePosPage() {
         ...(record.unitProfilePreview?{unitQuantities:{[record.unit]:1}}:{}),
         serialNumbers: [], source:{mode:'own'} }];
     });
-    requestAnimationFrame(() => {
-      quantityRefs.current[record.id]?.focus();
-      quantityRefs.current[record.id]?.select();
-    });
+    setLastAddedId(record.id);
   };
-  const patchLine = (id: string, patch: Partial<Pick<Line, 'qty' | 'price'>>) =>
-    setLines(old => old.map(line => line.product.id === id ?
-      { ...line, ...patch, ...(patch.qty!==undefined?{
-        serialNumbers:[],source:{mode:'own'} as ShortageSelection
-      }:{}) } : line));
-  const patchMixedUnit=(id:string,unit:string,quantity:number)=>{
+  const updateSourceLine=(id:string,patch:Partial<Pick<CartLine,
+    'qty'|'secondaryQty'|'unitQuantities'|'unit'|'price'|'serials'>>)=>{
     setLines(old=>old.map(line=>{
-      if(line.product.id!==id || !line.unitQuantities || !line.product.unitProfilePreview)return line;
-      const quantities={...line.unitQuantities,[unit]:quantity};
-      let qty=0;
-      try{qty=quoteLiveUnits(line.product.unitProfilePreview,quantities).qty;}catch{}
-      return {...line,unitQuantities:quantities,qty,serialNumbers:[],source:{mode:'own'} as ShortageSelection};
+      if(line.product.id!==id)return line;
+      try{return patchLiveLineFromSource(line,patch);}
+      catch(e){setError(e instanceof Error?e.message:'Invalid quantity');return line;}
     }));
   };
+  const reorderSourceLines=(order:string[])=>setLines(old=>{
+    if(order.length!==old.length||new Set(order).size!==old.length)return old;
+    const byId=new Map(old.map(line=>[line.product.id,line]));
+    if(order.some(id=>!byId.has(id)))return old;
+    return order.map(id=>byId.get(id)!);
+  });
+  const moveSourceLine=(id:string,delta:number)=>setLines(old=>{
+    const from=old.findIndex(line=>line.product.id===id),to=from+delta;
+    if(from<0||to<0||to>=old.length)return old;
+    const next=[...old];next.splice(to,0,next.splice(from,1)[0]);return next;
+  });
   const openSerialPicker = async (id:string) => {
     if(loadingTracking)return;
     setLoadingTracking(true);setError('');
@@ -369,98 +370,12 @@ export function LivePosPage() {
       </div>}
       <div className="pos-columns grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_370px]" data-pos-layout>
         <div className="min-w-0 space-y-3">
-          {/* Original HisabIQ CartTable.tsx grid and inline search structure,
-              with live BanijjIQ product records and persisted accounting actions. */}
-          <div data-cart-kind="sale" className="min-w-0 overflow-x-auto rounded-xl border border-border bg-card shadow-card"
-            tabIndex={0} role="region" aria-label="Sales cart rows — scroll horizontally with keyboard">
-            <div data-cart-header className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-ink-400`}>
-              <span className="text-right">#</span>
-              <span>Product · পণ্য</span>
-              <span className="text-right">Quantity · পরিমাণ</span>
-              <span>Price in · একক</span>
-              <span className="text-right">Price · দাম</span>
-              <span className="text-right">Total · মোট</span>
-              <span className="sr-only">Remove</span>
-            </div>
-            <div data-testid="pos-cart" className="divide-y divide-border">
-              {lines.map((line,index) => <div data-testid="pos-cart-row" data-cart-row="sale" data-pos-line key={line.product.id}
-                className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 px-3 py-2`}>
-                <span className="pr-1 text-right text-xs text-ink-400">{index+1}.</span>
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-ink" title={line.product.name}>{line.product.name}</p>
-                  <p className="truncate text-[11px] text-ink-500">{line.product.stock} {line.product.unit} sellable</p>
-                  {line.product.trackSerial&&<button type="button" disabled={loadingTracking||saving}
-                    onClick={()=>void openSerialPicker(line.product.id)}
-                    className="block max-w-full truncate text-left text-[11px] font-medium text-teal-700 hover:underline">
-                    Serial / IMEI · {line.serialNumbers.length}/{line.qty} selected
-                  </button>}
-                  {(line.product.trackSerial||line.product.trackExpiry) &&
-                    <span className="block truncate text-[10px] text-ink-500">Tracked stock</span>}
-                  {!line.product.trackSerial&&!line.product.trackExpiry&&line.qty>line.product.stock&&
-                    <button type="button" onClick={()=>setShortageId(line.product.id)}
-                      className="block max-w-full truncate text-left text-[11px] font-medium text-warning hover:underline">
-                      {line.source.mode==='own'?'Resolve stock shortage':line.source.mode==='vendor'?'Vendor sourcing selected':'Negative sale selected'}
-                    </button>}
-                </div>
-                <div className="flex min-w-0 items-center justify-end gap-1">
-                  {line.product.unitProfilePreview && line.unitQuantities
-                    ? <LiveMultiUnitQuantity profile={line.product.unitProfilePreview}
-                        quantities={line.unitQuantities} productName={line.product.name} disabled={saving}
-                        primaryRef={node=>{quantityRefs.current[line.product.id]=node;}}
-                        onChange={(unit,qty)=>patchMixedUnit(line.product.id,unit,qty)}
-                        onLastEnter={()=>productRef.current?.focus()}/>
-                    : <>
-                      <Input ref={node => { quantityRefs.current[line.product.id] = node; }}
-                        type="number" min="1" step="1" value={line.qty}
-                        aria-label={'Quantity for '+line.product.name}
-                        onChange={e => patchLine(line.product.id,{qty:Number(e.target.value)})}
-                        onKeyDown={e => { if(e.key === 'Enter'){e.preventDefault();productRef.current?.focus();} }}
-                        className="h-9 min-w-0 w-[106px] text-right" />
-                      <span className="w-[44px] shrink-0 truncate text-right text-[11px] text-ink-500" title={line.product.unit}>
-                        {line.product.unit}
-                      </span>
-                    </>}
-                </div>
-                <span className="truncate text-xs text-ink-600" title={'Price per '+line.product.unit}>
-                  {line.unitQuantities?'Mixed':line.product.unit}
-                </span>
-                <div className="flex min-w-0 items-center gap-1">
-                  {line.unitQuantities&&line.product.unitProfilePreview
-                    ? <span data-mixed-unit-prices className="w-full truncate rounded-md bg-ink-50 px-2 py-2 text-right text-[11px] text-ink-600"
-                        title={line.product.unitProfilePreview.units.map(u=>u.symbol+': '+taka(u.sellingPrice)).join(' · ')}>
-                        Unit prices · একক দাম
-                      </span>
-                    : <>
-                      <span className="shrink-0 text-xs text-ink-500">৳</span>
-                      <Input type="number" min="0" step="0.01" value={line.price}
-                        aria-label={'Price for '+line.product.name}
-                        onChange={e => patchLine(line.product.id,{price:Number(e.target.value)})}
-                        className="h-9 min-w-0 w-full text-right"/>
-                    </>}
-                </div>
-                <strong className="text-right text-[13px] font-semibold text-ink">{taka(lineTotal(line))}</strong>
-                <button type="button" className="flex size-8 items-center justify-center rounded-md text-ink-400 hover:bg-danger-bg hover:text-danger"
-                  aria-label={'Remove '+line.product.name}
-                  onClick={() => setLines(old => old.filter(l => l.product.id !== line.product.id))}>
-                  <Trash2 className="size-4"/>
-                </button>
-              </div>)}
-              <div data-testid="pos-add-row" data-cart-add
-                className={`grid min-w-[790px] grid-cols-[36px_minmax(130px,1fr)_160px_88px_168px_112px_28px] items-center gap-1.5 border-t border-border bg-teal-50/35 px-3 py-2`}>
-                <span className="pr-1 text-right text-sm text-teal-600">{lines.length+1}.</span>
-                <ProductCombobox ref={productRef} products={selectable} onSelect={addProduct}
-                  ariaLabel="Add real BanijjIQ product" disabled={saving}/>
-                <span className="pr-2 text-right text-sm text-ink-400">Qty</span>
-                <span className="px-2 text-xs text-ink-400">Unit</span>
-                <span className="pr-2 text-right text-sm text-ink-400">Price</span>
-                <span className="text-right text-sm text-ink-400">Total</span>
-                <span aria-hidden="true" />
-              </div>
-            </div>
-            {!lines.length && <p className="border-t border-border px-4 py-6 text-center text-sm text-ink-500">
-              No products added · <span className="font-bn">পণ্য যোগ করুন</span>
-            </p>}
-          </div>
+          <CartTable lines={sourceLines} lastAdded={lastAddedId} liveCatalog={selectable} liveSymbols={liveSymbols}
+            onAdd={addProduct} onUpdate={updateSourceLine}
+            onRemove={id=>setLines(old=>old.filter(line=>line.product.id!==id))}
+            onReorder={reorderSourceLines} onMove={moveSourceLine}
+            onLiveSerial={id=>{void openSerialPicker(id);}}
+            onLiveShortage={setShortageId} searchRef={productRef}/>
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-ink">Quick items <span className="font-bn font-normal text-xs text-ink-500">· দ্রুত যোগ</span></h2>

@@ -40,11 +40,11 @@ test('live POS uses existing transaction endpoint and makes unsupported products
   const api=read('overlay/src/integration/banijjApi.ts');
   for(const url of ['/api/pos/bootstrap','/api/pos/cash-session/start','/api/pos/sales']) assert.ok(api.includes(url),url);
   const page=read('overlay/src/integration/LivePosPage.tsx');
-  for(const marker of ['ProductCombobox','getPosBootstrap','postSale(payload)','startCashSession(amount,startSessionRequestId.current)',
+  for(const marker of ['CartTable','getPosBootstrap','postSale(payload)','startCashSession(amount,startSessionRequestId.current)',
     'canUseModule(user, \'pos\', \'add\')','reviewOpen','Confirm and post','quoteLiveUnits',
     'getPosTrackingOptions(id)','SerialPickerDialog','LiveStockShortageDialog','line.qty > line.product.stock',
     'paidAmount > total','paymentType: PosSalePayload']) assert.ok(page.includes(marker),marker);
-  assert.ok(page.includes('LiveMultiUnitQuantity') && page.includes('unitProfileRevision'), 'Live cart must keep the 2–4 unit posting contract');
+  assert.ok(page.includes('sourcePosCartBridge') && page.includes('unitProfileRevision'), 'Original source cart must map 2–4-unit quantities to live posting contract');
   assert.ok(!page.includes('previewInvoiceCounter'),'Fake invoices cannot appear as posted');
 });
 
