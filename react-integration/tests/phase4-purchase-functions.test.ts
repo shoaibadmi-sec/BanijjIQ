@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as purchaseApi from '../overlay/src/integration/purchaseApi.ts';
 import {quotePurchaseLine,quoteOriginalReturn,validateDuePurchase}
  from '../overlay/src/integration/purchaseApi.ts';
 
@@ -60,4 +61,65 @@ test('purchase form rejects unreconciled suppliers, duplicate products, and inva
   supplierId:'SUP-TEST',paidAmount:0,discount:0,purchasePlanOrderId:'SPO-TEST',
   items:[line]
  });
+});
+
+test('4I-B paid purchase requires an open session, exact cash amount, and stable request ID',()=>{
+ const make=(purchaseApi as unknown as {validatePurchasePayment:Function}).validatePurchasePayment;
+ assert.equal(typeof make,'function','Paid purchase payload builder must exist');
+ const line={productId:'PRD-1',qty:2,unitPrice:50};
+ const due=make(supplier,[line],{method:'Due',amount:0},'','');
+ assert.deepEqual(due,{supplierId:'SUP-TEST',paidAmount:0,discount:0,
+  purchasePlanOrderId:'',items:[line]});
+ const cash=make(supplier,[line],{method:'Cash',amount:40,activeSession:true},
+  '123e4567-e89b-42d3-a456-426614174000','');
+ assert.deepEqual(cash,{...due,paidAmount:40,paymentMethod:'Cash',
+  clientRequestId:'123e4567-e89b-42d3-a456-426614174000'});
+ for(const amount of [0,-1,100.0001,0.00001,NaN,Infinity]){
+  assert.throws(()=>make(supplier,[line],{method:'Cash',amount,activeSession:true},
+   '123e4567-e89b-42d3-a456-426614174000',''),/amount|payment/i);
+ }
+ assert.throws(()=>make(supplier,[line],{method:'Cash',amount:40,activeSession:false},
+  '123e4567-e89b-42d3-a456-426614174000',''),/session/i);
+ assert.throws(()=>make(supplier,[line],{method:'Cash',amount:40,activeSession:true},
+  'different-id',''),/request/i);
+ assert.throws(()=>make({...supplier,needsReconciliation:true},[line],
+  {method:'Cash',amount:40,activeSession:true},
+  '123e4567-e89b-42d3-a456-426614174000',''),/reconcil/i);
+});
+
+test('4I-B bank/mobile tender must match an active account and sufficient live balance',()=>{
+ const make=(purchaseApi as unknown as {validatePurchasePayment:Function}).validatePurchasePayment;
+ const line={productId:'PRD-1',qty:1,unitPrice:120};
+ const accounts=[
+  {id:'BANK-1',name:'Current',type:'Bank',currentBalance:100},
+  {id:'MOBILE-1',name:'Mobile',type:'Mobile Banking',currentBalance:200}
+ ];
+ const key='123e4567-e89b-42d3-a456-426614174001';
+ const bank=make(supplier,[line],{method:'Bank',amount:70,bankAccountId:'BANK-1',
+  activeSession:true,bankAccounts:accounts},key,'');
+ assert.equal(bank.bankAccountId,'BANK-1');
+ assert.equal(bank.paymentMethod,'Bank');
+ assert.equal(bank.paidAmount,70);
+ const mobile=make(supplier,[line],{method:'Mobile Banking',amount:120,bankAccountId:'MOBILE-1',
+  activeSession:true,bankAccounts:accounts},key,'');
+ assert.equal(mobile.bankAccountId,'MOBILE-1');
+ for(const details of [
+  {method:'Bank',amount:70,bankAccountId:'MISSING'},
+  {method:'Bank',amount:101,bankAccountId:'BANK-1'},
+  {method:'Bank',amount:70,bankAccountId:'MOBILE-1'},
+  {method:'Mobile Banking',amount:70,bankAccountId:'BANK-1'},
+  {method:'Bank',amount:70,bankAccountId:''}
+ ]){
+  assert.throws(()=>make(supplier,[line],
+   {...details,activeSession:true,bankAccounts:accounts},key,''),/account|balance/i);
+ }
+});
+
+test('4I-B mixed-unit paid purchases stay locked; due remains valid',()=>{
+ const make=(purchaseApi as unknown as {validatePurchasePayment:Function}).validatePurchasePayment;
+ const mixed={productId:'PRD-1',qty:20,unitPrice:200,unitProfileRevision:1,
+  unitQuantities:{Box:1},priceUnit:'Box'};
+ assert.equal(make(supplier,[mixed],{method:'Due',amount:0},'','').paidAmount,0);
+ assert.throws(()=>make(supplier,[mixed],{method:'Cash',amount:20,activeSession:true},
+  '123e4567-e89b-42d3-a456-426614174000',''),/mixed.unit|due/i);
 });
