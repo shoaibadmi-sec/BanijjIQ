@@ -181,3 +181,94 @@ test('4F supplier CRUD: invalid status and duplicate names must not modify maste
   assert.equal(count('purchases'),0);assert.equal(count('supplier_settlement_entries'),0);
  });
 });
+
+test('4F legacy purchase CRUD: create, view, update and delete exactly reconcile FIFO stock and supplier ledger',async()=>{
+ await fixture(async({api,one,count,supplier,p1})=>{
+  const lines=(qty:number)=>[{productId:p1.productId,qty,unitPrice:50}];
+  const before=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=? AND COALESCE(is_deleted,0)=0',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT COALESCE(SUM(remaining_quantity),0) AS n FROM stock_lots WHERE product_id=? AND source_type='PURCHASE'",p1.productId).n
+  });
+  for(const input of [{supplierId:supplier.id,items:[]},
+   {supplierId:supplier.id,items:lines(0)},
+   {supplierId:supplier.id,items:[lines(1)[0],lines(1)[0]]},
+   {supplierId:supplier.id,items:[{productId:p1.productId,qty:-3,unitPrice:50}]}]){
+   const r=await api('POST','/api/purchases',input);
+   assert.notEqual(r.status,200,JSON.stringify({input,r}));
+   assert.deepEqual(before(),{due:0,ledger:0,stock:0,lot:0});
+  }
+  const purchase=await api('POST','/api/purchases',{supplierId:supplier.id,
+   discount:0,paidAmount:0,items:lines(2)});safe(purchase);
+  assert.deepEqual(before(),{due:100,ledger:100,stock:2,lot:2});
+  const list=await api('GET','/api/purchases');safe(list);
+  assert.ok(list.purchases.some((p:any)=>p.purchaseId===purchase.purchaseId));
+  const detail=await api('GET','/api/purchases/'+purchase.purchaseId);safe(detail);
+  assert.equal(detail.purchase.items[0].quantity,2);
+  assert.equal((await api('PUT','/api/purchases/'+purchase.purchaseId,{items:lines(3)})).status!==200,true);
+  assert.deepEqual(before(),{due:100,ledger:100,stock:2,lot:2});
+  const updated=await api('PUT','/api/purchases/'+purchase.purchaseId,{
+   reason:'Count correction',supplierId:supplier.id,discount:0,paidAmount:0,items:lines(3)});
+  safe(updated);
+  assert.deepEqual(before(),{due:150,ledger:150,stock:3,lot:3});
+  const lastLedger=one('SELECT balance AS n FROM supplier_ledger WHERE supplier_id=? AND COALESCE(is_deleted,0)=0 ORDER BY created_at DESC,ROWID DESC LIMIT 1',supplier.id);
+  assert.equal(lastLedger.n,150,'Stored running balance must equal due after purchase edit');
+  const updatedView=await api('GET','/api/purchases/'+purchase.purchaseId);safe(updatedView);
+  assert.equal(updatedView.purchase.items[0].quantity,3);
+  assert.equal(one("SELECT COUNT(*) AS n FROM audit_logs WHERE action='UPDATE_PURCHASE'").n,1);
+  assert.equal((await api('DELETE','/api/purchases/'+purchase.purchaseId,{})).status!==200,true);
+  assert.deepEqual(before(),{due:150,ledger:150,stock:3,lot:3});
+  const deleted=await api('DELETE','/api/purchases/'+purchase.purchaseId,{reason:'Entered in error'});
+  safe(deleted);
+  assert.deepEqual(before(),{due:0,ledger:0,stock:0,lot:0},'Deletion must reverse master, ledger and FIFO together');
+  assert.equal(one("SELECT status FROM purchases WHERE purchase_id=?",purchase.purchaseId).status,'Deleted');
+  assert.equal(one("SELECT COUNT(*) AS n FROM audit_logs WHERE action='DELETE_PURCHASE'").n,1);
+  assert.equal((await api('GET','/api/purchases/'+purchase.purchaseId)).status!==200,true);
+  assert.equal(count('purchase_return_items'),0);
+ });
+});
+
+test('4F legacy purchase returns: reject duplicate line over-return and rollback before any stock/payable write',async()=>{
+ await fixture(async({api,one,count,db,supplier,p1})=>{
+  const bought=await api('POST','/api/purchases',{supplierId:supplier.id,
+   items:[{productId:p1.productId,qty:3,unitPrice:50}],paidAmount:0,discount:0});safe(bought);
+  const balance=()=>({
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:one('SELECT COALESCE(SUM(debit-credit),0) AS n FROM supplier_ledger WHERE supplier_id=? AND COALESCE(is_deleted,0)=0',supplier.id).n,
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_type='PURCHASE' AND source_ref=?",bought.purchaseId).n,
+   returns:count('purchase_returns')
+  });
+  assert.deepEqual(balance(),{due:150,ledger:150,stock:3,lot:3,returns:0});
+  const get=await api('GET','/api/purchases/'+bought.purchaseId+'/return-data');safe(get);
+  assert.equal(get.purchase.items[0].availableQty,3);
+  const make=(items:any[])=>({purchaseId:bought.purchaseId,
+   refundMethod:'Supplier Credit',reason:'Damaged on delivery',items});
+  const two={productId:p1.productId,qty:2,unitPrice:50};
+  const duplicated=await api('POST','/api/purchase-returns',make([two,{...two}]));
+  assert.notEqual(duplicated.status,200,'Same product twice must not exceed its source lot');
+  assert.deepEqual(balance(),{due:150,ledger:150,stock:3,lot:3,returns:0});
+  const first=await api('POST','/api/purchase-returns',make([{productId:p1.productId,qty:1,unitPrice:50}]));
+  safe(first);assert.equal(first.totalReturnAmount,50);
+  assert.deepEqual(balance(),{due:100,ledger:100,stock:2,lot:2,returns:1});
+  const history=await api('GET','/api/purchase-returns');safe(history);
+  assert.ok(JSON.stringify(history).includes(first.returnId));
+  const excess=await api('POST','/api/purchase-returns',make([{productId:p1.productId,qty:3,unitPrice:50}]));
+  assert.notEqual(excess.status,200);
+  assert.deepEqual(balance(),{due:100,ledger:100,stock:2,lot:2,returns:1});
+  db.native.exec(`CREATE TRIGGER deny_return_insert BEFORE INSERT ON purchase_return_items
+    BEGIN SELECT RAISE(ABORT,'synthetic-return-rollback'); END`);
+  const failed=await api('POST','/api/purchase-returns',make([{productId:p1.productId,qty:1,unitPrice:50}]));
+  assert.notEqual(failed.status,200);
+  assert.deepEqual(balance(),{due:100,ledger:100,stock:2,lot:2,returns:1});
+  db.native.exec('DROP TRIGGER deny_return_insert');
+  const final=await api('POST','/api/purchase-returns',make([{productId:p1.productId,qty:2,unitPrice:50}]));
+  safe(final);assert.equal(final.totalReturnAmount,100);
+  assert.deepEqual(balance(),{due:0,ledger:0,stock:0,lot:0,returns:2});
+  assert.notEqual((await api('PUT','/api/purchases/'+bought.purchaseId,{
+   reason:'After return',items:[{productId:p1.productId,qty:4,unitPrice:50}]})).status,200);
+  assert.notEqual((await api('DELETE','/api/purchases/'+bought.purchaseId,{reason:'After return'})).status,200);
+  assert.equal(one("SELECT COUNT(*) AS n FROM audit_logs WHERE action='PURCHASE_RETURN'").n,2);
+ });
+});
