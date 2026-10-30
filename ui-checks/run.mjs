@@ -364,6 +364,22 @@ try{
       await ctx.close();
     });
   }
+  await withCheck('report reader without POS permission cannot open invoice details',async()=>{
+    const ctx=await browser.newContext({viewport:{width:390,height:900},reducedMotion:'reduce'});
+    const calls=[];await startMocking(ctx,calls);
+    await ctx.route('**/api/auth/me',route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,user:{...user,role:'staff',permissions:{
+        reports:{view:true,add:false,edit:false},pos:{view:false,add:false,edit:false}
+      }}})}));
+    await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+    const page=await ctx.newPage();
+    await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+    await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
+    assert.equal(await page.getByRole('button',{name:'INV-LIVE-REPORT-001'}).count(),0,
+      'report-only users must not get an invoice action without POS view');
+    assert.equal(calls.filter(x=>x.path.startsWith('/api/pos/invoices/')).length,0);
+    await ctx.close();
+  });
   for(const width of [390,768,1440]){
     await withCheck('report pagination honors 50/100 and direct page jump '+width,async()=>{
       const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
