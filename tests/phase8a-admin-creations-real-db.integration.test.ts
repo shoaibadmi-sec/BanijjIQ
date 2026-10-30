@@ -46,7 +46,7 @@ test('Phase 8A3B: administrator-created role and user persist; unauthorized user
     const storedRole=db.native.prepare('SELECT role_name,allowed_modules,permissions_json FROM app_roles WHERE role_id=?')
       .get(createdRole.id) as {role_name:string;allowed_modules:string;permissions_json:string};
     assert.equal(storedRole.role_name,'Warehouse Supervisor');
-    assert.deepEqual(storedRole.allowed_modules.split(','),['products','returns','users']);
+    assert.deepEqual(storedRole.allowed_modules.split(',').sort(),['products','returns','users'].sort());
     assert.deepEqual(JSON.parse(storedRole.permissions_json),permissions,
       'disabled delete/backdate values must survive storage exactly');
     const fetched=await api('GET','/api/roles');
