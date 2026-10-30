@@ -60,3 +60,13 @@ test('cash and finance remain inside Report Library with explicit money in/out c
  assert.match(reports,/data-report-metric=/);
  assert.match(reports,/Current ledger snapshot/);
 });
+
+test('source-linked Sales Register opens authenticated invoice read-only, without a demo receipt',()=>{
+ const reports=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ assert.match(reports,/getPosInvoice\(/);
+ assert.match(reports,/row\.sourceModule==='sales'/);
+ assert.match(reports,/canUseModule\(user,\s*'pos',\s*'view'\)/);
+ assert.match(reports,/DialogTitle/);
+ assert.match(reports,/Recorded invoice/);
+ assert.doesNotMatch(reports,/Nawabpur Hardware House/);
+});
