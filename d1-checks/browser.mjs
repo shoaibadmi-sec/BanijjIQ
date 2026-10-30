@@ -194,9 +194,37 @@ export async function runRealD1Browser(){
               }
             }
           });
+          // Phase 5G14: exercise ordinary high-frequency name, phone, payment
+          // and keyboard-focus changes AFTER New Sale, before any new posting.
+          // The original natural race can clear only the next-sale name.
+          const posPostsBeforeStress=requests.filter(r=>
+            r.width===width&&r.method==='POST'&&r.path==='/api/pos/sales').length;
+          const stressPaid=page.getByRole('spinbutton',{name:/Amount received/});
+          for(let round=0;round<12;round++){
+            const expectedName='D1 Focus Buyer '+String(round);
+            await name.fill(expectedName);
+            await phone.fill('01000000124');
+            if(round%3===0){
+              await page.keyboard.press('F2');
+              await page.keyboard.press('F8');
+            }
+            await stressPaid.fill(round%2===0?'39':'40');
+            await page.keyboard.press('Tab');
+            await page.evaluate(()=>new Promise(resolve=>
+              requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+            assert.equal(await name.inputValue(),expectedName,
+              'POS customer name changed after New Sale focus/blur cycle '+round);
+            assert.equal(await phone.inputValue(),'01000000124',
+              'POS phone changed after focus/blur cycle '+round);
+            assert.equal(await page.locator('[data-live-pos]').getAttribute('data-sale-reset-version'),
+              resetVersionBefore,'A focus/blur cycle must not reset a new sale');
+            assert.equal(requests.filter(r=>
+              r.width===width&&r.method==='POST'&&r.path==='/api/pos/sales').length,
+              posPostsBeforeStress,'Draft focus/blur cannot post another invoice');
+          }
           await name.fill('Real Browser Due Buyer');
           await phone.fill('01000000124');
-          await page.getByRole('spinbutton',{name:/Amount received/}).fill('40');
+          await stressPaid.fill('40');
           // A stale receipt/dialog close event must not erase the next sale.
           await page.evaluate(() => new Promise(resolve =>
             requestAnimationFrame(() => requestAnimationFrame(resolve))));
