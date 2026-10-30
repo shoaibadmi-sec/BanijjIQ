@@ -177,3 +177,24 @@ test('5G22: Finance source outside the selected period cannot hide its in-period
    'Reporting must be read-only even for out-of-period Finance sources');
  }finally{db.close();}
 });
+
+test('5G24: orphan owner-capital money journal cannot certify the Cash or Finance reports',async()=>{
+ const db=fixture();try{
+  const baseline=await readCashExpenses(db,query('cash'));
+  assert.equal(baseline.coverage.status,'needs-review');
+  assert.equal(metric(baseline,'ownerCapitalIn').valueMinor,30000);
+  db.native.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit) VALUES ('C-FIN-ORPHAN','2026-10-19','Owner Investment','FIN-MISSING','Orphan capital posting',0,55)").run();
+  const before=(db.native.prepare('SELECT total_changes() n').get() as {n:number}).n;
+  for(const report of ['cash','finance'] as const){
+   const page=await readCashExpenses(db,query(report));
+   assert.equal(page.coverage.status,'incomplete',report+' must reject the capital posting without a Finance source');
+   assert.match(page.coverage.reason,/financ|capital|source|orphan/i);
+   assert.equal(metric(page,'cashReceipts').valueMinor,null);
+   assert.equal(metric(page,'ownerCapitalIn').valueMinor,null);
+   if(report==='finance')assert.deepEqual(page.rows.map(x=>x.sourceId),['FIN-001'],
+     'An orphan journal cannot manufacture a Finance source row');
+  }
+  assert.equal((db.native.prepare('SELECT total_changes() n').get() as {n:number}).n,before,
+   'Report reads cannot repair or modify the orphan journal');
+ }finally{db.close();}
+});
