@@ -31,3 +31,16 @@ test('Phase 5G1 keeps reports behind auth/RBAC and CI tests without extra report
  assert.match(react,/Dashboard/);
  assert.doesNotMatch(react,/<AuditBook/);
 });
+
+test('Phase 5G7 release gate cannot silently treat local CI as production acceptance',()=>{
+ const doc=source('docs/superpowers/phase5-reports-release-acceptance.md');
+ assert.match(doc,/Decision: HOLD hosted\/production release/);
+ assert.match(doc,/Phase 5F remains deferred/);
+ assert.match(doc,/Issue #35/);
+ for(const pr of ['#20','#21','#28'])
+   assert.ok(doc.includes(pr),'missing explicit unmerged accounting dependency '+pr);
+ assert.match(doc,/intentionally skipped/);
+ assert.match(doc,/PR-head local CI/);
+ assert.ok(doc.includes('product-profit')&&doc.includes('profit-loss'));
+ assert.match(doc,/No report GET writes to D1/);
+});
