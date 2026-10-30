@@ -312,3 +312,34 @@ export const reverseBankTransfer = (id:string,reason:string) =>
   request<{ok:true;id:string;reversed:boolean}>('/api/bank/transfers/'+encodeURIComponent(id)+'/reverse',{
     method:'POST',body:JSON.stringify({reason})
   });
+
+export interface FinancePersonLedgerRow {
+  financeId:string;personId:string;date:string;transactionType:string;paymentMethod:string;
+  amount:number;debit:number;credit:number;balance:number|null;sourceStatus:'matched'|'needs-review';
+  referenceNo:string;notes:string;createdBy:string;createdAt:string;isBackdated:boolean;backdatedReason:string;
+}
+export interface FinancePersonLedgerResponse {
+  ok:true;person:{id:string;name:string;type:'Owner'|'Lender';status:string};
+  balance:number|null;openingBalance:number|null;closingBalance:number|null;
+  rows:FinancePersonLedgerRow[];totalRows:number;totalPages:number;page:number;
+  pageSize:50|100;dateFrom:string;dateTo:string;
+  coverage:{status:'ready'|'needs-review';reason:string};
+}
+export interface FinancePersonLedgerQuery {
+  dateFrom?:string;dateTo?:string;page:number;pageSize:50|100;
+}
+export const getFinancePersonLedger=(personId:string,query:FinancePersonLedgerQuery)=>{
+  const params=new URLSearchParams({
+    page:String(query.page),pageSize:String(query.pageSize),
+    dateFrom:query.dateFrom||'',dateTo:query.dateTo||''
+  });
+  return request<FinancePersonLedgerResponse>('/api/finance/persons/'+encodeURIComponent(personId)+'/ledger?'+params.toString());
+};
+export interface FinanceTransactionPost {
+  clientRequestId:string;personId:string;transactionType:string;paymentMethod:'Cash'|'Bank'|'Mobile Banking';
+  bankAccountId?:string;amount:number;date?:string;referenceNo?:string;notes?:string;backdatedReason?:string;
+}
+export const postFinanceTransaction=(payload:FinanceTransactionPost)=>
+  request<{ok:true;id:string;replayed:boolean}>('/api/finance/transactions',{
+    method:'POST',body:JSON.stringify(payload)
+  });
