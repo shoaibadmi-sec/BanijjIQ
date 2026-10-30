@@ -62,6 +62,7 @@ jobs:
           node --import tsx --test tests/phase6-bank-transfers.integration.test.ts
           node --import tsx --test tests/phase6-cash-sessions.integration.test.ts
           node --import tsx --test tests/phase6-person-ledger.integration.test.ts
+          node --import tsx --test tests/phase6-daybook-pagination.integration.test.ts
           node --import tsx --test tests/product-catalog.integration.test.ts tests/pos-accounting.integration.test.ts tests/products-hybrid.integration.test.ts tests/pos-unit-profile.integration.test.ts tests/pos-mixed-sale.integration.test.ts tests/pos-mixed-return.integration.test.ts tests/pos-mixed-reversal.integration.test.ts
           node --import tsx --test react-integration/tests/products-contract.test.ts react-integration/tests/products-ui-contract.test.ts
       - name: Verify pinned React submodule and integration adapter
