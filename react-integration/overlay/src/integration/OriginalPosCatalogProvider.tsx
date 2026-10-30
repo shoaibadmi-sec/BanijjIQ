@@ -1,8 +1,9 @@
 import {createContext, useEffect, useState, type ReactNode} from 'react';
 import {toast} from 'sonner';
 import type {Product,Party} from '../types/erp';
-import {loadOriginalPosCustomers} from './originalPosCustomers';
-import {loadOriginalPosCatalog} from './originalPosCatalog';
+import {getPosBootstrap} from './banijjApi';
+import {mapOriginalPosCustomers} from './originalPosCustomers';
+import {loadOriginalPosCatalog,attachOriginalPosUnitProfiles} from './originalPosCatalog';
 
 export const OriginalPosCatalogContext = createContext<readonly Product[] | null>(null);
 export const OriginalPosCustomerContext = createContext<readonly Party[] | null>(null);
@@ -13,15 +14,14 @@ export function OriginalPosCatalogProvider({children}: {children:ReactNode}) {
   const [customers,setCustomers] = useState<readonly Party[]>([]);
   useEffect(()=>{
     let active=true;
-    loadOriginalPosCustomers().then(items=>{if(active)setCustomers(items);}).catch(error=>{
-      if(active){setCustomers([]);toast.error(error instanceof Error ? error.message : 'Could not read live customers.');}
-    });
-    loadOriginalPosCatalog().then(items=>{
-      if(active)setCatalog(items);
+    Promise.all([loadOriginalPosCatalog(),getPosBootstrap()]).then(([products,pos])=>{
+      const verified=attachOriginalPosUnitProfiles(products,pos);
+      const parties=mapOriginalPosCustomers(pos);
+      if(active){setCatalog(verified);setCustomers(parties);}
     }).catch(error=>{
       if(active){
-        setCatalog([]);
-        toast.error(error instanceof Error ? error.message : 'Could not read live products.');
+        setCatalog([]);setCustomers([]);
+        toast.error(error instanceof Error ? error.message : 'Could not verify live POS data.');
       }
     });
     return ()=>{active=false;};

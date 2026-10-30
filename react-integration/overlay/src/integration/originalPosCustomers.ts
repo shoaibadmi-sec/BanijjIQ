@@ -2,10 +2,7 @@ import {getPosBootstrap, type PosBootstrap} from './banijjApi';
 import type {Party} from '../types/erp';
 
 /** Map authenticated customers and their authoritative D1 due into the existing Party view contract. */
-export async function loadOriginalPosCustomers(
-  load:()=>Promise<PosBootstrap> = getPosBootstrap
-):Promise<readonly Party[]>{
-  const result=await load();
+export function mapOriginalPosCustomers(result:PosBootstrap):readonly Party[]{
   if(result?.ok!==true||!Array.isArray(result.customers))throw new Error('Invalid D1 customers response.');
   const ids=new Set<string>();
   return result.customers.map(row=>{
@@ -21,4 +18,10 @@ export async function loadOriginalPosCustomers(
       lastActivity:'',avatarColor:'#0D7C74',status:'Active'
     };
   });
+}
+
+export async function loadOriginalPosCustomers(
+  load:()=>Promise<PosBootstrap> = getPosBootstrap
+):Promise<readonly Party[]>{
+  return mapOriginalPosCustomers(await load());
 }
