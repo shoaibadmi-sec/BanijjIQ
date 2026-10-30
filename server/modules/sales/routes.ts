@@ -1,6 +1,7 @@
 import type { SherDatabase } from '../../db/types.js';
 import type { AuthUser } from '../auth/types.js';
 import type { PosSaleInput } from './types.js';
+import { postBundleCashSale } from './bundleCashPost.service.js';
 import {
   closeCashSessionRoute, completeSaleRoute, completeSalesReturnRoute, deleteSaleRoute,
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
@@ -32,6 +33,7 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   if (path === '/api/pos/cash-session/start' && request.method === 'POST') return startCashSessionRoute(db, await readBody<{ openingCash?: number; notes?: string }>(request), user);
   if (path === '/api/pos/cash-session/close' && request.method === 'POST') return closeCashSessionRoute(db, await readBody<{ countedCash?: number; notes?: string }>(request), user);
   if (path === '/api/pos/sales' && request.method === 'POST') return completeSaleRoute(db, await readBody<PosSaleInput>(request), user);
+  if (path === '/api/pos/bundle-sales' && request.method === 'POST') return postBundleCashSale(db,await readBody<PosSaleInput>(request),user);
   if (path === '/api/pos/sales-by-phone' && request.method === 'GET') return getSalesByPhoneRoute(db, cleanText(url.searchParams.get('phone')));
 
   const posInvoiceMatch = path.match(/^\/api\/pos\/invoices\/([^/]+)$/);
