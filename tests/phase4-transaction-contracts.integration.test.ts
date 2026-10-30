@@ -322,3 +322,31 @@ test('4F money safety: forbid unposted paid purchases, paid edits and cash refun
   assert.deepEqual(state(),unchanged);
  });
 });
+
+test('4F historical paid purchase cannot be deleted without reversing its posted supplier payment',async()=>{
+ await fixture(async({api,one,count,db,supplier,p1})=>{
+  const p=await api('POST','/api/purchases',{supplierId:supplier.id,paidAmount:0,discount:0,
+   items:[{productId:p1.productId,qty:2,unitPrice:50}]});safe(p);
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'TEST','Open')")
+   .run('CS-4F-PAID-HISTORY');
+  const payment=await api('POST','/api/purchases/supplier-settlements',{
+   supplierId:supplier.id,amount:100,method:'Cash',clientRequestId:crypto.randomUUID()});
+  safe(payment);
+  // Simulate an imported historical invoice whose original paid amount is recorded.
+  db.native.prepare("UPDATE purchases SET paid_amount=100,due_amount=0,payment_status='Paid' WHERE purchase_id=?")
+   .run(p.purchaseId);
+  const snapshot=()=>({
+   invoice:one('SELECT status,paid_amount AS paid FROM purchases WHERE purchase_id=?',p.purchaseId),
+   stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   lot:one("SELECT SUM(remaining_quantity) AS n FROM stock_lots WHERE source_ref=? AND source_type='PURCHASE'",p.purchaseId).n,
+   due:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   journal:count('supplier_settlement_entries'),cash:count('cash_book')
+  });
+  const before=snapshot();
+  assert.equal(before.invoice.paid,100);assert.equal(before.due,0);assert.equal(before.cash,1);
+  const attempt=await api('DELETE','/api/purchases/'+p.purchaseId,{
+   reason:'A paid purchase must use audited reversal'});
+  assert.notEqual(attempt.status,200,'Do not erase paid inventory while retaining cash outflow');
+  assert.deepEqual(snapshot(),before,'Refused deletion must not alter cash, FIFO or supplier records');
+ });
+});
