@@ -224,3 +224,93 @@ export async function getOrderToPurchase(id:string){
   items:Array<{productId:string;productName:string;quantity:number;unitPrice:number}>}}>(
  '/api/purchases/planner/orders/'+encodeURIComponent(id)+'/convert-data');
 }
+
+
+/** Phase 4I-C4: paid refund UI is a locked projection of the original source invoice. */
+export type PaidRefundMethod='Cash'|'Bank'|'Mobile Banking';
+export interface StandardPurchaseDetail{
+ purchaseId:string;supplierId:string;supplierName:string;status:string;
+ grandTotal:number;paidAmount:number;dueAmount:number;discount:number;returnedAmount:number;
+ paymentMethod:string;bankAccountId:string;paymentLedgerId?:string;
+}
+export interface StandardReturnLine {
+ productId:string;productName:string;boughtQty:number;unitPrice:number;
+ previouslyReturnedQty:number;availableQty:number;
+ trackSerial?:number;trackExpiry?:number;unitSnapshot?:unknown;
+}
+export interface StandardReturnSource {ok:true;purchase:{
+ purchaseId:string;supplierId:string;supplierName:string;grandTotal:number;
+ paidAmount:number;dueAmount:number;previouslyReturnedAmount:number;netPurchase:number;
+ items:StandardReturnLine[];
+}}
+export interface PurchaseRefundRequest {
+ purchaseId:string;refundMethod:PaidRefundMethod;bankAccountId:string;
+ clientRequestId:string;reason:string;items:Array<{productId:string;qty:number;unitPrice:number}>;
+}
+export async function loadPurchaseDetail(id:string){
+ const result=await request<{ok:true;purchase:StandardPurchaseDetail}>(
+  '/api/purchases/'+encodeURIComponent(id));
+ return result.purchase;
+}
+export async function loadStandardReturnSource(id:string){
+ return request<StandardReturnSource>('/api/purchases/'+encodeURIComponent(id)+'/return-data');
+}
+export function validatePaidPurchaseRefund(
+ purchase:StandardPurchaseDetail,lines:StandardReturnLine[],
+ ledger:SettlementDetails,quantities:Record<string,number>,reason:string,
+ requestId:string):PurchaseRefundRequest {
+ if(Number(purchase.discount)!==0)throw Error('Only undiscounted purchases support money-backed refunds.');
+ if(purchase.status!=='Completed'||!['Cash','Bank','Mobile Banking'].includes(purchase.paymentMethod)||
+   !Number.isFinite(Number(purchase.grandTotal))||Number(purchase.grandTotal)<=0||
+   Number(purchase.paidAmount)<=0||
+   Math.abs(Number(purchase.paidAmount)-Number(purchase.grandTotal))>0.0001||
+   Number(purchase.dueAmount)!==0)
+   throw Error('Only fully paid purchases with their original payment source support verified refunds.');
+ if(ledger.supplier.id!==purchase.supplierId||ledger.needsReconciliation||
+   Math.abs(Number(ledger.supplier.currentDue)-Number(ledger.ledgerDue))>0.0001)
+   throw Error('Supplier payable is unreconciled.');
+ if(!ledger.activeSession)throw Error('Open a cash session to receive a verified supplier refund.');
+ if(!/^[0-9a-f-]{32,36}$/i.test(requestId))throw Error('A unique refund request ID is required.');
+ if(!reason.trim())throw Error('Enter a return reason.');
+ const bankAccountId=purchase.paymentMethod==='Cash'?'':String(purchase.bankAccountId||'');
+ if(purchase.paymentMethod!=='Cash'&&!ledger.bankAccounts.some(a=>
+   a.id===bankAccountId&&a.type===purchase.paymentMethod))
+   throw Error('Original payment account is unavailable or inactive.');
+ if(purchase.paymentMethod==='Cash'&&String(purchase.bankAccountId||''))
+   throw Error('Original Cash payment account must be empty.');
+ const items:PurchaseRefundRequest['items']=[];
+ for(const [productId,rawQty] of Object.entries(quantities)){
+  if(rawQty===0||rawQty==='' as unknown as number)continue;
+  const line=lines.find(l=>l.productId===productId);
+  if(!line)throw Error('Product does not belong to the original source purchase.');
+  if(line.unitSnapshot)throw Error('Paid mixed-unit refunds are not enabled.');
+  if(Number(line.trackSerial)||Number(line.trackExpiry))
+    throw Error('Tracked serial or expiry refunds require source allocation.');
+  if(!Number.isFinite(rawQty)||rawQty<=0||rawQty>Number(line.availableQty)+0.0000001||
+    Math.abs(rawQty*10000-Math.round(rawQty*10000))>0.000001)
+    throw Error('Return quantity exceeds available original stock or uses invalid decimals.');
+  if(!Number.isFinite(Number(line.unitPrice))||Number(line.unitPrice)<0||
+    Math.abs(Number(line.unitPrice)*10000-Math.round(Number(line.unitPrice)*10000))>0.000001)
+    throw Error('Original purchase price is invalid.');
+  items.push({productId,qty:rawQty,unitPrice:Number(line.unitPrice)});
+ }
+ if(!items.length)throw Error('Choose a product and return quantity.');
+ const total=Math.round(items.reduce((sum,l)=>sum+l.qty*l.unitPrice,0)*10000)/10000;
+ if(total<=0||!Number.isFinite(total)||
+  total+Number(purchase.returnedAmount)>Number(purchase.paidAmount)+0.0001)
+   throw Error('Selected return exceeds remaining refundable amount.');
+ return {purchaseId:purchase.purchaseId,refundMethod:purchase.paymentMethod as PaidRefundMethod,
+  bankAccountId,clientRequestId:requestId,reason:reason.trim(),items};
+}
+export async function postVerifiedPurchaseRefund(payload:PurchaseRefundRequest){
+ return request<{ok:true;returnId:string;totalReturnAmount:number;idempotent?:boolean}>(
+ '/api/purchase-returns',{method:'POST',body:JSON.stringify(payload)});
+}
+export interface PurchaseReturnHistory{
+ returnId:string;purchaseId:string;refundMethod:string;refundStatus:string;
+ refundRequestId:string;totalReturnAmount:number;reason:string;reversedAt:string|null;
+}
+export async function loadPurchaseReturnHistory(){
+ const result=await request<{ok:true;returns:PurchaseReturnHistory[]}>('/api/purchase-returns');
+ return result.returns;
+}
