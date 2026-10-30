@@ -501,6 +501,40 @@ test('4I functions: invalid invoice-edit discount must preserve original purchas
  });
 });
 
+test('4I Cash: money-book insert failure rolls back a fully paid purchase and can be retried',async()=>{
+ await fixture(async({api,db,one,count,supplier,p1})=>{
+  db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')").run('CS-4I-ROLLBACK');
+  const payload={supplierId:supplier.id,paidAmount:100,paymentMethod:'Cash',
+   clientRequestId:crypto.randomUUID(),items:[{productId:p1.productId,qty:2,unitPrice:50}]};
+  const snapshot=()=>({
+   supplier:one('SELECT current_due AS n FROM suppliers WHERE supplier_id=?',supplier.id).n,
+   ledger:count('supplier_ledger'),stock:one('SELECT current_stock AS n FROM products WHERE product_id=?',p1.productId).n,
+   invoices:count('purchases'),lines:count('purchase_items'),lots:count('stock_lots'),
+   cash:count('cash_book'),audits:count('audit_logs')
+  });
+  const before=snapshot();
+  db.native.exec(`CREATE TRIGGER stop_cash_4i BEFORE INSERT ON cash_book
+   WHEN NEW.type='Supplier Payment' BEGIN SELECT RAISE(ABORT,'4i-cash-journal-failure'); END;`);
+  const failed=await api('POST','/api/purchases',payload);
+  assert.notEqual(failed.status,200,'A failed Cash journal must reject the invoice');
+  assert.deepEqual(snapshot(),before,'No stock, money, supplier or audit changes may survive');
+  db.native.exec('DROP TRIGGER stop_cash_4i');
+  const posted=await api('POST','/api/purchases',payload);
+  safe(posted);
+  assert.equal(posted.dueAmount,0);
+  assert.deepEqual(snapshot(),{...before,supplier:0,ledger:2,stock:2,
+   invoices:1,lines:1,lots:1,cash:1,audits:before.audits+1});
+  assert.deepEqual(db.native.prepare('SELECT debit,credit,balance FROM supplier_ledger ORDER BY rowid').all(),
+   [{debit:100,credit:0,balance:100},{debit:0,credit:100,balance:0}]);
+  assert.deepEqual(one('SELECT paid_amount AS paid,due_amount AS due,payment_status AS status FROM purchases WHERE purchase_id=?',posted.purchaseId),
+   {paid:100,due:0,status:'Paid'});
+  assert.equal(one('SELECT SUM(debit-credit) AS n FROM cash_book').n,100);
+  const replay=await api('POST','/api/purchases',payload);
+  safe(replay);assert.equal(replay.purchaseId,posted.purchaseId);assert.equal(replay.idempotent,true);
+  assert.equal(count('cash_book'),1,'A replay cannot debit the cash balance twice');
+ });
+});
+
 test('4I accounting: multiple purchases reconcile supplier, bank, cash and FIFO by hand',async()=>{
  await fixture(async({api,db,one,supplier,p1})=>{
   db.native.prepare("INSERT INTO cash_sessions(session_id,opened_by,status) VALUES (?,'4I','Open')")
