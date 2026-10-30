@@ -74,7 +74,7 @@ export function patchReportsPage(source) {
     "{screen!=='library'&&screen!=='sales-lab'&&(data.sales.length>0?<MagicReportsView key={screen+':'+storageKey} screen={screen} data={data} filters={filters} onFilters={update} onDetail={setDetail} onReport={selectReport} onScreen={selectScreen} scopeKey={storageKey}/>:<p role=\"status\" className=\"text-sm text-ink-500\">{text('Live charts are unavailable until verified detailed source history is connected.','যাচাই করা মূল তথ্য না আসা পর্যন্ত চার্ট দেখানো যাচ্ছে না।')}</p>)} ");
   next = replaceOnce(next,
     "{screen==='library'&&<ReportResults definition={definition}",
-    "{screen==='library'&&liveStatus!=='ready'&&<p role=\"status\" data-report-live-source-status=\"\" className=\"text-xs text-ink-500\">{liveLoading?text('Loading real records…','মূল তথ্য আসছে…'):liveReason}</p>}\n      {screen==='library'&&<ReportResults definition={definition}");
+    "{screen==='library'&&liveStatus!=='ready'&&<p role=\"status\" data-report-live-source-status=\"\" className=\"text-xs text-ink-500\">{liveLoading?text('Loading real records…','মূল তথ্য আসছে…'):liveReason}</p>}\n      {screen==='library'&&liveStatus!=='unavailable'&&liveStatus!=='loading'&&<ReportResults definition={definition}");
   // Never export or print a partial/incomplete/unavailable accounting period.
   const printGuard='disabled={!!definition.unavailable}';
   if(next.split(printGuard).length!==3)throw new Error('Reports print/export button anchors changed');
