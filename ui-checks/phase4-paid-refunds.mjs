@@ -46,6 +46,8 @@ export async function runPaidRefundChecks({browser,base,withCheck,results,startM
    await page.getByRole('textbox',{name:'Return reason'}).fill('Damaged goods');
    await page.getByText(/Refund available/).waitFor();
    const submit=page.getByRole('button',{name:/Confirm verified refund/});
+   assert.equal(await submit.isDisabled(),true,'Cannot book money without confirmation that funds arrived');
+   await page.getByRole('checkbox',{name:/I confirm the supplier/}).check();
    assert.equal(await submit.isDisabled(),false);
    if(width===390){await screenshot(page,'phase4ic4-cash-return-390');await audit(page,'phase4ic4-cash-return-390');}
    await submit.click();await page.getByText(/Refund recorded/).waitFor({timeout:12000});
