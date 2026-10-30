@@ -404,11 +404,13 @@ export async function getSalesByPhoneRoute(db:SherDatabase,phone:string):Promise
 export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Response>{
   const s=await db.prepare('SELECT * FROM sales WHERE invoice_id=? AND is_deleted=0').bind(id).first<any>();
   if(!s)return error('Invoice not found.',404);
-  const [items,snapshots]=await Promise.all([
+  const [items,snapshots,allocations]=await Promise.all([
     db.prepare(`SELECT si.product_id,si.product_name,si.quantity,si.unit_price,si.line_total,COALESCE(p.unit,'') unit
       FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id
       WHERE si.invoice_id=? ORDER BY si.id`).bind(id).all<any>(),
     db.prepare('SELECT product_id,profile_revision,profile_json,quantities_json,description FROM sale_item_unit_snapshots WHERE invoice_id=?')
+      .bind(id).all<any>(),
+    db.prepare('SELECT method,amount_cents,bank_account_id,source_key FROM sale_tender_allocations WHERE invoice_id=? ORDER BY line_number')
       .bind(id).all<any>()
   ]);
   const snapshotMap=new Map((snapshots.results||[]).map((x:any)=>[x.product_id,x]));
@@ -416,7 +418,12 @@ export async function getInvoiceRoute(db:SherDatabase,id:string):Promise<Respons
     customerPhone:s.customer_phone,customerFatherName:s.customer_father_name||'',customerAddress:s.customer_address,
     subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),grandTotal:Number(s.grand_total||0),
     paidAmount:Number(s.paid_amount||0),dueAmount:Number(s.due_amount||0),paymentStatus:s.payment_status,
-    paymentMethod:s.payment_method,items:(items.results||[]).map((i:any)=>{
+    paymentMethod:s.payment_method,
+    paymentAllocations:(allocations.results||[]).map((a:any)=>({
+      method:a.method,amountCents:Number(a.amount_cents),
+      bankAccountId:a.bank_account_id||'',sourceKey:a.source_key
+    })),
+    items:(items.results||[]).map((i:any)=>{
       const snap:any=snapshotMap.get(i.product_id);
       return{productId:i.product_id,productName:i.product_name,quantity:Number(i.quantity),unit:i.unit||'',
         unitPrice:Number(i.unit_price),lineTotal:Number(i.line_total),
