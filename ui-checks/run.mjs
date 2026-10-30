@@ -79,6 +79,19 @@ function startMocking(context,calls){
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
+
+    if(path==='/api/reports/v2/catalog'&&request.method()==='GET')return respond({ok:true,
+      mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
+      reports:[{id:'sales',en:'Sales register',bn:'বিক্রির হিসাব',group:'sales',status:'needs-review',reason:'Unreconciled invoice sources.'}]});
+    if(path==='/api/reports/v2/summary'&&request.method()==='GET')return respond({
+      ok:true,range:{from:'2026-10-01',to:'2026-10-30'},metrics:[],
+      coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
+    if(path==='/api/reports/v2/rows'&&request.method()==='GET')return respond({
+      ok:true,report:'sales',range:{from:'2026-10-01',to:'2026-10-30'},page:1,pageSize:50,totalRows:1,metrics:[],
+      rows:[{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
+        label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',
+        reason:'Recorded invoice amount, not reconciled net sales.'}],
+      coverage:{status:'needs-review',reason:'Returns and FIFO costs are not reconciled.'}});
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
@@ -218,6 +231,33 @@ try{
     await screenshot(page,'auth-390');
     await ctx.close();
   });
+
+  for(const width of [390,768,1440]){
+    await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];
+      await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.locator('[data-live-reports]').waitFor({timeout:10000});
+      await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
+      const nav=page.locator('[data-live-reports] [role="tab"]');
+      assert.equal(await nav.count(),2,'only Dashboard and Report Library are top-level tabs');
+      assert.deepEqual((await nav.allTextContents()).map(x=>x.trim()),['Dashboard','Report Library']);
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),1);
+      assert.equal(await page.getByText('120',{exact:true}).count(),0,'money formatted and labeled, not synthetic bare values');
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/reports/v2/rows'));
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await nav.first().click();
+      await page.getByText('Verified dashboard totals are pending.').waitFor({timeout:10000});
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await inspectLayout(page,'reports-two-tabs-'+width);
+      await screenshot(page,'reports-two-tabs-'+width);
+      await audit(page,'reports-two-tabs-'+width);
+      await ctx.close();
+    });
+  }
   for(const width of [390,768,1024,1440]){
     for(const theme of ['light','dark']){
       await withCheck('products '+width+' '+theme,async()=>{
