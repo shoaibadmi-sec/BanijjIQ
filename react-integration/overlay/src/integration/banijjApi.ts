@@ -375,3 +375,29 @@ export const getLiveDaybookRows=(query:LiveDaybookQuery)=>{
   });
   return request<LiveDaybookResponse>('/api/daybook?'+p.toString());
 };
+
+export interface LiveExpenseRow {
+ expenseId:string;date:string;categoryId:string;category:string;payeeId:string;payeeName:string;
+ amount:number;paymentMethod:string;bankAccountId:string;bankAccountName:string;
+ description:string;referenceNo:string;notes:string;status:string;createdBy:string;createdAt:string;
+ isBackdated:boolean;backdatedDays:number;backdatedReason:string;
+}
+export interface LiveExpenseInput {
+ categoryId:string;payeeId?:string;amount:number;paymentMethod:'Cash'|'Bank'|'Mobile Banking';
+ bankAccountId?:string;description?:string;date?:string;referenceNo?:string;
+ notes?:string;backdatedReason?:string;clientRequestId?:string;
+}
+export interface LiveExpenseBootstrap {
+ ok:true;currencySymbol:string;activeCashSession:boolean;
+ categories:Array<{id:string;name:string;status:string}>;
+ payees:Array<{id:string;name:string;status:string}>;
+ bankAccounts:Array<{id:string;name:string;accountType:'Bank'|'Mobile Banking'}>;
+}
+export const getLiveExpenseBootstrap=()=>request<LiveExpenseBootstrap>('/api/expenses/bootstrap');
+export const getLiveExpenses=()=>request<{ok:true;expenses:LiveExpenseRow[]}>('/api/expenses');
+export const postLiveExpense=(payload:LiveExpenseInput)=>request<{ok:true;id:string;replayed?:boolean}>(
+ '/api/expenses',{method:'POST',body:JSON.stringify(payload)});
+export const updateLiveExpense=(id:string,payload:LiveExpenseInput)=>request<{ok:true;id:string}>(
+ '/api/expenses/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(payload)});
+export const cancelLiveExpense=(id:string,reason:string)=>request<{ok:true;id:string}>(
+ '/api/expenses/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:JSON.stringify({reason})});
