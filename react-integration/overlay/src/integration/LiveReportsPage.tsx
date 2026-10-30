@@ -141,6 +141,29 @@ export function LiveReportsPage(){
           </div>;
         })}
       </div>
+      <section aria-label={text('Current balances','বর্তমান জের')} className="space-y-2">
+        <div><h2 className="text-sm font-semibold text-ink">{text('Current balances','বর্তমান জের')}</h2>
+          <p className="text-xs text-ink-500">{text('Today’s recorded balances, not historical figures for the selected date range. Invoice ageing is not yet verified.',
+            'বর্তমান হিসাব; নির্বাচিত সময়ের পুরোনো জের নয়। বয়সভিত্তিক বাকি এখনো যাচাই হয়নি।')}</p></div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {([
+            {key:'inventoryValue',en:'Stock value',bn:'স্টক মূল্য'},
+            {key:'receivablesBalance',en:'Customer dues',bn:'গ্রাহকের বাকি'},
+            {key:'payablesBalance',en:'Supplier payables',bn:'সরবরাহকারীর দেনা'}
+          ] as const).map(item=>{
+            const metric=summaryMetrics.find(m=>m.key===item.key);
+            const currentOnly=metric?.status==='needs-review'&&metric?.valueMinor!==null;
+            return <div key={item.key} data-current-balance={item.key} className="rounded-xl border border-border bg-card p-4">
+              <p className="text-xs text-ink-500">{text(item.en,item.bn)}</p>
+              <p className="mt-2 text-xl font-semibold text-ink">{currentOnly?money(metric.valueMinor):'—'}</p>
+              <p className="mt-1 text-xs text-warning">{currentOnly
+                ?text('Current snapshot · Not historical','বর্তমান হিসাব · পুরোনো নয়')
+                :text('Ledger reconciliation required','হিসাব মিলিয়ে দেখা দরকার')}</p>
+              {metric&&metric.status==='incomplete'&&<p className="mt-2 text-xs text-danger">{metric.reason}</p>}
+            </div>;
+          })}
+        </div>
+      </section>
       <div className="rounded-xl border border-border bg-card p-5">
         <h2 className="text-sm font-semibold text-ink">{text('Dashboard reconciliation','ড্যাশবোর্ড হিসাব যাচাই')}</h2>
         <p className="mt-2 text-sm text-ink-600">{summaryStatus}</p>
