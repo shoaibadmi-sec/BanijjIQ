@@ -18,17 +18,20 @@ function fixture(){
   for(const [line,method,cents,customer] of [[1,'Cash',2000,''],[2,'Store Credit',3000,'D1-C']] as const)
     q.prepare("INSERT INTO sale_tender_allocations(allocation_id,invoice_id,line_number,method,amount_cents,bank_account_id,customer_id,source_key) VALUES (?, 'D1-S', ?, ?, ?, '', ?, ?)")
       .run('T-'+line,line,method,cents,customer,method);
-  const postCashReturn=(id:string)=>{
+  const postReturn=(id:string,source:'Cash'|'Store Credit')=>{
     q.prepare("INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES (?,'2026-10-30','D1-S','D1-C','D1 Buyer','01000007651','Split Partial',10,'Original cash refund')").run(id);
     q.prepare("INSERT INTO sales_return_items(return_id,invoice_id,product_id,product_name,return_quantity,return_price,line_total) VALUES (?,'D1-S','D1-P','D1 Wire',1,10,10)").run(id);
     q.prepare("INSERT INTO sales_return_item_lots(return_id,invoice_id,product_id,lot_id,quantity) VALUES (?,'D1-S','D1-P','D1-LOT',1)").run(id);
-    q.prepare("INSERT INTO split_partial_refund_allocations(allocation_id,return_id,invoice_id,method,amount_cents,source_key) VALUES (?,?, 'D1-S','Cash',1000,'Cash')").run('AL-'+id,id);
-    q.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,'2026-10-30','Sales Return',?,'Test refund',10,0,'Cash',0)").run('CB-'+id,id);
+    q.prepare("INSERT INTO split_partial_refund_allocations(allocation_id,return_id,invoice_id,method,amount_cents,customer_id,source_key) VALUES (?,?, 'D1-S',?,1000,?,?)")
+      .run('AL-'+id,id,source,source==='Store Credit'?'D1-C':'',source);
+    if(source==='Cash')
+      q.prepare("INSERT INTO cash_book(entry_id,date,type,reference,description,debit,credit,payment_method,is_deleted) VALUES (?,'2026-10-30','Sales Return',?,'Test refund',10,0,'Cash',0)").run('CB-'+id,id);
     q.prepare("INSERT INTO stock_movements(movement_id,product_id,movement_type,quantity_in,quantity_out,balance_after,note,lot_id) VALUES (?,'D1-P','Sales Return',1,0,6,?,NULL)").run('SM-'+id,id);
     q.prepare("UPDATE stock_lots SET remaining_quantity=remaining_quantity+1 WHERE lot_id='D1-LOT'").run();
     q.prepare("UPDATE products SET current_stock=current_stock+1 WHERE product_id='D1-P'").run();
   };
-  return {db,q,postCashReturn};
+  return {db,q,postCashReturn:(id:string)=>postReturn(id,'Cash'),
+    postUnfundedCreditReturn:(id:string)=>postReturn(id,'Store Credit')};
 }
 
 test('G2-L quotes remaining original-source funds from real migrated Cash + FIFO return journals',async()=>{
@@ -70,8 +73,7 @@ test('G2-L rejects missing stock movement, mismatched quantity and unfunded cred
     "UPDATE stock_movements SET quantity_in=2 WHERE note='D1-R1'",
     "UPDATE stock_movements SET quantity_out=1 WHERE note='D1-R1'",
     "UPDATE stock_movements SET movement_type='Sale' WHERE note='D1-R1'",
-    "UPDATE sales_return_items SET line_total=9 WHERE return_id='D1-R1'",
-    "INSERT INTO split_partial_refund_allocations(allocation_id,return_id,invoice_id,method,amount_cents,customer_id,source_key) VALUES ('AL-UNFUNDED','D1-R1','D1-S','Store Credit',1,'D1-C','Store Credit')"
+    "UPDATE sales_return_items SET line_total=9 WHERE return_id='D1-R1'"
   ]){
     const f=fixture();
     try{
@@ -88,5 +90,15 @@ test('G2-L fails closed if historical return has no real source journal at all',
   try{
     f.q.prepare("INSERT INTO sales_returns(return_id,return_date,invoice_id,customer_id,customer_name,customer_phone,refund_method,total_return_amount,reason) VALUES ('D1-UNPOSTED','2026-10-30','D1-S','D1-C','D1 Buyer','01000007651','Split Partial',10,'Unposted')").run();
     await assert.rejects(quotePartialSplitRefundFromD1(f.db,'D1-S',100),/journal|reconcil|stock|FIFO|item/i);
+  }finally{f.db.close();}
+});
+
+test('G2-L rejects a valid original Store Credit allocation when its ISSUE journal is absent',async()=>{
+  const f=fixture();
+  try{
+    f.postUnfundedCreditReturn('D1-CREDIT-RETURN');
+    await assert.rejects(quotePartialSplitRefundFromD1(f.db,'D1-S',100),
+      /journal|reconcil|Store Credit/i,
+      'original Store Credit is customer liability, never an invented cash refund');
   }finally{f.db.close();}
 });
