@@ -26,3 +26,12 @@ test('live report adapter only performs authenticated GET requests',()=>{
  assert.match(api,/\/api\/reports\/v2\/catalog/);
  assert.match(api,/\/api\/reports\/v2\/rows/);
 });
+
+test('current stock and dues appear inside Dashboard, not as extra main tabs',()=>{
+ const source=read('react-integration/overlay/src/integration/LiveReportsPage.tsx');
+ for(const metric of ['inventoryValue','receivablesBalance','payablesBalance'])
+   assert.ok(source.includes("data-current-balance={item.key}"),'current source-aware cards expected');
+ assert.match(source,/Current balances/);
+ assert.match(source,/metric\?\.status==='needs-review'/);
+ assert.match(source,/metric\?\.valueMinor!==null/);
+});
