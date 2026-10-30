@@ -29,6 +29,7 @@ import {
 import type { LotTrackingInput } from './tracking.types.js';
 import type { AuthUser } from '../auth/types.js';
 import { updateProductCatalog } from './catalog.service.js';
+import { readStockLedger } from './stockLedger.service.js';
 import { readUnitProfile, saveUnitProfile, saveGlobalUnitSymbol } from './unitProfile.service.js';
 import { createSupplierWarrantyRmaRoute, getSupplierWarrantyOverviewRoute, resolveSupplierWarrantyRmaRoute } from './supplierWarranty.service.js';
 
@@ -110,6 +111,20 @@ export async function handleProductsRoute(db: SherDatabase, request: Request, pa
   if (adjustMatch && request.method === 'POST') {
     const body = await readBody<{ delta?: number; note?: string }>(request);
     return adjustStockByDelta(db, decodeURIComponent(adjustMatch[1]), body.delta, cleanText(body.note));
+  }
+
+  const stockLedgerMatch = path.match(/^\/api\/products\/([^/]+)\/stock-ledger$/);
+  if (stockLedgerMatch && request.method === 'GET') {
+    const params = new URL(request.url).searchParams;
+    const parse = (name:string, fallback:number) => {
+      const raw=params.get(name);
+      return raw===null?fallback:/^[1-9]\d*$/.test(raw)?Number(raw):NaN;
+    };
+    const page=parse('page',1),pageSize=parse('pageSize',50);
+    if(!Number.isSafeInteger(page)||page>10000||(pageSize!==50&&pageSize!==100))
+      return Response.json({ok:false,error:'Page must be a positive integer and page size must be 50 or 100.'},{status:400});
+    const result=await readStockLedger(db,decodeURIComponent(stockLedgerMatch[1]),page,pageSize);
+    return result?Response.json(result):Response.json({ok:false,error:'Product not found'},{status:404});
   }
 
   const historyMatch = path.match(/^\/api\/products\/([^/]+)\/history$/);
