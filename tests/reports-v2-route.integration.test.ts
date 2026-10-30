@@ -84,6 +84,17 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal((await call('POST','/api/reports/v2/rows',{})).status,404);
     const after = (db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
     assert.equal(after,before);
+    // A historical invoice may have a total but inconsistent legacy payment fields.
+    // Never display a fabricated Paid=0/Due=0 in the pinned HisabIQ Sales Register.
+    db.native.prepare("UPDATE sales SET paid_amount=100,due_amount=100 WHERE invoice_id='INV-REPORT-001'").run();
+    const invalidBefore=(db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
+    const invalidSplit=await call('GET','/api/reports/v2/rows?report=sales&from=2026-10-01&to=2026-10-30');
+    assert.equal(invalidSplit.rows[0].amountMinor,12000);
+    assert.equal(invalidSplit.rows[0].paidMinor,null,'inconsistent Paid must be withheld, not estimated');
+    assert.equal(invalidSplit.rows[0].dueMinor,null,'inconsistent Due must be withheld, not estimated');
+    assert.match(invalidSplit.rows[0].reason,/inconsistent|withheld/i);
+    assert.equal((db.native.prepare('SELECT total_changes() AS n').get() as {n:number}).n,invalidBefore,
+      'report reads never repair inconsistent historical sales amounts');
     // Long-report acceptance: real posted invoices, deterministic page membership and no read-side writes.
     const insert=db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status) VALUES (?,?,?,?,?,'Cash','Paid')");
     for(let i=1;i<=105;i++)
