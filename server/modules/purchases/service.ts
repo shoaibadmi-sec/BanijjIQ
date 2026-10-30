@@ -522,8 +522,8 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (dueDelta !== 0) {
     batch.push(db.prepare(`UPDATE suppliers SET current_due = current_due + ?, updated_at=datetime('now') WHERE supplier_id = ?`).bind(dueDelta, String(existing.supplier_id || '')));
     batch.push(db.prepare(`INSERT INTO supplier_ledger (ledger_id, date, supplier_id, supplier_name, type, reference, debit, credit, balance, notes, created_by, created_at)
-      VALUES (?, datetime('now'), ?, ?, 'Purchase Update', ?, ?, ?, (SELECT current_due + ? FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))`)
-      .bind(crypto.randomUUID(), String(existing.supplier_id || ''), String(existing.supplier_name || ''), purchaseId, dueDelta > 0 ? dueDelta : 0, dueDelta < 0 ? Math.abs(dueDelta) : 0, dueDelta, String(existing.supplier_id || ''), reason, user.userId));
+      VALUES (?, datetime('now'), ?, ?, 'Purchase Update', ?, ?, ?, (SELECT current_due FROM suppliers WHERE supplier_id = ?), ?, ?, datetime('now'))`)
+      .bind(crypto.randomUUID(), String(existing.supplier_id || ''), String(existing.supplier_name || ''), purchaseId, dueDelta > 0 ? dueDelta : 0, dueDelta < 0 ? Math.abs(dueDelta) : 0, String(existing.supplier_id || ''), reason, user.userId));
   }
   batch.push(db.prepare(`INSERT INTO invoice_edit_logs (log_id, invoice_id, entity_type, reason, before_total, after_total, edited_by, created_at) VALUES (?, ?, 'PURCHASE', ?, ?, ?, ?, datetime('now'))`)
     .bind(crypto.randomUUID(), purchaseId, reason, money(existing.grand_total ?? existing.subtotal), grandTotal, user.userId));
