@@ -135,8 +135,10 @@ export async function listSupplierSettlements(db:SherDatabase,supplierId:string)
  FROM supplier_settlement_entries WHERE supplier_id=?
  ORDER BY created_at DESC,settlement_id DESC LIMIT 100`).bind(supplierId).all();
  const ledgerDue=await currentBalance(db,supplierId);
- return json({ok:true,supplier,ledgerDue,needsReconciliation:Math.abs(Number((supplier as any).currentDue)-ledgerDue)>0.0001,
-  bankAccounts:bankAccounts.results||[],settlements:rows.results||[]});
+ const session=await db.prepare("SELECT session_id FROM cash_sessions WHERE status='Open' LIMIT 1").first();
+ return json({ok:true,supplier,ledgerDue,activeSession:!!session,
+   needsReconciliation:Math.abs(Number((supplier as any).currentDue)-ledgerDue)>0.0001,
+   bankAccounts:bankAccounts.results||[],settlements:rows.results||[]});
 }
 export async function reverseSupplierSettlement(db:SherDatabase,settlementId:string,
  reasonRaw:string,user:AuthUser):Promise<Response>{

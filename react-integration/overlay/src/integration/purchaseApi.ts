@@ -127,3 +127,29 @@ export function quoteOriginalReturn(line:MixedReturnLine,quantities:Record<strin
  const cumulative=(prior+qty)*micro+base/2n,previous=prior*micro+base/2n;
  return {qty:quoted.qty,amount:Number(cumulative/base-previous/base)/10000};
 }
+
+export interface SupplierSettlement{
+ settlementId:string;requestId:string;ledgerId:string;amount:number;
+ method:'Cash'|'Bank'|'Mobile Banking';bankAccountId:string;
+ date:string;status:'Posted'|'Reversed';reversalLedgerId:string;createdAt:string
+}
+export interface SettlementDetails{
+ ok:true;supplier:{id:string;name:string;currentDue:number};
+ ledgerDue:number;needsReconciliation:boolean;activeSession:boolean;
+ bankAccounts:Array<{id:string;name:string;type:string;currentBalance:number}>;
+ settlements:SupplierSettlement[];
+}
+export async function loadSupplierSettlements(id:string){
+ return request<SettlementDetails>('/api/purchases/supplier-settlements/supplier/'+encodeURIComponent(id));
+}
+export async function submitSupplierSettlement(body:{supplierId:string;clientRequestId:string;
+ amount:number;method:string;bankAccountId:string;notes:string}){
+ return request<{ok:true;settlementId:string;ledgerId:string;amount:number;newDue:number;
+  idempotent?:boolean}>('/api/purchases/supplier-settlements',{
+ method:'POST',body:JSON.stringify(body)});
+}
+export async function reverseSettlement(id:string,reason:string){
+ return request<{ok:true;settlementId:string;reversalLedgerId:string;newDue:number}>(
+ '/api/purchases/supplier-settlements/'+encodeURIComponent(id)+'/reverse',{
+ method:'POST',body:JSON.stringify({reason})});
+}

@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Link,useNavigate,useSearchParams} from 'react-router-dom';
 import {LiveMixedPurchaseReturns} from './LiveMixedPurchaseReturns';
+import {LiveSupplierSettlements} from './LiveSupplierSettlements';
 import {ArrowLeft,Plus,RefreshCw,Search,Trash2} from 'lucide-react';
 import {Button} from '../components/Button';
 import {Input} from '../components/Input';
@@ -21,7 +22,7 @@ export function LivePurchasesPage(){
   const user=useBackendSession(),permitted=canUseModule(user,'purchase');
   const navigate=useNavigate();
   const [params]=useSearchParams();
-  const tab=params.get('tab')==='return'?'return':'purchases';
+  const tab=params.get('tab')==='return'?'return':params.get('tab')==='payments'?'payments':'purchases';
   const [items,setItems]=useState<PurchaseRecord[]>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
@@ -48,12 +49,14 @@ export function LivePurchasesPage(){
     <nav aria-label="Purchase sections" className="flex items-center gap-2 border-b border-border text-sm">
       <Link to="/app/purchases" className={'px-3 py-2 '+(tab==='purchases'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchases · ক্রয়</Link>
       <Link to="/app/purchases?tab=return" className={'px-3 py-2 '+(tab==='return'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Return · ক্রয় ফেরত</Link>
+      <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
       <span className="px-3 py-2 text-ink-500">Purchase Plans · Phase 4E</span>
     </nav>
     {tab==='return'?<LiveMixedPurchaseReturns
       purchaseId={params.get('purchaseId')||''}
       purchases={items} loading={loading}
       onRefresh={()=>void refresh()}/>:
+    tab==='payments'?<LiveSupplierSettlements supplierId={params.get('supplierId')||''}/>:
     <>
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -78,11 +81,16 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.grandTotal)}</TableCell>
           <TableCell className="text-right">{money(p.paidAmount)}</TableCell>
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
-          <TableCell>{p.items?.some(i=>!!i.unitDescription)&&
+          <TableCell><div className="flex flex-wrap gap-3">
+          {p.items?.some(i=>!!i.unitDescription)&&
             <Link className="text-xs font-semibold text-teal-700 hover:underline"
               to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}>
               Return · ফেরত
-            </Link>}</TableCell>
+            </Link>}
+          {p.supplierId&&<Link className="text-xs font-semibold text-teal-700 hover:underline"
+              to={'/app/purchases?tab=payments&supplierId='+encodeURIComponent(p.supplierId)}>
+              Pay supplier · পরিশোধ
+            </Link>}</div></TableCell>
         </TableRow>)}</TableBody></Table>
         {visible.length===0&&<p className="py-8 text-center text-sm text-ink-500">No purchases found · কোনো ক্রয় নেই</p>}
        </div>}
