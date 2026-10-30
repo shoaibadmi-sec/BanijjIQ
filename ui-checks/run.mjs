@@ -79,6 +79,53 @@ function startMocking(context,calls){
     const request=route.request(),url=new URL(request.url()),path=url.pathname;
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
+
+    if(path==='/api/reports/v2/catalog'&&request.method()==='GET')return respond({ok:true,
+      mainTabs:[{id:'overview',en:'Dashboard',bn:'ড্যাশবোর্ড'},{id:'library',en:'Report Library',bn:'রিপোর্ট লাইব্রেরি'}],
+      reports:[{id:'sales',en:'Sales register',bn:'বিক্রির হিসাব',group:'sales',status:'needs-review',reason:'Unreconciled invoice sources.'}]});
+    if(path==='/api/reports/v2/summary'&&request.method()==='GET')return respond({
+      ok:true,range:{from:'2026-10-01',to:'2026-10-30'},metrics:[
+        ...[['inventoryValue',5000],['receivablesBalance',4000],['payablesBalance',7000]].map(
+          ([key,valueMinor])=>({key,valueMinor,status:'needs-review',
+            reason:'Current snapshot only; no historical due ageing.',asOf:'2026-10-30',sources:[]}))
+      ],coverage:{status:'unavailable',reason:'Verified dashboard totals are pending.'}});
+    if(path==='/api/reports/v2/rows'&&request.method()==='GET'){
+      const kind=url.searchParams.get('report')||'sales';
+      const fixtures={
+        sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
+          label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
+        stock:{sourceId:'STK-LIVE-001',sourceModule:'products',date:'2026-10-30',
+          label:'Verified Cable Roll',amountMinor:5000,status:'needs-review',reason:'Current FIFO snapshot only.'},
+        receivables:{sourceId:'CUS-LIVE-001',sourceModule:'customers',date:'2026-10-30',
+          label:'Current Buyer Due',amountMinor:4000,status:'needs-review',reason:'Current dues, ageing unavailable.'},
+        payables:{sourceId:'SUP-LIVE-001',sourceModule:'suppliers',date:'2026-10-30',
+          label:'Current Supplier Due',amountMinor:null,status:'incomplete',reason:'Supplier ledger mismatch.'},
+        cash:{sourceId:'CB-CAP-LIVE',sourceModule:'cash_book',date:'2026-10-17',
+          label:'Owner Investment · Capital funding',amountMinor:30000,status:'needs-review',
+          reason:'Financing is not sale revenue.'},
+        bank:{sourceId:'BB-OUT-LIVE',sourceModule:'bank_book',date:'2026-10-17',
+          label:'Transfer Out · Internal',amountMinor:-10000,status:'needs-review',
+          reason:'Internal bank transfer not income.'},
+        expenses:{sourceId:'EXP-LIVE-001',sourceModule:'expenses',date:'2026-10-17',
+          label:'Utilities',amountMinor:5000,status:'needs-review',
+          reason:'Recorded operating expense matched to cash book.'},
+        finance:{sourceId:'FIN-LIVE-001',sourceModule:'finance_transactions',date:'2026-10-17',
+          label:'Owner Investment · Owner',amountMinor:30000,status:'needs-review',
+          reason:'Capital is not sales or profit.'}
+      };
+      const record=fixtures[kind]||null;
+      const amounts=kind==='cash'?{cashReceipts:50000,cashPayments:5000,
+        externalNetMovement:45000,bankCurrentBalance:35000}:
+        kind==='bank'?{bankReceipts:10000,bankPayments:10000,bankCurrentBalance:35000}:
+        kind==='expenses'?{operatingExpenses:5000}:
+        kind==='finance'?{ownerCapitalIn:30000}:{};
+      const metrics=Object.entries(amounts).map(([key,valueMinor])=>({
+        key,valueMinor,status:'needs-review',reason:'Source-backed test fixture',
+        asOf:'2026-10-30',sources:[]}));
+      return respond({ok:true,report:kind,range:{from:'2026-10-01',to:'2026-10-30'},page:1,pageSize:50,
+        totalRows:record?1:0,metrics,rows:record?[record]:[],coverage:{
+          status:record?.status||'unavailable',reason:record?.reason||'Report unavailable.'}});
+    }
     if(path==='/api/auth/me'&&request.method()==='GET')return respond({ok:true,user});
     if(path==='/api/bootstrap'&&request.method()==='GET')return respond({ok:true,products:productData,
       categories:[{id:'CAT-ELEC',name:'Electrical'},{id:'CAT-HARD',name:'Hardware'}],
@@ -174,7 +221,7 @@ async function audit(page,label){
   if(!existsSync(axePath))throw new Error('axe-core dependency missing from source');
   await page.addScriptTag({content:readFileSync(axePath,'utf8')});
   const report=await page.evaluate(async()=>{
-    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos]')||document.body,
+    const r=await window.axe.run(document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]')||document.body,
       {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa']}});
     return {violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,
       nodes:v.nodes.slice(0,5).map(n=>({target:n.target,summary:n.failureSummary}))})),
@@ -188,7 +235,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-reports]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
@@ -218,6 +265,87 @@ try{
     await screenshot(page,'auth-390');
     await ctx.close();
   });
+
+  for(const width of [390,768,1440]){
+    await withCheck('two-tab live Reports '+width+' only reads authenticated API source',async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];
+      await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=sales-register&from=2026-10-01&to=2026-10-30');
+      await page.locator('[data-live-reports]').waitFor({timeout:10000});
+      await page.getByText('INV-LIVE-REPORT-001').waitFor({timeout:10000});
+      const nav=page.locator('[data-live-reports] [role="tab"]');
+      assert.equal(await nav.count(),2,'only Dashboard and Report Library are top-level tabs');
+      assert.deepEqual((await nav.allTextContents()).map(x=>x.trim()),['Dashboard','Report Library']);
+      assert.equal(await page.locator('[data-live-reports] tbody tr').count(),1);
+      assert.equal(await page.getByText('120',{exact:true}).count(),0,'money formatted and labeled, not synthetic bare values');
+      assert.ok(calls.some(x=>x.method==='GET'&&x.path==='/api/reports/v2/rows'));
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await nav.first().click();
+      await page.getByText('Verified dashboard totals are pending.').waitFor({timeout:10000});
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await inspectLayout(page,'reports-two-tabs-'+width);
+      await screenshot(page,'reports-two-tabs-'+width);
+      await audit(page,'reports-two-tabs-'+width);
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 5D current stock and dues UI '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=stock&from=2026-10-01&to=2026-10-30');
+      await page.getByText('STK-LIVE-001').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Current FIFO value'}).waitFor();
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await screenshot(page,'reports-stock-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=payables&from=2026-10-01&to=2026-10-30');
+      await page.getByText('SUP-LIVE-001').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Current due'}).waitFor();
+      await page.getByText('Needs checking').first().waitFor();
+      await screenshot(page,'reports-supplier-dues-'+width);
+      await page.getByRole('tab',{name:'Dashboard'}).click();
+      await page.locator('[data-current-balance="inventoryValue"]').getByText('৳50').waitFor({timeout:10000});
+      assert.match(await page.locator('[data-current-balance="inventoryValue"]').innerText(),/50/);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await inspectLayout(page,'reports-current-balances-'+width);
+      await audit(page,'reports-current-balances-'+width);
+      assert.ok(calls.every(x=>x.method!=='POST'||!x.path.startsWith('/api/reports')));
+      await ctx.close();
+    });
+  }
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 5E money ledger UI '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/reports?screen=library&report=cash-book&from=2026-10-01&to=2026-10-30');
+      await page.getByText('CB-CAP-LIVE').waitFor({timeout:10000});
+      await page.getByRole('columnheader',{name:'Money in'}).waitFor();
+      await page.getByRole('columnheader',{name:'Money out'}).waitFor();
+      await page.locator('[data-report-metric="externalNetMovement"]').getByText('৳450').waitFor();
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      await screenshot(page,'reports-money-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=finance-movements&from=2026-10-01&to=2026-10-30');
+      await page.getByText('FIN-LIVE-001').waitFor({timeout:10000});
+      await page.locator('[data-report-metric="ownerCapitalIn"]').getByText('৳300').waitFor();
+      await screenshot(page,'reports-finance-'+width);
+      await page.goto(base+'/#/app/reports?screen=library&report=expenses&from=2026-10-01&to=2026-10-30');
+      await page.getByText('EXP-LIVE-001').waitFor({timeout:10000});
+      await page.locator('[data-report-metric="operatingExpenses"]').getByText('৳50').waitFor();
+      await inspectLayout(page,'reports-expense-'+width);
+      await screenshot(page,'reports-expense-'+width);
+      await audit(page,'reports-expense-'+width);
+      assert.equal(await page.locator('[data-live-reports] [role="tab"]').count(),2);
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/reports')));
+      await ctx.close();
+    });
+  }
   for(const width of [390,768,1024,1440]){
     for(const theme of ['light','dark']){
       await withCheck('products '+width+' '+theme,async()=>{

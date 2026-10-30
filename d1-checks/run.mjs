@@ -3,6 +3,7 @@
  * Worker + D1 fixture. The config cannot address production D1.
  */
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -165,6 +166,66 @@ try{
     assert.equal(r.invoice.dueAmount,120);
     const recent=await request('GET','/api/pos/sales-by-phone?phone=01000000777',undefined,{token});
     assert.ok(recent.sales.some(x=>x.invoiceId===partialInvoice));
+  });
+  await check('real D1 reports verify permissions, source parity and no writes',async()=>{
+    const range='&from=2026-01-01&to=2026-12-31';
+    const reportBefore=query("SELECT (SELECT COUNT(*) FROM sales) sales,(SELECT COUNT(*) FROM cash_book) cash,(SELECT COUNT(*) FROM stock_lots) lots,(SELECT COUNT(*) FROM customer_ledger) ledger")[0];
+    for(const path of ['/api/reports/v2/catalog','/api/reports/v2/summary',
+      '/api/reports/v2/rows?report=sales','/api/reports/v2/audit'])
+      assert.equal((await request('GET',path)).status,401,'reports require authentication: '+path);
+    const limitedToken='LOCAL-D1-REPORTS-NO-VIEW';
+    const limitedHash=createHash('sha256').update(limitedToken).digest('base64');
+    query("INSERT INTO app_users(user_id,full_name,phone,password_hash,password_salt,role,status,created_by) "+
+      "VALUES ('d1-report-denied','Restricted Reporter','01000000987','test-only','test-only','restricted-reports','Active','D1 CI')");
+    query("INSERT INTO auth_sessions(session_id,user_id,token_hash,expires_at) VALUES "+
+      "('d1-reports-denied-session','d1-report-denied','"+limitedHash+"',datetime('now','+2 hours'))");
+    for(const path of ['/api/reports/v2/catalog','/api/reports/v2/summary',
+      '/api/reports/v2/rows?report=stock','/api/reports/v2/audit'])
+      assert.equal((await request('GET',path,undefined,{token:limitedToken})).status,403,
+        'RBAC must reject access to '+path);
+    const catalog=await request('GET','/api/reports/v2/catalog',undefined,{token});
+    assert.equal(catalog.status,200,JSON.stringify(catalog));
+    assert.deepEqual(catalog.mainTabs.map(t=>t.id),['overview','library']);
+    const sales=await request('GET','/api/reports/v2/rows?report=sales'+range,undefined,{token});
+    assert.equal(sales.status,200,JSON.stringify(sales));
+    const saleSource=query("SELECT grand_total FROM sales WHERE invoice_id='"+paidInvoice+"'")[0];
+    assert.equal(sales.rows.find(x=>x.sourceId===paidInvoice)?.amountMinor,
+      Math.round(Number(saleSource.grand_total)*100),'sales register must match posted invoice, not mocked amount');
+    const stock=await request('GET','/api/reports/v2/rows?report=stock'+range,undefined,{token});
+    assert.equal(stock.status,200,JSON.stringify(stock));
+    const stockSource=query("SELECT current_stock FROM products WHERE product_id='"+productId+"'")[0];
+    assert.equal(stock.rows.find(x=>x.sourceId===productId)?.amountMinor,
+      Math.round(Number(stockSource.current_stock)*Number(product.purchasePrice)*100),
+      'stock value must reflect current lot remaining cost');
+    const receivables=await request('GET','/api/reports/v2/rows?report=receivables'+range,undefined,{token});
+    assert.equal(receivables.status,200,JSON.stringify(receivables));
+    const dueSource=query("SELECT customer_id,current_due FROM customers WHERE phone='01000000777'")[0];
+    assert.equal(receivables.rows.find(x=>x.sourceId===dueSource.customer_id)?.amountMinor,
+      Math.round(Number(dueSource.current_due)*100),'dues must be sourced by immutable customer ID');
+    const cash=await request('GET','/api/reports/v2/rows?report=cash'+range,undefined,{token});
+    assert.equal(cash.status,200,JSON.stringify(cash));
+    const cashSource=query("SELECT entry_id,credit FROM cash_book WHERE type='Sale' AND reference='"+paidInvoice+"'")[0];
+    assert.equal(cash.rows.find(x=>x.sourceId===cashSource.entry_id)?.amountMinor,
+      Math.round(Number(cashSource.credit)*100),'cash report must use exact money-book source ID');
+    for(const report of ['expenses','finance']){
+      const rows=await request('GET','/api/reports/v2/rows?report='+report+range,undefined,{token});
+      assert.equal(rows.status,200,JSON.stringify(rows));
+      assert.deepEqual(rows.rows,[],'an empty finance source is not sample data: '+report);
+    }
+    const summary=await request('GET','/api/reports/v2/summary?report=cash'+range,undefined,{token});
+    assert.equal(summary.status,200,JSON.stringify(summary));
+    assert.equal(summary.metrics.filter(x=>x.key==='operatingExpenses').length,1,
+      'summary must have one authoritative operating expense');
+    assert.equal(summary.metrics.find(x=>x.key==='receivablesBalance')?.valueMinor,
+      Math.round(Number(dueSource.current_due)*100));
+    const audit=await request('GET','/api/reports/v2/audit?'+range.slice(1),undefined,{token});
+    assert.equal(audit.status,200);
+    assert.equal(audit.readiness,'unavailable','Business Audit is explicitly deferred');
+    assert.deepEqual(audit.sections,[]);
+    assert.equal((await request('GET','/api/reports/v2/rows?report=sales&pageSize=200',undefined,{token})).status,400);
+    assert.equal((await request('POST','/api/reports/v2/rows',{}, {token})).status,404);
+    const reportAfter=query("SELECT (SELECT COUNT(*) FROM sales) sales,(SELECT COUNT(*) FROM cash_book) cash,(SELECT COUNT(*) FROM stock_lots) lots,(SELECT COUNT(*) FROM customer_ledger) ledger")[0];
+    assert.deepEqual(reportAfter,reportBefore,'all report GETs must leave financial source tables untouched');
   });
   await check('concurrent identical requests cannot create two invoices',async()=>{
     const concurrent=sale('d1-ci-concurrent-key-003',1,'Cash',0,'01000000888');
