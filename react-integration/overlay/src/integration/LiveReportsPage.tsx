@@ -89,6 +89,7 @@ export function LiveReportsPage(){
   const visible=useMemo(()=>choices.filter(c=>(group==='all'||c.group===group)
     &&(c.en+' '+c.bn).toLocaleLowerCase().includes(librarySearch.toLocaleLowerCase())),[group,librarySearch]);
   const activeCatalog=catalog.find(c=>c.id===key);
+  const currentReport=key==='stock'||key==='receivables'||key==='payables';
   const unsupported=!key;
   const coverage=rows?.coverage;
   if(!permitted)return <main className="mx-auto max-w-4xl p-6"><h1 className="text-lg font-semibold">
@@ -209,12 +210,20 @@ export function LiveReportsPage(){
           {rows&&<div className="overflow-x-auto rounded-xl border border-border bg-card">
             <table className="w-full min-w-[520px] text-[13px]"><thead className="bg-ink-50/50 text-ink-600">
               <tr><th scope="col" className="px-3 py-2 text-left">{text('Reference','নম্বর')}</th>
-                <th scope="col" className="px-3 py-2 text-left">{text('Date','তারিখ')}</th>
-                <th scope="col" className="px-3 py-2 text-left">{text('Party','পার্টি')}</th>
-                <th scope="col" className="px-3 py-2 text-right">{text('Recorded amount','লেখা টাকা')}</th></tr>
-            </thead><tbody>{rows.rows.map(item=><tr className="border-t border-border" key={item.sourceModule+':'+item.sourceId}>
-              <td className="px-3 py-2 font-medium text-primary">{item.sourceId}</td><td className="px-3 py-2">{item.date}</td>
-              <td className="px-3 py-2">{item.label}</td><td className="px-3 py-2 text-right">{money(item.amountMinor)}</td>
+                <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Snapshot':'Date',currentReport?'বর্তমান হিসাব':'তারিখ')}</th>
+                <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Product / Party':'Party','পণ্য / পার্টি')}</th>
+                <th scope="col" className="px-3 py-2 text-right">{text(key==='stock'?'Current FIFO value':currentReport?'Current due':'Recorded amount',
+                  key==='stock'?'বর্তমান স্টক মূল্য':currentReport?'বর্তমান বাকি':'লেখা টাকা')}</th>
+                <th scope="col" className="px-3 py-2 text-left">{text('Status','অবস্থা')}</th></tr>
+            </thead><tbody>{rows.rows.map(row=><tr className="border-t border-border" key={row.sourceModule+':'+row.sourceId}>
+              <td className="px-3 py-2 font-medium text-primary">{row.sourceId}</td><td className="px-3 py-2">{row.date}</td>
+              <td className="px-3 py-2">{row.label}</td><td className="px-3 py-2 text-right">{money(row.amountMinor)}</td>
+              <td className="px-3 py-2">
+                <span title={row.reason} className={row.status==='incomplete'?'text-danger':'text-ink-500'}>
+                  {row.status==='incomplete'?text('Needs checking','মিলিয়ে দেখুন'):
+                    currentReport?text('Current only','বর্তমান হিসাব'):text('Recorded','রেকর্ড')}
+                </span>
+              </td>
             </tr>)}</tbody></table>
             {!rows.rows.length&&<p className="p-5 text-sm text-ink-500">{text('No recorded rows for this selection.','এই নির্বাচনে কোনো রেকর্ড নেই।')}</p>}
           </div>}
