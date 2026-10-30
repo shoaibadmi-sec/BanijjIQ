@@ -30,6 +30,19 @@ test('G2-H split refund endpoints authorize Sales Returns, not ordinary sales po
       }),db);
     return {status:response.status,body:await response.json() as Record<string,unknown>};
   };
+  const quote=async(role:string,method:'GET'|'POST')=>{
+    const response=await handleApiRequest(new Request(
+      'https://isolated.test/api/sales-management/NO-SUCH-INVOICE/split-partial-preview?productId=X&quantity=1',{
+        method,headers:{authorization:'Bearer token-'+role}
+      }),db);
+    return response.status;
+  };
+  assert.equal(await quote('sale-only','GET'),403,
+    'sales.view is not permission to view refund allocations');
+  assert.equal(await quote('return-cashier','GET'),400,
+    'returns.view reaches the read-only source quote and checks original product quantity');
+  assert.equal(await quote('return-cashier','POST'),404,
+    'partial posting must remain unavailable even to returns.add role');
   assert.equal((await request('sale-only','GET')).status,403);
   assert.equal((await request('sale-only','POST')).status,403);
   assert.equal((await request('return-cashier','GET')).status,404,'returns.view reaches source preview');
