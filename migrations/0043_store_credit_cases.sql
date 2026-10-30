@@ -22,3 +22,12 @@ CREATE TABLE IF NOT EXISTS store_credit_reconciliation_cases (
 CREATE INDEX IF NOT EXISTS idx_credit_case_status
   ON store_credit_reconciliation_cases(status,created_at,case_id);
 -- No API path currently inserts or updates this table.
+
+-- Historical case decisions cannot be rewritten or deleted after review.
+-- Any future correction requires a distinct reviewed compensating case event.
+CREATE TRIGGER IF NOT EXISTS trg_store_credit_case_no_update
+BEFORE UPDATE ON store_credit_reconciliation_cases
+BEGIN SELECT RAISE(ABORT,'STORE_CREDIT_CASE_IMMUTABLE'); END;
+CREATE TRIGGER IF NOT EXISTS trg_store_credit_case_no_delete
+BEFORE DELETE ON store_credit_reconciliation_cases
+BEGIN SELECT RAISE(ABORT,'STORE_CREDIT_CASE_IMMUTABLE'); END;
