@@ -5,6 +5,10 @@ export function patchLiveDashboard(source){
     if(!current.includes(before))throw Error('HisabIQ original Dashboard changed; review live-source integration: '+before);
     current=current.replace(before,after);
   };
+  replace("import {useTenantSettings} from '../settings/TenantSettingsProvider';", "import {useLiveDashboardIdentity} from '../integration/LiveDashboardWidgets';");
+  replace('  const {state,actorId}=useTenantSettings();','  const {userName,businessName}=useLiveDashboardIdentity();');
+  replace('  const actor=state.sections.team.employees.find(employee=>employee.id===actorId&&employee.active);','  const actor=userName?{name:userName}:null;');
+  replace("  const business=state.sections.business.name.trim()||text('Your business','আপনার ব্যবসা');","  const business=businessName||text('Your business','আপনার ব্যবসা');");
   for(const name of ['MetricCard','SalesTrendChart','CashflowChart','RecentSalesTable','DuesList'])
     replace("from '../components/dashboard/"+name+"';","from '../integration/LiveDashboardWidgets';");
   replace("text('Sample figures','নমুনার হিসাব')","text('Live source records','মূল হিসাবের তথ্য')");
