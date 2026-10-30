@@ -207,7 +207,7 @@ export function LiveReportsPage(){
         <nav aria-label={text('Report library','রিপোর্টের তালিকা')} className="max-h-[65vh] space-y-1 overflow-y-auto rounded-xl border border-border bg-card p-2">
           {visible.map(item=><button type="button" key={item.id} onClick={()=>openReport(item.id)}
             aria-current={selected===item.id?'page':undefined}
-            className={'flex h-9 w-full items-center rounded-lg px-2 text-left text-xs '+(selected===item.id?'bg-primary/10 font-semibold text-primary':'text-ink-600 hover:bg-ink-50')}>
+            className={'flex h-9 w-full items-center rounded-lg px-2 text-left text-xs '+(selected===item.id?'bg-primary/10 font-semibold text-ink':'text-ink-600 hover:bg-ink-50')}>
             <span className="truncate">{text(item.en,item.bn)}</span></button>)}
           {!visible.length&&<p className="p-3 text-xs text-ink-500">{text('No matching reports','কোনো রিপোর্ট মেলেনি')}</p>}
         </nav>
@@ -240,7 +240,7 @@ export function LiveReportsPage(){
               </div>;
             })}
           </div>}
-          {rows&&<div className="overflow-x-auto rounded-xl border border-border bg-card">
+          {rows&&<div tabIndex={0} role="region" aria-label={text('Report results table','রিপোর্টের ফলাফলের টেবিল')} className="overflow-x-auto rounded-xl border border-border bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
             <table className="w-full min-w-[520px] text-[13px]"><thead className="bg-ink-50/50 text-ink-600">
               <tr><th scope="col" className="px-3 py-2 text-left">{text('Reference','নম্বর')}</th>
                 <th scope="col" className="px-3 py-2 text-left">{text(currentReport?'Snapshot':'Date',currentReport?'বর্তমান হিসাব':'তারিখ')}</th>
