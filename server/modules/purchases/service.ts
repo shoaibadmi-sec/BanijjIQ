@@ -445,6 +445,8 @@ export async function updatePurchase(db: SherDatabase, purchaseId: string, input
   if (!reason) return error('Enter a reason for this update.');
   const existing = await db.prepare(`SELECT * FROM purchases WHERE purchase_id = ? AND COALESCE(is_deleted,0) = 0 LIMIT 1`).bind(purchaseId).first<Record<string, unknown>>();
   if (!existing) return error('Purchase not found.');
+  if (money(existing.paid_amount) > 0 || Number(input.paidAmount ?? 0) !== 0)
+    return error('Paid purchase edits require an audited cash/bank reversal; use Supplier Settlements for payments.',409);
   if(cleanText(existing.purchase_plan_order_id))return error('Approved-order purchases cannot be edited; use a controlled reversal.',409);
   if(await hasMixedUnitPurchase(db,purchaseId))
     return error('Mixed-unit purchase edits are locked until historical cost-safe reversal is implemented (Phase 4C).',409);
