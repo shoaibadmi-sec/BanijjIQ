@@ -41,6 +41,31 @@ export async function getUserPermissions(db:SherDatabase,user:AuthUser):Promise<
   try{return sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return {}}
 }
 
+// Resolve a delegated actor's grant ceiling once for both role edits and employee assignments.
+export async function mayGrantRolePermissions(db:SherDatabase,actor:AuthUser,wanted:RolePermissions):Promise<boolean>{
+  if(actor.role==='admin')return true;
+  const own=await getUserPermissions(db,actor);
+  if(!own)return false;
+  const rank=(v:unknown):number=>v===true||v==='unlimited'?Infinity:v==='same'?0:
+    typeof v==='string'&&/^\d+$/.test(v)?Number(v):-1;
+  return Object.entries(wanted).every(([key,p])=>{
+    const have=own[key];
+    return !!have && (!p.view||have.view) && (!p.add||have.add) && (!p.edit||have.edit)
+      && rank(p.delete)<=rank(have.delete) && rank(p.backdate)<=rank(have.backdate);
+  });
+}
+
+export async function mayAssignCustomRole(db:SherDatabase,actor:AuthUser,role:string):Promise<boolean>{
+  if(actor.role==='admin')return true;
+  if(role==='admin')return false;
+  const row=await db.prepare(`SELECT permissions_json,status FROM app_roles WHERE role_name=? LIMIT 1`)
+    .bind(role).first<{permissions_json:string;status:string}>();
+  if(!row || row.status!=='Active')return false;
+  let requested:RolePermissions;
+  try{requested=sanitizePermissions(JSON.parse(row.permissions_json||'{}'))}catch{return false}
+  return mayGrantRolePermissions(db,actor,requested);
+}
+
 export async function buildClientUser(db:SherDatabase,user:AuthUser):Promise<AuthUser & {allowedModules:string[]|null;permissions:RolePermissions|null}>{
   const permissions=await getUserPermissions(db,user);
   return {...user,allowedModules:permissions===null?null:Object.keys(permissions).filter(k=>permissions[k]?.view),permissions};
