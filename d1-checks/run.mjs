@@ -91,6 +91,12 @@ try{
       'isolated Cloudflare D1 must apply cumulative original-source refund ledger migration');
     assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_source_capacity'").length,1,
       'D1 must enforce source caps with a database trigger, not a UI-only check');
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_audit_header'").length,1,
+      'real isolated D1 must install partial return final-audit header guard');
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_audit_money'").length,1,
+      'real isolated D1 must enforce exact refund-source money books');
+    assert.equal(query("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_partial_split_audit_inventory'").length,1,
+      'real isolated D1 must validate FIFO and stock ledgers before final audit');
   });
   worker=spawn(process.execPath,[cliPath,'dev',
     '--config',config,'--local','--persist-to',state,
