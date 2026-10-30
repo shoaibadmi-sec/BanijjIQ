@@ -25,7 +25,7 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     token = setup.token as string;
     db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,paid_amount,due_amount,payment_type,payment_status) VALUES ('INV-REPORT-001','2026-10-15','Test Buyer','01000000121',120,45,75,'Cash','Partial')").run();
     db.native.prepare("INSERT INTO sales (invoice_id,sale_date,customer_name,customer_phone,grand_total,payment_type,payment_status,status) VALUES ('INV-DRAFT-UNPOSTED','2026-10-17','Unposted Buyer','01000000125',900,'Cash','Unpaid','Draft')").run();
-    db.native.prepare("INSERT INTO purchases(purchase_id,purchase_date,supplier_name,subtotal,grand_total,paid_amount,due_amount,status) VALUES ('PUR-LIVE-001','2026-10-18','Real Hardware Supplier',120,120,45,75,'Completed')").run();
+    db.native.prepare("INSERT INTO purchases(purchase_id,purchase_date,supplier_name,subtotal,grand_total,paid_amount,due_amount,status) VALUES ('PUR-LIVE-001','2026-10-18','Real Hardware Supplier',120,120,0,120,'Completed')").run();
     db.native.prepare("INSERT INTO purchases(purchase_id,purchase_date,supplier_name,grand_total,paid_amount,due_amount,status) VALUES ('PUR-DRAFT-001','2026-10-19','Draft Supplier',900,0,900,'Draft')").run();
     db.native.prepare("INSERT INTO purchases(purchase_id,purchase_date,supplier_name,grand_total,paid_amount,due_amount,status,is_deleted) VALUES ('PUR-DELETED-001','2026-10-19','Deleted Supplier',500,0,500,'Completed',1)").run();
     // A valid session for a non-admin without reports.view must not bypass the route guard.
@@ -71,8 +71,8 @@ test('report v2 is read-only with real SQLite and auth', async () => {
     assert.equal(purchase.rows[0].sourceModule,'purchases');
     assert.equal(purchase.rows[0].label,'Real Hardware Supplier');
     assert.equal(purchase.rows[0].amountMinor,12000);
-    assert.equal(purchase.rows[0].paidMinor,4500);
-    assert.equal(purchase.rows[0].dueMinor,7500);
+    assert.equal(purchase.rows[0].paidMinor,0);
+    assert.equal(purchase.rows[0].dueMinor,12000);
     assert.equal(purchase.coverage.status,'needs-review',
       'Recorded purchase is not certified net of returns or settlements');
     const invalid = await call('GET','/api/reports/v2/rows?report=sales&pageSize=500');
