@@ -8,7 +8,7 @@ Source of truth: verified `shuvodelux-commits/Mohim_ERP` business behavior, orig
 
 - [x] **4A backend foundation**: read-only, purchase-authorized supplier lookup with case-insensitive name/phone/ID matching, live payable, separate ledger reconciliation flag; purchase payable ledger no longer double-counts the same supplier due in its displayed balance.
 - [x] **4A React entry foundation (due purchases only)**: original HisabIQ component styling, keyboard supplier selector, live due, saved supplier-only purchase, no fake/demo operational state; offline/ambiguous result handling. Paid tender, mixed-unit conversion and returns remain gated until their later subphases.
-- [ ] **4B**: versioned 2–4 unit purchase quantities and unit-cost normalization to exact base units; reject stale profiles/overflows, atomic FIFO lot/master-stock movements.
+- [x] **4B backend baseline**: revisioned 2–4 mixed-unit input, selectable cost unit, frozen source unit/cost/lot snapshot via additive migration 0050, 4-decimal total rounding, FIFO in base quantity/cost, stale profile and rollback tests. React UI and D1 end-to-end acceptance remain outstanding.
 - [ ] **4C**: purchase return original-lot cost, exact mixed-unit allocation, tracked serial/expiry eligibility, signed ledger and audit reversal, no double-return.
 - [ ] **4D**: supplier payments and due settlement must atomically post ledger + cash/bank entries, prevent overpayment/negative payable, preserve historical reversal audit and original account.
 - [ ] **4E**: purchase planner → approved order → converted purchase, immutable source reference, no duplicate conversion and consistent stock/due.
