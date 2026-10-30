@@ -212,7 +212,7 @@ async function audit(page,label){
 }
 async function inspectLayout(page,label){
   const info=await page.evaluate(()=>{
-    const root=document.querySelector('[data-live-products], [data-live-pos]');
+    const root=document.querySelector('[data-live-products], [data-live-pos], [data-live-purchases], [data-live-purchase-editor]');
     const rect=root?.getBoundingClientRect();
     return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,
       workspaceWidth:rect?.width||0,workspaceLeft:rect?.left||0,
