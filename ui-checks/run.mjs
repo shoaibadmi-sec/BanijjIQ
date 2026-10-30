@@ -81,6 +81,28 @@ function startMocking(context,calls){
     calls.push({method:request.method(),path});
     const respond=body=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)});
 
+    if(path==='/api/daybook/bootstrap'&&request.method()==='GET')return respond({
+      ok:true,currencySymbol:'৳',editableDays:7,
+      modules:['Sales','Purchase','Expense','Bank','Bank Transfer','Finance'],isAdmin:true
+    });
+    if(path==='/api/daybook'&&request.method()==='GET'){
+      const page=Number(url.searchParams.get('page')||1),pageSize=Number(url.searchParams.get('pageSize')||50);
+      assert.ok(pageSize===50||pageSize===100,'Daybook must use 50/100 paging');
+      assert.ok(['createdAt','transactionDate'].includes(url.searchParams.get('sortBy')));
+      calls.push({method:'ASSERT',path,page,pageSize,sortBy:url.searchParams.get('sortBy')});
+      return respond({ok:true,page,pageSize,totalRows:1,totalPages:1,dateFrom:url.searchParams.get('dateFrom'),
+        dateTo:url.searchParams.get('dateTo'),sortBy:url.searchParams.get('sortBy'),isAdmin:true,count:1,
+        totals:{cashIn:0,cashOut:0,bankIn:0,bankOut:0,netCash:0,netBank:0},
+        rows:[{ts:'2026-10-30T11:00:00',date:'2026-10-30',time:'11:00:00',
+          referenceNo:'BTR-UI-6E-001',module:'Bank Transfer',transactionType:'Bank Transfer',
+          party:'Shop Bank → Wallet',description:'Internal transfer between accounts',
+          paymentMethod:'Bank',cashIn:0,cashOut:0,bankIn:0,bankOut:0,amount:0,
+          runningCashBalance:null,createdBy:'Test Admin',status:'Active',isDeleted:false,
+          isBackdated:false,backdatedDays:0,backdatedReason:'',
+          sourceModule:'Bank Transfer',sourceId:'BTR-UI-6E-001',openId:'BTR-UI-6E-001',
+          deleteAction:'',deleteId:'BTR-UI-6E-001',canEdit:false}]
+      });
+    }
     // Finance 6A uses real endpoint shapes, never the pinned demo account store.
     if(path==='/api/bank/accounts'&&request.method()==='GET')return respond({
       ok:true,currencySymbol:'৳',bankAccounts:[
@@ -527,6 +549,31 @@ try{
       await screenshot(page,'phase6d-person-ledger-'+width);
       await inspectLayout(page,'phase6d-person-ledger-'+width);
       await audit(page,'phase6d-person-ledger-'+width);
+      results.apiCalls.push(...calls);await ctx.close();
+    });
+  }
+
+  for(const width of [390,768,1440]){
+    await withCheck('Phase 6E source-linked read-only Daybook '+width,async()=>{
+      const ctx=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'});
+      const calls=[];await startMocking(ctx,calls);
+      await ctx.addInitScript(()=>localStorage.setItem('shererp_auth_token','ui-e2e-only-token'));
+      const page=await ctx.newPage();
+      await page.goto(base+'/#/app/daybook');
+      const daybook=page.locator('[data-live-daybook]');
+      await daybook.waitFor({timeout:12000});
+      await daybook.getByText('BTR-UI-6E-001').waitFor({timeout:12000});
+      assert.equal(await daybook.getByRole('link',{name:'Open module'}).count(),1);
+      assert.equal((await daybook.getByRole('link',{name:'Open module'}).getAttribute('href')),
+        '#/app/finance?sourceId=BTR-UI-6E-001');
+      await daybook.getByRole('combobox',{name:'Daybook page size'}).selectOption('100');
+      await daybook.getByRole('combobox',{name:'Daybook sort order'}).selectOption('createdAt');
+      await page.waitForFunction(()=>document.querySelector('[data-live-daybook]')?.textContent?.includes('1 transactions'),null,{timeout:12000});
+      assert.ok(calls.some(x=>x.method==='ASSERT'&&x.path==='/api/daybook'&&x.pageSize===100&&x.sortBy==='createdAt'));
+      assert.ok(!calls.some(x=>x.method==='POST'&&x.path.startsWith('/api/daybook')));
+      await screenshot(page,'phase6e-daybook-'+width);
+      await inspectLayout(page,'phase6e-daybook-'+width);
+      await audit(page,'phase6e-daybook-'+width);
       results.apiCalls.push(...calls);await ctx.close();
     });
   }
