@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/Dialog';
 import { LayoutDashboard, LibraryBig, RefreshCw, Search } from 'lucide-react';
 import { reportCatalog, reportGroups } from '../reports/catalog';
 import { reportKeyForScreen } from '../reports/screens';
@@ -7,7 +8,8 @@ import type { ReportScreen } from '../reports/types';
 import { businessToday } from '../utils/dateRange';
 import { useUiCopy } from '../i18n/useUiCopy';
 import { canUseModule, useBackendSession } from './BackendGate';
-import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary,
+import { getLiveReportCatalog, getLiveReportRows, getLiveReportSummary, getPosInvoice,
+  type PosInvoice,
   type LiveReportBackendKey, type LiveReportEntry, type LiveReportPageResponse, type LiveReportMetric } from './banijjApi';
 
 const mapToBackend: Record<string,LiveReportBackendKey> = {
@@ -47,6 +49,10 @@ export function LiveReportsPage(){
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState('');
   const [reload,setReload]=useState(0);
+  const [invoiceId,setInvoiceId]=useState<string|null>(null);
+  const [invoice,setInvoice]=useState<PosInvoice|null>(null);
+  const [invoiceError,setInvoiceError]=useState('');
+  const canViewInvoice=canUseModule(user, 'pos', 'view');
   const key=mapToBackend[selected];
 
   const update=(changes:Record<string,string|null>)=>{
@@ -56,6 +62,7 @@ export function LiveReportsPage(){
   };
   const switchTab=(next:'overview'|'library')=>update({screen:next,page:null});
   const openReport=(id:string)=>{
+    setInvoiceId(null);
     setRowSearch('');
     update({screen:'library',report:id,page:null});
   };
@@ -90,6 +97,16 @@ export function LiveReportsPage(){
     }else setLoading(false);
     return ()=>{alive=false;};
   },[permitted,tab,key,from,to,page,pageSize,rowSearch,reload]);
+
+  useEffect(()=>{
+    if(!invoiceId||!canViewInvoice)return;
+    let alive=true;
+    setInvoice(null);setInvoiceError('');
+    getPosInvoice(invoiceId)
+      .then(value=>{if(alive)setInvoice(value.invoice);})
+      .catch(error=>{if(alive)setInvoiceError(error instanceof Error?error.message:'Unable to open invoice.');});
+    return ()=>{alive=false;};
+  },[invoiceId,canViewInvoice]);
 
   const visible=useMemo(()=>choices.filter(c=>(group==='all'||c.group===group)
     &&(c.en+' '+c.bn).toLocaleLowerCase().includes(librarySearch.toLocaleLowerCase())),[group,librarySearch]);
@@ -252,7 +269,12 @@ export function LiveReportsPage(){
                     key==='stock'?'বর্তমান স্টক মূল্য':currentReport?'বর্তমান বাকি':'লেখা টাকা')}</th>}
                 <th scope="col" className="px-3 py-2 text-left">{text('Status','অবস্থা')}</th></tr>
             </thead><tbody>{rows.rows.map(row=><tr className="border-t border-border" key={row.sourceModule+':'+row.sourceId}>
-              <td className="px-3 py-2 font-medium text-primary">{row.sourceId}</td><td className="px-3 py-2">{row.date}</td>
+              <td className="px-3 py-2 font-medium text-primary">
+                {row.sourceModule==='sales'&&canViewInvoice
+                  ?<button type="button" className="rounded text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={()=>setInvoiceId(row.sourceId)}>{row.sourceId}</button>
+                  :row.sourceId}
+              </td><td className="px-3 py-2">{row.date}</td>
               <td className="px-3 py-2">{row.label}</td>
               {moneyMovement?<><td className="px-3 py-2 text-right">{row.amountMinor!==null&&row.amountMinor>0?money(row.amountMinor):'—'}</td>
                 <td className="px-3 py-2 text-right">{row.amountMinor!==null&&row.amountMinor<0?money(-row.amountMinor):'—'}</td></>:
@@ -276,5 +298,33 @@ export function LiveReportsPage(){
         </div>
       </div>
     </section>}
+    <Dialog open={invoiceId!==null&&canViewInvoice} onOpenChange={open=>{if(!open)setInvoiceId(null);}}>
+      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+        <DialogTitle>{text('Recorded invoice','মূল বিক্রয় চালান')}</DialogTitle>
+        <DialogDescription>{text('Read-only details from the saved invoice. No changes are made.','সংরক্ষিত চালানের তথ্য। কোনো পরিবর্তন করা হবে না।')}</DialogDescription>
+        {invoiceError?<p role="alert" className="text-sm text-danger">{invoiceError}</p>:
+          !invoice||invoice.invoiceId!==invoiceId?<p role="status" className="text-sm text-ink-500">{text('Loading invoice…','চালান আসছে…')}</p>:
+          <div className="space-y-3 text-sm" data-report-source-invoice={invoice.invoiceId}>
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-ink-50 p-3">
+              <div><p className="text-xs text-ink-500">{text('Invoice','চালান')}</p><p className="font-semibold">{invoice.invoiceId}</p></div>
+              <div><p className="text-xs text-ink-500">{text('Date','তারিখ')}</p><p>{invoice.date}</p></div>
+              <div><p className="text-xs text-ink-500">{text('Customer','গ্রাহক')}</p><p>{invoice.customerName}</p></div>
+              <div><p className="text-xs text-ink-500">{text('Phone','ফোন')}</p><p>{invoice.customerPhone}</p></div>
+            </div>
+            <ul className="divide-y divide-border">
+              {invoice.items.map((item,i)=><li key={i} className="flex items-start justify-between gap-3 py-2">
+                <span>{item.productName} · {item.unitDescription||item.quantity+' '+item.unit}</span>
+                <span className="shrink-0 font-medium">{money(Math.round(item.lineTotal*100))}</span>
+              </li>)}
+            </ul>
+            <div className="space-y-1 border-t border-border pt-3">
+              <p className="flex justify-between"><span>{text('Total','মোট')}</span><strong>{money(Math.round(invoice.grandTotal*100))}</strong></p>
+              <p className="flex justify-between"><span>{text('Paid','জমা')}</span><span>{money(Math.round(invoice.paidAmount*100))}</span></p>
+              <p className="flex justify-between"><span>{text('Due','বাকি')}</span><span>{money(Math.round(invoice.dueAmount*100))}</span></p>
+              <p className="text-xs text-ink-500">{invoice.paymentStatus} · {invoice.paymentMethod}</p>
+            </div>
+          </div>}
+      </DialogContent>
+    </Dialog>
   </main>;
 }
