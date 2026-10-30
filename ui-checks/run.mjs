@@ -126,7 +126,8 @@ function startMocking(context,calls){
       }
       const fixtures={
         sales:{sourceId:'INV-LIVE-REPORT-001',sourceModule:'sales',date:'2026-10-15',
-          label:'Real API Mock Buyer',amountMinor:12000,status:'needs-review',reason:'Recorded invoice amount.'},
+          label:'Real API Mock Buyer',amountMinor:12000,paidMinor:4500,dueMinor:7500,
+          status:'needs-review',reason:'Recorded invoice amount.'},
         stock:{sourceId:'STK-LIVE-001',sourceModule:'products',date:'2026-10-30',
           label:'Verified Cable Roll',amountMinor:5000,status:'needs-review',reason:'Current FIFO snapshot only.'},
         receivables:{sourceId:'CUS-LIVE-001',sourceModule:'customers',date:'2026-10-30',
@@ -549,6 +550,12 @@ try{
           'production Reports must not render the custom live Reports layout');
         assert.ok(await page.locator('[data-report-workspace] table').count()>0,
           'native HisabIQ ReportResults table remains visible');
+        const savedInvoiceRow=page.locator('[data-report-workspace] tbody tr').first();
+        const savedInvoiceText=await savedInvoiceRow.innerText();
+        assert.match(savedInvoiceText,/৳\s*45(?:\D|$)/,
+          'existing Paid column must show ৳45 from the saved invoice API');
+        assert.match(savedInvoiceText,/৳\s*75(?:\D|$)/,
+          'existing Due column must show ৳75 from the saved invoice API');
         assert.ok(calls.some(call=>call.method==='GET'&&call.path==='/api/reports/v2/rows'),
           'native report must use real backend API');
         assert.ok(!calls.some(call=>call.method==='POST'&&call.path.startsWith('/api/reports')));

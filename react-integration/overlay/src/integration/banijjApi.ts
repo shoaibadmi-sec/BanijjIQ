@@ -254,7 +254,8 @@ export type LiveReportBackendKey = 'sales'|'purchase'|'stock'|'receivables'|'pay
 export interface LiveReportEntry {id:LiveReportBackendKey;en:string;bn:string;group:string;status:LiveReportStatus;reason:string}
 export interface LiveReportRecord {
   sourceId:string;sourceModule:string;date:string;label:string;
-  amountMinor:number|null;status:LiveReportStatus;reason:string;
+  amountMinor:number|null;paidMinor?:number|null;dueMinor?:number|null;
+  status:LiveReportStatus;reason:string;
 }
 export interface LiveReportMetric {
   key:string; valueMinor:number|null; status:LiveReportStatus; reason:string; asOf:string;
