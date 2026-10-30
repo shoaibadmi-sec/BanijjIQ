@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { join, dirname, relative, resolve, sep } from 'node:path';
 import { patchLiveProducts } from './preview/patch-live-products.mjs';
 import { patchReportsNav, patchReportsPage } from './preview/patch-reports-two-tabs.mjs';
+import { patchSourceDaybook, patchSourceDaybookActions, patchSourceDaybookDetails } from './preview/patch-source-daybook.mjs';
 
 const root = resolve(process.cwd());
 const sourceWeb = join(root, 'apps/hisabiq-web');
@@ -39,6 +40,13 @@ const reportsNavPath=join(web,'src/components/reports/ReportsNav.tsx');
 const reportsPagePath=join(web,'src/pages/Reports.tsx');
 writeFileSync(reportsNavPath,patchReportsNav(readFileSync(reportsNavPath,'utf8')));
 writeFileSync(reportsPagePath,patchReportsPage(readFileSync(reportsPagePath,'utf8')));
+const sourceDaybookPath=join(web,'src/pages/Daybook.tsx');
+writeFileSync(sourceDaybookPath,patchSourceDaybook(readFileSync(sourceDaybookPath,'utf8')));
+const daybookActionPath=join(web,'src/components/daybook/DaybookActions.tsx');
+writeFileSync(daybookActionPath,patchSourceDaybookActions(readFileSync(daybookActionPath,'utf8')));
+const daybookDetailsPath=join(web,'src/components/daybook/TransactionDetailsDialog.tsx');
+writeFileSync(daybookDetailsPath,patchSourceDaybookDetails(readFileSync(daybookDetailsPath,'utf8')));
+
 
 
 const appPath = join(web, 'src/App.tsx');
@@ -62,7 +70,6 @@ app = app.replace(importAnchor, [
   "const LiveReports = lazy(() => import('./integration/LiveReportsPage').then(module => ({ default: module.LiveReportsPage })));",
   "const LiveFinance = lazy(() => import('./integration/LiveFinancePage').then(module => ({ default: module.LiveFinancePage })));",
   "const LiveExpenses = lazy(() => import('./integration/LiveExpensesPage').then(module => ({ default: module.LiveExpensesPage })));",
-  "const LiveDaybook = lazy(() => import('./integration/LiveDaybookPage').then(module => ({ default: module.LiveDaybookPage })));",
   "const LivePurchases = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchasesPage })));",
   "const LivePurchaseEditor = lazy(() => import('./integration/LivePurchasesPage').then(m => ({ default: m.LivePurchaseEditorPage })));",
   importAnchor
@@ -75,8 +82,6 @@ app = app.replace(reportsAnchor,
   '<Route path="reports" element={<LiveReports />} />\n          <Route path="reports-design-preview" element={<Reports />} />');
 app = app.replace(financeAnchor,
   '<Route path="finance" element={<LiveFinance />} />\\n          <Route path="finance-design-preview" element={<Finance />} />');
-app = app.replace(daybookAnchor,
-  '<Route path="daybook" element={<LiveDaybook />} />\\n          <Route path="daybook-design-preview" element={<Daybook />} />');
 app = app.replace(expensesAnchor,
   '<Route path="expenses" element={<LiveExpenses />} />\\n          <Route path="expenses-design-preview" element={<Expenses />} />');
 app = app.replace(purchasesAnchor,
