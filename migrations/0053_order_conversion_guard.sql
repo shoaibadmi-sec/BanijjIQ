@@ -22,3 +22,9 @@ CREATE TRIGGER IF NOT EXISTS guard_supplier_order_purchase_reference
   AND (COALESCE(NEW.purchase_plan_order_id,'')<>OLD.purchase_plan_order_id
        OR NEW.is_deleted<>OLD.is_deleted)
  BEGIN SELECT RAISE(ABORT,'supplier_order_purchase_reference_immutable'); END;
+
+-- Plan approval can issue orders only once, including when two approvers race.
+CREATE TRIGGER IF NOT EXISTS guard_supplier_order_approval_once
+ BEFORE INSERT ON purchase_plan_orders
+ WHEN NOT EXISTS(SELECT 1 FROM purchase_plans p WHERE p.plan_id=NEW.plan_id AND p.status='Draft')
+ BEGIN SELECT RAISE(ABORT,'purchase_plan_not_draft_for_order'); END;

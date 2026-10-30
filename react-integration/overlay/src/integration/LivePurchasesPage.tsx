@@ -47,7 +47,7 @@ export function LivePurchasesPage(){
           <Plus className="size-4"/> New Purchase
         </Button>}
       </div>}/>
-    <nav aria-label="Purchase sections" className="flex items-center gap-2 border-b border-border text-sm">
+    <nav aria-label="Purchase sections" className="flex items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-border text-sm">
       <Link to="/app/purchases" className={'px-3 py-2 '+(tab==='purchases'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchases · ক্রয়</Link>
       <Link to="/app/purchases?tab=return" className={'px-3 py-2 '+(tab==='return'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Return · ক্রয় ফেরত</Link>
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
