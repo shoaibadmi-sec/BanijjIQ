@@ -36,6 +36,8 @@ jobs:
           node --test react-integration/tests/contract.test.mjs
           node --test react-integration/tests/reports-two-tabs.contract.test.mjs
           node --test react-integration/tests/reports-live-route.test.mjs
+          node --test react-integration/tests/dashboard-live.integration.test.mjs
+          node --test react-integration/tests/dashboard-route.contract.test.mjs
           node --test react-integration/tests/reports-source-parity.test.mjs
           node --test react-integration/tests/products-source-parity.test.mjs
           node --test react-integration/tests/pos-source-parity.test.mjs
