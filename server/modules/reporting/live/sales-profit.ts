@@ -67,7 +67,9 @@ export async function readSalesProfit(db:SherDatabase,q:LiveReportQuery):Promise
     db.prepare("SELECT expense_id,expense_date,amount FROM expenses "+
       "WHERE is_deleted=0 AND status NOT IN ('Cancelled','Deleted') AND expense_date BETWEEN ? AND ?")
       .bind(q.from,q.to).all<Expense>(),
-    db.prepare("SELECT r.invoice_id FROM sale_reversal_logs r JOIN sales s ON s.invoice_id=r.invoice_id WHERE "+where)
+    db.prepare("SELECT s.invoice_id FROM sales s WHERE "+where+
+      " AND (EXISTS(SELECT 1 FROM sale_reversal_logs r WHERE r.invoice_id=s.invoice_id)"+
+      " OR EXISTS(SELECT 1 FROM bundle_invoice_finalizations b WHERE b.invoice_id=s.invoice_id))")
       .bind(...params).all<{invoice_id:string}>(),
     db.prepare("SELECT v.invoice_id FROM vendor_sourcing v JOIN sales s ON s.invoice_id=v.invoice_id WHERE "+where)
       .bind(...params).all<{invoice_id:string}>()

@@ -5,6 +5,7 @@ import { postBundleCashSale } from './bundleCashPost.service.js';
 import { returnFullBundleCashInvoice } from './bundleCashReturn.service.js';
 import { returnPartialBundleSets } from './bundlePartialReturn.service.js';
 import { returnOrdinaryBundleLine } from './bundleOrdinaryReturn.service.js';
+import { finalizeBundleInvoiceReversal } from './bundleReversalFinalization.service.js';
 import {
   closeCashSessionRoute, completeSaleRoute, completeSalesReturnRoute, deleteSaleRoute,
   getCashSessionSummaryRoute, getInvoiceRoute, getPosBootstrapRoute, getSaleDetailRoute,
@@ -35,6 +36,8 @@ export async function handleSalesRoute(db: SherDatabase, request: Request, path:
   const salesReturnHistoryDetailMatch = path.match(/^\/api\/sales-returns\/history\/([^/]+)$/);
   if (salesReturnHistoryDetailMatch && request.method === 'GET') return getSalesReturnDetailRoute(db, decodeURIComponent(salesReturnHistoryDetailMatch[1]));
   if (path === '/api/sales-returns' && request.method === 'GET') return getSalesReturnHistoryRoute(db);
+  const finalizeBundleReversal=path.match(/^\/api\/sales-management\/bundle-invoices\/([^/]+)\/finalize-reversal$/);
+  if(finalizeBundleReversal && request.method==='POST') return finalizeBundleInvoiceReversal(db,decodeURIComponent(finalizeBundleReversal[1]),await readBody<any>(request),user);
   const ordinaryBundleReturn=path.match(/^\/api\/sales-returns\/bundle-invoices\/([^/]+)\/ordinary$/);
   if(ordinaryBundleReturn && request.method==='POST') return returnOrdinaryBundleLine(db,decodeURIComponent(ordinaryBundleReturn[1]),await readBody<any>(request),user);
   const partialBundleReturn=path.match(/^\/api\/sales-returns\/bundle-invoices\/([^/]+)\/sets$/);
