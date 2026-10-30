@@ -63,12 +63,26 @@ export async function getStoreCreditCaseDetailRoute(
   if(user.role!=='admin')return fail('Administrator permission is required.',403);
   const parsed=parseId(rawId);
   if(!parsed)return fail('Credit reconciliation case not found.',404);
-  const flag=await findStoreCreditReviewFlag(
-    db,parsed.flagCode,parsed.customerId,parsed.referenceId);
-  if(!flag)return fail('Credit reconciliation case not found.',404);
   const persisted=await db.prepare(
-    'SELECT status FROM store_credit_reconciliation_cases WHERE case_id=?'
-  ).bind(caseIdOf(flag)).first<{status:string}>();
+    'SELECT status,evidence_json FROM store_credit_reconciliation_cases WHERE case_id=?'
+  ).bind(rawId).first<{status:string;evidence_json:string}>();
+  const live=await findStoreCreditReviewFlag(
+    db,parsed.flagCode,parsed.customerId,parsed.referenceId);
+  let archived:StoreCreditReviewFlag|null=null;
+  if(!live&&persisted){
+    try{
+      const stored=JSON.parse(persisted.evidence_json)?.originalFlag;
+      if(stored&&stored.flagCode===parsed.flagCode&&
+         stored.customerId===parsed.customerId&&
+         stored.referenceId===parsed.referenceId&&
+         Number.isSafeInteger(stored.expectedCents)&&
+         Number.isSafeInteger(stored.recordedCents))
+        archived=stored as StoreCreditReviewFlag;
+    }catch{}
+  }
+  const flag=live||archived;
+  if(!flag||caseIdOf(flag)!==rawId)
+    return fail('Credit reconciliation case not found.',404);
   const customer=await db.prepare(
     'SELECT customer_id,customer_name,phone,current_due,status,is_deleted FROM customers WHERE customer_id=?'
   ).bind(flag.customerId).first<any>();
