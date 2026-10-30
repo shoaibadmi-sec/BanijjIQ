@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import {Link,useNavigate} from 'react-router-dom';
+import {Link,useNavigate,useSearchParams} from 'react-router-dom';
+import {LiveMixedPurchaseReturns} from './LiveMixedPurchaseReturns';
 import {ArrowLeft,Plus,RefreshCw,Search,Trash2} from 'lucide-react';
 import {Button} from '../components/Button';
 import {Input} from '../components/Input';
@@ -18,6 +19,8 @@ const newLine=():Line=>({key:crypto.randomUUID(),productId:'',qty:1,unitPrice:0}
 
 export function LivePurchasesPage(){
   const user=useBackendSession(),permitted=canUseModule(user,'purchase');
+  const [params]=useSearchParams();
+  const tab=params.get('tab')==='return'?'return':'purchases';
   const [items,setItems]=useState<PurchaseRecord[]>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
@@ -39,11 +42,16 @@ export function LivePurchasesPage(){
         <Button variant="outline" size="sm" onClick={()=>void refresh()} disabled={loading}><RefreshCw className="size-4"/> Refresh</Button>
         {canUseModule(user,'purchase','add')&&<Button asChild size="sm"><Link to="/app/purchases/new"><Plus className="size-4"/> New Purchase</Link></Button>}
       </div>}/>
-    <div className="flex items-center gap-2 border-b border-border text-sm">
-      <span className="border-b-2 border-teal-600 px-3 py-2 font-semibold text-ink">Purchases</span>
-      <span className="px-3 py-2 text-ink-500">Returns · Phase 4C</span>
+    <nav aria-label="Purchase sections" className="flex items-center gap-2 border-b border-border text-sm">
+      <Link to="/app/purchases" className={'px-3 py-2 '+(tab==='purchases'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchases · ক্রয়</Link>
+      <Link to="/app/purchases?tab=return" className={'px-3 py-2 '+(tab==='return'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Return · ক্রয় ফেরত</Link>
       <span className="px-3 py-2 text-ink-500">Purchase Plans · Phase 4E</span>
-    </div>
+    </nav>
+    {tab==='return'?<LiveMixedPurchaseReturns
+      purchaseId={params.get('purchaseId')||''}
+      purchases={items} loading={loading}
+      onRefresh={()=>void refresh()}/>:
+    <>
     <div className="rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="relative min-w-[180px] max-w-sm flex-1">
@@ -58,7 +66,7 @@ export function LivePurchasesPage(){
        !error&&<div className="overflow-x-auto"><Table scrollRegionLabel="Purchase invoices" className="min-w-[660px]">
         <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>Supplier</TableHead>
           <TableHead>Date</TableHead><TableHead className="text-right">Total</TableHead>
-          <TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Due</TableHead>
+          <TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Due</TableHead><TableHead>Actions</TableHead>
         </TableRow></TableHeader>
         <TableBody>{visible.map(p=><TableRow key={p.purchaseId}>
           <TableCell className="text-sm font-medium">{p.purchaseId}</TableCell>
@@ -67,10 +75,16 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.grandTotal)}</TableCell>
           <TableCell className="text-right">{money(p.paidAmount)}</TableCell>
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
+          <TableCell>{p.items?.some(i=>!!i.unitDescription)&&
+            <Link className="text-xs font-semibold text-teal-700 hover:underline"
+              to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}>
+              Return · ফেরত
+            </Link>}</TableCell>
         </TableRow>)}</TableBody></Table>
         {visible.length===0&&<p className="py-8 text-center text-sm text-ink-500">No purchases found · কোনো ক্রয় নেই</p>}
        </div>}
     </div>
+    </>}
   </section>;
 }
 

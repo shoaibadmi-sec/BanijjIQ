@@ -91,3 +91,39 @@ export async function createDuePurchase(supplier:PurchaseSupplier|null,lines:Due
   const payload=validateDuePurchase(supplier,lines);
   return request<PurchaseCreated>('/api/purchases',{method:'POST',body:JSON.stringify(payload)});
 }
+
+export interface MixedReturnLine {
+ productId:string;productName:string;boughtQty:number;unitPrice:number;
+ previouslyReturnedQty:number;availableQty:number;unitDescription:string;
+ returnSupported:boolean;unsupportedReason:string;
+ unitSnapshot:{revision:number;profile:PosUnitProfile;quantities:Record<string,number>;
+  priceUnit:string;enteredUnitPrice:number;description:string;sourceLotId:string}|null;
+ originalLineTotal:number;
+}
+export interface MixedReturnSource{
+ ok:true;purchase:{purchaseId:string;supplierId:string;supplierName:string;
+  grandTotal:number;paidAmount:number;previouslyReturnedAmount:number;netPurchase:number;
+  items:MixedReturnLine[]};
+}
+export type MixedReturnInput={
+ purchaseId:string;reason:string;refundMethod:'Supplier Credit';clientRequestId:string;
+ items:Array<{productId:string;unitQuantities:Record<string,number>}>;
+}
+export async function loadMixedPurchaseReturn(id:string){
+ return request<MixedReturnSource>('/api/purchases/'+encodeURIComponent(id)+'/return-data');
+}
+export async function postMixedPurchaseReturn(body:MixedReturnInput){
+ return request<{ok:true;returnId:string;totalReturnAmount:number;idempotent?:boolean}>(
+  '/api/purchase-returns',{method:'POST',body:JSON.stringify(body)});
+}
+export function quoteOriginalReturn(line:MixedReturnLine,quantities:Record<string,number>){
+ if(!line.unitSnapshot)throw Error('Original unit snapshot unavailable');
+ const quoted=quotePurchaseLine(line.unitSnapshot.profile,quantities,
+  line.unitSnapshot.priceUnit,line.unitSnapshot.enteredUnitPrice);
+ if(quoted.qty>line.availableQty)throw Error('Return exceeds available original stock');
+ const base=BigInt(line.boughtQty),prior=BigInt(line.previouslyReturnedQty);
+ const qty=BigInt(quoted.qty),micro=BigInt(Math.round(line.originalLineTotal*10000));
+ if(base<1n||prior+qty>base)throw Error('Return exceeds original quantity');
+ const cumulative=(prior+qty)*micro+base/2n,previous=prior*micro+base/2n;
+ return {qty:quoted.qty,amount:Number(cumulative/base-previous/base)/10000};
+}

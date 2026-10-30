@@ -67,7 +67,7 @@ export async function getMixedPurchaseForReturn(db:SherDatabase,purchaseId:strin
    return {productId:line.productId,productName:line.productName,
      boughtQty:line.quantity,unitPrice:line.baseQuantity?Number(line.lineTotal)/line.baseQuantity:0,
      previouslyReturnedQty:line.returned,availableQty,
-     unitDescription:line.description||'',returnSupported:supported,
+     unitDescription:line.description||'',originalLineTotal:line.lineTotal,returnSupported:supported,
      unsupportedReason:line.trackSerial||line.trackExpiry
        ?'Tracked serial/expiry returns require a separate verified path'
        :line.lotId?'':'Mixed purchase cannot return a non-snapshotted line yet',
