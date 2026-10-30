@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {Link,useNavigate,useSearchParams} from 'react-router-dom';
 import {LiveMixedPurchaseReturns} from './LiveMixedPurchaseReturns';
+import {LiveStandardPurchaseReturns} from './LiveStandardPurchaseReturns';
 import {LiveSupplierSettlements} from './LiveSupplierSettlements';
 import {LivePurchasePlans} from './LivePurchasePlans';
 import {ArrowLeft,Plus,RefreshCw,Search,Trash2} from 'lucide-react';
@@ -53,10 +54,10 @@ export function LivePurchasesPage(){
       <Link to="/app/purchases?tab=payments" className={'px-3 py-2 '+(tab==='payments'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Supplier Payments · টাকা পরিশোধ</Link>
       <Link to="/app/purchases?tab=plans" className={'px-3 py-2 '+(tab==='plans'?'border-b-2 border-teal-600 font-semibold text-ink':'text-ink-500')}>Purchase Plans · পরিকল্পনা</Link>
     </nav>
-    {tab==='return'?<LiveMixedPurchaseReturns
-      purchaseId={params.get('purchaseId')||''}
-      purchases={items} loading={loading}
-      onRefresh={()=>void refresh()}/>:
+    {tab==='return'?(params.get('purchaseId')&&!items.find(p=>p.purchaseId===params.get('purchaseId'))?.items?.some(i=>!!i.unitDescription)
+      ?<LiveStandardPurchaseReturns purchaseId={params.get('purchaseId')!} onRefresh={()=>void refresh()}/>
+      :<LiveMixedPurchaseReturns purchaseId={params.get('purchaseId')||''}
+         purchases={items} loading={loading} onRefresh={()=>void refresh()}/>):
     tab==='payments'?<LiveSupplierSettlements supplierId={params.get('supplierId')||''}/>:
     tab==='plans'?<LivePurchasePlans/>:
     <>
@@ -84,7 +85,7 @@ export function LivePurchasesPage(){
           <TableCell className="text-right">{money(p.paidAmount)}</TableCell>
           <TableCell className="text-right">{money(p.dueAmount)}</TableCell>
           <TableCell><div className="flex flex-wrap gap-3">
-          {p.items?.some(i=>!!i.unitDescription)&&
+          {p.items?.length>0&&
             <Link className="text-xs font-semibold text-teal-700 hover:underline"
               to={'/app/purchases?tab=return&purchaseId='+encodeURIComponent(p.purchaseId)}>
               Return · ফেরত
